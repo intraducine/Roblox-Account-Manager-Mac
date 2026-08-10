@@ -49,6 +49,9 @@ struct ContentView: View {
         } message: {
             Text("This removes the account metadata and its Keychain session from this Mac.")
         }
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+            Task { await store.refreshRunningInstances() }
+        }
     }
 
     private var accountShelf: some View {
@@ -96,7 +99,7 @@ struct ContentView: View {
                 ForEach(groupNames, id: \.self) { group in
                     Section(group) {
                         ForEach(accounts(in: group)) { account in
-                            AccountRow(account: account)
+                            AccountRow(account: account, isRunning: store.isRunning(account))
                                 .tag(account.id)
                                 .contextMenu {
                                     Button("Remove account", role: .destructive) {
@@ -112,9 +115,9 @@ struct ContentView: View {
             .background(RAMPalette.shelf)
 
             HStack {
-                Text("\(store.accounts.count) account\(store.accounts.count == 1 ? "" : "s")")
+                Text("\(store.runningAccountIDs.count) running")
                 Spacer()
-                Text("Sessions: Keychain")
+                Text("\(store.accounts.count) account\(store.accounts.count == 1 ? "" : "s")")
             }
             .font(.system(size: 10, weight: .medium))
             .foregroundStyle(RAMPalette.muted)
@@ -153,6 +156,7 @@ struct ContentView: View {
 
 private struct AccountRow: View {
     let account: ManagedAccount
+    let isRunning: Bool
 
     var body: some View {
         HStack(spacing: 11) {
@@ -179,6 +183,11 @@ private struct AccountRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
+            if isRunning {
+                Text("Running")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(RAMPalette.straw)
+            }
         }
         .padding(.vertical, 4)
     }

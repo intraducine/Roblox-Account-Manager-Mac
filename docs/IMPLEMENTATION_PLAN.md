@@ -2,11 +2,11 @@
 
 ## Product job
 
-Give a Mac user one clear place to store their own Roblox account sessions, select an account, and launch a place or server without signing in and out by hand.
+Give a Mac user one clear place to store their own Roblox account sessions and keep different accounts running in separate Roblox clients at the same time.
 
 ## Architecture
 
-- `RAMacCore`: account model, metadata repository, Keychain vault, Roblox HTTPS client, launch URL builder, and AppKit launcher.
+- `RAMacCore`: account model, metadata repository, Keychain vault, Roblox HTTPS client, launch URL builder, and isolated parallel-instance launcher.
 - `RAMacApp`: SwiftUI account shelf, account editor, launch dock, embedded WebKit sign-in, notices, and app commands.
 - `RAMacCoreTests`: deterministic tests for storage, requests, and launch links.
 
@@ -29,7 +29,16 @@ The account shelf stays narrow. The selected account owns the detail view. The l
 - Public place, job ID, and private-link launch paths.
 - Automated tests, app packaging, license notice, and documentation.
 
-### Phase 2: suitable follow-up work
+### Phase 2: complete in version 0.2.0
+
+- Verify the installed Roblox Corporation signature before every parallel launch.
+- Make disposable APFS copies outside `/Applications`.
+- Assign one unique Roblox bundle ID per managed account.
+- Start and track concurrent clients without placing tickets in process arguments.
+- Stop one selected account instance without closing other accounts.
+- Clean stale copies after their processes exit.
+
+### Phase 3: suitable follow-up work
 
 - Signed and notarized release builds.
 - Export and import for non-secret account metadata.
@@ -39,7 +48,6 @@ The account shelf stays narrow. The selected account owns the detail view. The l
 
 ### Not planned without new research
 
-- Concurrent Roblox client bypass.
 - Process injection or anti-cheat workarounds.
 - Password storage.
 - Captcha solvers.

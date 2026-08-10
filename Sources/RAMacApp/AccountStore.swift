@@ -15,25 +15,26 @@ final class AccountStore: ObservableObject {
     @Published var isWorking = false
     @Published var notice: Notice?
     @Published var launchStatus = "Ready"
+    @Published private(set) var runningAccountIDs = Set<UUID>()
 
     private let repository: AccountRepository
     private let vault: any SecretVault
     private let api: RobloxAPIClient
     private let builder: RobloxLaunchURLBuilder
-    private let launcher: RobloxLauncher
+    private let launcher: ParallelRobloxLauncher
 
     init(
         repository: AccountRepository = AccountRepository(),
         vault: any SecretVault = KeychainVault(),
         api: RobloxAPIClient = RobloxAPIClient(),
         builder: RobloxLaunchURLBuilder = RobloxLaunchURLBuilder(),
-        launcher: RobloxLauncher? = nil
+        launcher: ParallelRobloxLauncher? = nil
     ) {
         self.repository = repository
         self.vault = vault
         self.api = api
         self.builder = builder
-        self.launcher = launcher ?? RobloxLauncher()
+        self.launcher = launcher ?? ParallelRobloxLauncher()
         load()
     }
 
@@ -63,10 +64,22 @@ final class AccountStore: ObservableObject {
         do {
             accounts = try repository.load()
             if selectedID == nil { selectedID = accounts.first?.id }
-            Task { await refreshAvatarURLs() }
+            Task {
+                await refreshAvatarURLs()
+                await refreshRunningInstances()
+                await launcher.removeStaleCopies()
+            }
         } catch {
             notice = Notice(title: "Accounts could not load", message: error.localizedDescription)
         }
+    }
+
+    func isRunning(_ account: ManagedAccount) -> Bool {
+        runningAccountIDs.contains(account.id)
+    }
+
+    func refreshRunningInstances() async {
+        runningAccountIDs = await launcher.runningAccountIDs(from: accounts.map(\.id))
     }
 
     private func refreshAvatarURLs() async {
@@ -142,6 +155,10 @@ final class AccountStore: ObservableObject {
     }
 
     func remove(_ account: ManagedAccount) {
+        guard !isRunning(account) else {
+            notice = Notice(title: "Account is still running", message: "Stop this account's Roblox instance before removing it.")
+            return
+        }
         let original = accounts
         let updated = accounts.filter { $0.id != account.id }
         do {
@@ -155,7 +172,29 @@ final class AccountStore: ObservableObject {
         }
     }
 
+    func stop(_ account: ManagedAccount) async {
+        guard isRunning(account), !isWorking else { return }
+        isWorking = true
+        defer { isWorking = false }
+        launchStatus = "Stopping @\(account.username)"
+        if await launcher.stop(accountID: account.id) {
+            for _ in 0..<15 {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                await refreshRunningInstances()
+                if !isRunning(account) { break }
+            }
+            launchStatus = isRunning(account) ? "Roblox is still closing" : "Stopped @\(account.username)"
+        } else {
+            launchStatus = "Stop failed"
+            notice = Notice(title: "Roblox did not stop", message: "Close this Roblox window normally, then try again.")
+        }
+    }
+
     func launch(account: ManagedAccount, placeText: String, serverText: String) async {
+        guard !isRunning(account) else {
+            notice = Notice(title: "Account is already running", message: RobloxLaunchError.accountAlreadyRunning.localizedDescription)
+            return
+        }
         guard let placeID = Int64(placeText.trimmingCharacters(in: .whitespacesAndNewlines)), placeID > 0 else {
             notice = Notice(title: "Check the place ID", message: RobloxLaunchError.invalidPlaceID.localizedDescription)
             return
@@ -187,14 +226,16 @@ final class AccountStore: ObservableObject {
             launchStatus = "Requesting a launch ticket"
             let ticket = try await api.authenticationTicket(cookie: cookie)
             let url = try builder.makeURL(ticket: ticket, placeID: placeID, target: target)
-            try launcher.open(url)
+            launchStatus = "Preparing an isolated Roblox copy"
+            _ = try await launcher.launch(url, for: account.id)
+            await refreshRunningInstances()
 
             var updated = account
             updated.lastUsed = Date()
             updated.savedPlaceID = placeText.trimmingCharacters(in: .whitespacesAndNewlines)
             updated.savedServer = serverInput
             update(updated)
-            launchStatus = "Opened Roblox as \(account.username)"
+            launchStatus = "Running @\(account.username) in parallel"
         } catch {
             launchStatus = "Launch failed"
             notice = Notice(title: "Roblox did not launch", message: error.localizedDescription)

@@ -6,7 +6,7 @@ This project is independent and is not made by or approved by Roblox Corporation
 
 ## Current release
 
-Version `0.1.0` includes the complete core Mac workflow:
+Version `0.2.0` includes the complete parallel-account Mac workflow:
 
 - Add an account through a private embedded Roblox sign-in page.
 - Import a `.ROBLOSECURITY` session as an advanced option.
@@ -15,6 +15,8 @@ Version `0.1.0` includes the complete core Mac workflow:
 - Search accounts and organize them with aliases, groups, and notes.
 - Save a place ID and optional server target for each account.
 - Launch a public server, a job ID, or a private server link as the selected account.
+- Keep different accounts running in separate Roblox processes at the same time.
+- Show which accounts are running and stop one account without closing the others.
 - Keep an automatic metadata backup.
 
 ## Requirements
@@ -40,7 +42,10 @@ The app uses the same core method as the Windows project:
 1. It sends the selected account session only to Roblox HTTPS endpoints.
 2. It completes Roblox's CSRF request challenge.
 3. It requests a short-lived authentication ticket.
-4. It opens the `roblox-player` URL scheme registered by the installed Mac client.
+4. It verifies the installed Roblox app has a valid Roblox Corporation signature.
+5. It makes an APFS-cloned temporary copy for the selected account.
+6. It gives that copy a unique bundle ID, allows a new instance, and applies a local ad hoc signature.
+7. It sends the launch URL directly to that isolated copy.
 
 The app never writes a session cookie into the launch URL or a log.
 
@@ -49,14 +54,18 @@ The app never writes a session cookie into the launch URL or a log.
 - Treat `.ROBLOSECURITY` as a password. Never send it to another person.
 - The browser sign-in uses a non-persistent WebKit data store. The accepted session moves to Keychain.
 - Network requests use an isolated URL session and do not share cookies between accounts.
+- Parallel copies are made only in `~/Library/Caches/Roblox Account Manager/Instances`.
+- The app never edits or re-signs `/Applications/Roblox.app`.
 - Removing an account deletes its Keychain item and its local metadata.
 - Metadata is stored at `~/Library/Application Support/Roblox Account Manager/Accounts.json`.
 
-## Mac limits
+## Parallel-launch limits
 
-The installed Roblox app declares `LSMultipleInstancesProhibited`. This port does not bypass that platform rule. It switches the account used for a launch, but it does not promise concurrent Roblox clients.
+The installed Roblox app declares `LSMultipleInstancesProhibited`. This port works around that limit only in disposable per-account copies. Roblox can change its client checks at any time. A future Roblox update can stop parallel mode from working until this project is updated.
 
-Windows-only features from the original project are not in version 0.1.0. These include Win32 window placement, mutex bypass, FPS file patches, CefSharp browser profiles, the local developer API, Nexus account control, and process watcher automation. See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the feature decisions.
+Use accounts that belong to you. Some Roblox experiences can prohibit alternate accounts or farming even when Roblox itself allows both accounts to sign in. This app does not hide automation, inject code, or change the Roblox executable.
+
+Windows-only features from the original project are not in version 0.2.0. These include Win32 window placement, FPS file patches, CefSharp browser profiles, the local developer API, Nexus account control, and process watcher automation. See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the feature decisions.
 
 ## License
 

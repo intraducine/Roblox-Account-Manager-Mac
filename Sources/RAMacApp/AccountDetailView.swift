@@ -52,7 +52,11 @@ struct AccountDetailView: View {
                 Text("@\(draft.username)  ·  User \(draft.userID)")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(RAMPalette.muted)
-                if let lastUsed = draft.lastUsed {
+                if store.isRunning(account) {
+                    Text("Running in an isolated Roblox instance")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(RAMPalette.straw)
+                } else if let lastUsed = draft.lastUsed {
                     Text("Last launched \(lastUsed.formatted(date: .abbreviated, time: .shortened))")
                         .font(.system(size: 12))
                         .foregroundStyle(RAMPalette.muted)
@@ -116,7 +120,7 @@ struct AccountDetailView: View {
     private var launchDock: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Launch dock")
+                Text("Parallel launch dock")
                     .font(.system(size: 16, weight: .bold))
                 Text(store.launchStatus)
                     .font(.system(size: 11, weight: .medium))
@@ -131,17 +135,27 @@ struct AccountDetailView: View {
             HStack(alignment: .bottom, spacing: 12) {
                 launchField("Place ID", text: $placeID, prompt: "920587237")
                     .frame(minWidth: 170, maxWidth: 230)
+                    .disabled(store.isRunning(account))
                 launchField("Job ID or private server link", text: $server, prompt: "Optional")
-                Button {
-                    Task { await store.launch(account: draft, placeText: placeID, serverText: server) }
-                } label: {
-                    HStack(spacing: 7) {
-                        Text(store.isWorking ? "Working" : "Launch Roblox")
-                        Image(systemName: "arrow.up.forward")
+                    .disabled(store.isRunning(account))
+                if store.isRunning(account) {
+                    Button(store.isWorking ? "Stopping" : "Stop instance") {
+                        Task { await store.stop(account) }
                     }
+                    .buttonStyle(StopButtonStyle())
+                    .disabled(store.isWorking)
+                } else {
+                    Button {
+                        Task { await store.launch(account: draft, placeText: placeID, serverText: server) }
+                    } label: {
+                        HStack(spacing: 7) {
+                            Text(store.isWorking ? "Working" : "Launch parallel")
+                            Image(systemName: "arrow.up.forward")
+                        }
+                    }
+                    .buttonStyle(LaunchButtonStyle())
+                    .disabled(store.isWorking)
                 }
-                .buttonStyle(LaunchButtonStyle())
-                .disabled(store.isWorking)
             }
         }
         .padding(.leading, 21)

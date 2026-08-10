@@ -34,6 +34,18 @@ struct LaunchButtonStyle: ButtonStyle {
     }
 }
 
+struct StopButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(RAMPalette.ink)
+            .padding(.horizontal, 18)
+            .frame(height: 40)
+            .background(configuration.isPressed ? RAMPalette.rust : RAMPalette.ground)
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+}
+
 struct AccountCutShape: Shape {
     func path(in rect: CGRect) -> Path {
         let cut = min(rect.width, rect.height) * 0.22
