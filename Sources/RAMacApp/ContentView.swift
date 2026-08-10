@@ -1,3 +1,4 @@
+import AppKit
 import RAMacCore
 import SwiftUI
 
@@ -9,6 +10,11 @@ struct ContentView: View {
     @State private var batchPlaceID = ""
     @State private var batchServer = ""
     @State private var showsFallbackWarning = false
+    @State private var showsNewGroup = false
+    @State private var newGroupName = ""
+    @State private var newGroupAccountID: UUID?
+    @State private var selectedGroupFilter: String?
+    @State private var batchSelectionAnchorID: UUID?
 
     var body: some View {
         NavigationSplitView {
@@ -20,7 +26,8 @@ struct ContentView: View {
                     AccountDetailView(
                         store: store,
                         account: account,
-                        showsLaunchBar: store.batchSelectedIDs.isEmpty
+                        showsLaunchBar: store.batchSelectedIDs.isEmpty,
+                        onRequestModifiedFallback: { showsFallbackWarning = true }
                     )
                     .id(account.id)
 
@@ -28,7 +35,8 @@ struct ContentView: View {
                         BatchLaunchBar(
                             store: store,
                             placeID: $batchPlaceID,
-                            server: $batchServer
+                            server: $batchServer,
+                            onRequestModifiedFallback: { showsFallbackWarning = true }
                         )
                     }
                 }
@@ -38,40 +46,6 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Menu {
-                    Button {
-                        store.setLaunchMode(.unmodifiedParallel)
-                    } label: {
-                        Label(
-                            "Unmodified Parallel",
-                            systemImage: store.launchMode == .unmodifiedParallel ? "checkmark" : "checkmark.shield"
-                        )
-                    }
-
-                    Button {
-                        store.setLaunchMode(.official)
-                    } label: {
-                        Label("Official Roblox", systemImage: store.launchMode == .official ? "checkmark" : "app")
-                    }
-
-                    Divider()
-
-                    Button {
-                        showsFallbackWarning = true
-                    } label: {
-                        Label(
-                            "Modified Parallel Fallback",
-                            systemImage: store.launchMode == .modifiedParallel ? "checkmark" : "exclamationmark.triangle"
-                        )
-                    }
-                } label: {
-                    Label(
-                        store.launchMode.shortTitle,
-                        systemImage: store.launchMode == .modifiedParallel ? "exclamationmark.triangle" : "checkmark.shield"
-                    )
-                }
-                .help(store.launchMode.detail)
-
                 Button {
                     showsAddAccount = true
                 } label: {
@@ -121,6 +95,25 @@ struct ContentView: View {
         } message: {
             Text("This mode copies Roblox, changes the copy's bundle settings, and signs it again. Roblox says modified clients are not allowed. The app will never select this mode for you.")
         }
+        .sheet(isPresented: $showsNewGroup) {
+            NewGroupSheet(
+                name: $newGroupName,
+                message: newGroupAccountID == nil
+                    ? "Create a group. You can add each account to one or more groups."
+                    : "Create a group and add this account to it.",
+                onCreate: {
+                _ = store.createGroup(newGroupName, addingTo: newGroupAccountID)
+                newGroupName = ""
+                newGroupAccountID = nil
+                    showsNewGroup = false
+                },
+                onCancel: {
+                newGroupName = ""
+                newGroupAccountID = nil
+                    showsNewGroup = false
+                }
+            )
+        }
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
             Task { await store.refreshRunningInstances() }
         }
@@ -131,28 +124,68 @@ struct ContentView: View {
             batchPlaceID = selectedAccount.savedPlaceID
             batchServer = selectedAccount.savedServer
         }
+        .onChange(of: store.groupNames) { groupNames in
+            if let selectedGroupFilter,
+               !groupNames.contains(where: { $0.caseInsensitiveCompare(selectedGroupFilter) == .orderedSame }) {
+                self.selectedGroupFilter = nil
+            }
+        }
     }
 
     private var accountSidebar: some View {
         VStack(spacing: 0) {
+            groupFilterBar
+
             List(selection: $store.selectedID) {
-                ForEach(groupNames, id: \.self) { group in
-                    Section(group) {
-                        ForEach(accounts(in: group)) { account in
-                            AccountRow(
-                                account: account,
-                                isRunning: store.isRunning(account),
-                                isBatchSelected: store.isBatchSelected(account),
-                                batchState: store.batchStates[account.id],
-                                isSelectionDisabled: store.isBatchLaunching,
-                                onToggleBatch: { store.toggleBatchSelection(account) }
-                            )
-                            .tag(account.id)
-                            .contextMenu {
-                                Button("Remove Account", role: .destructive) {
-                                    pendingRemoval = account
+                ForEach(visibleAccounts) { account in
+                    AccountRow(
+                        account: account,
+                        isRunning: store.isRunning(account),
+                        isBatchSelected: store.isBatchSelected(account),
+                        batchState: store.batchStates[account.id],
+                        isSelectionDisabled: store.isBatchLaunching,
+                        onToggleBatch: {
+                            batchSelectionAnchorID = account.id
+                            store.toggleBatchSelection(account)
+                        }
+                    )
+                    .tag(account.id)
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(
+                        TapGesture().onEnded {
+                            if NSEvent.modifierFlags.contains(.shift) {
+                                store.selectBatchRange(
+                                    from: batchSelectionAnchorID,
+                                    to: account.id,
+                                    orderedAccounts: visibleAccounts
+                                )
+                            } else {
+                                batchSelectionAnchorID = account.id
+                            }
+                        }
+                    )
+                    .contextMenu {
+                        Menu("Groups") {
+                            ForEach(store.groupNames, id: \.self) { group in
+                                Button {
+                                    store.setMembership(
+                                        of: account,
+                                        in: group,
+                                        isMember: !account.belongs(to: group)
+                                    )
+                                } label: {
+                                    if account.belongs(to: group) {
+                                        Label(group, systemImage: "checkmark")
+                                    } else {
+                                        Text(group)
+                                    }
                                 }
                             }
+                            Divider()
+                            Button("New Group…") { beginNewGroup(for: account.id) }
+                        }
+                        Button("Remove Account", role: .destructive) {
+                            pendingRemoval = account
                         }
                     }
                 }
@@ -165,6 +198,44 @@ struct ContentView: View {
         .searchable(text: $store.search, placement: .sidebar, prompt: "Search accounts")
     }
 
+    private var groupFilterBar: some View {
+        HStack(spacing: 10) {
+            Menu {
+                Button {
+                    selectedGroupFilter = nil
+                } label: {
+                    Label("All Accounts", systemImage: selectedGroupFilter == nil ? "checkmark" : "person.2")
+                }
+                ForEach(store.groupNames, id: \.self) { group in
+                    Button {
+                        selectedGroupFilter = group
+                    } label: {
+                        Label(
+                            group,
+                            systemImage: selectedGroupFilter == group ? "checkmark" : "folder"
+                        )
+                    }
+                }
+            } label: {
+                Label(selectedGroupFilter ?? "All Accounts", systemImage: "folder")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+
+            Spacer()
+
+            Button {
+                beginNewGroup(for: nil)
+            } label: {
+                Label("New Group", systemImage: "plus")
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
     private var sidebarStatus: some View {
         VStack(spacing: 9) {
             HStack(spacing: 10) {
@@ -173,8 +244,8 @@ struct ContentView: View {
                      : "\(store.batchSelectedIDs.count) selected")
                     .fontWeight(.medium)
                 Spacer()
-                Menu("Groups") {
-                    ForEach(groupNames, id: \.self) { group in
+                Menu("Select Group") {
+                    ForEach(store.groupNames, id: \.self) { group in
                         Button(store.isBatchGroupSelected(group) ? "Clear \(group)" : "Select \(group)") {
                             store.toggleBatchGroup(group)
                         }
@@ -182,7 +253,7 @@ struct ContentView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .disabled(store.isBatchLaunching)
+                .disabled(store.isBatchLaunching || store.groupNames.isEmpty)
 
                 if !store.batchSelectedIDs.isEmpty {
                     Button("Clear") { store.clearBatchSelection() }
@@ -212,14 +283,15 @@ struct ContentView: View {
         .background(.bar)
     }
 
-    private var groupNames: [String] {
-        Array(Set(store.filteredAccounts.map(\.group))).sorted {
-            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
-        }
+    private var visibleAccounts: [ManagedAccount] {
+        guard let selectedGroupFilter else { return store.filteredAccounts }
+        return store.filteredAccounts.filter { $0.belongs(to: selectedGroupFilter) }
     }
 
-    private func accounts(in group: String) -> [ManagedAccount] {
-        store.filteredAccounts.filter { $0.group == group }
+    private func beginNewGroup(for accountID: UUID?) {
+        newGroupName = ""
+        newGroupAccountID = accountID
+        showsNewGroup = true
     }
 
     private var emptyState: some View {
@@ -284,6 +356,12 @@ private struct AccountRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if !account.groups.isEmpty {
+                    Text(account.groups.joined(separator: ", "))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 4)
 

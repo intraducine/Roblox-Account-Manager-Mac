@@ -85,6 +85,18 @@ The app uses standard macOS structure and controls. It follows the system appear
 - Reject and remove any copy that fails file or signature checks.
 - Make Unmodified Parallel the default and keep the modified method behind its warning.
 
+### Phase 8: complete in version 0.8.0
+
+- Remove the direct Official Roblox choice from the interface.
+- Use an exact, unmodified managed copy for every normal manager launch.
+- Keep the modified fallback inside an advanced explanation with a clear warning.
+- Replace the single group field with reusable multi-group membership.
+- Add visible group creation, group filtering, and right-click membership actions.
+- Add Shift-click range selection for batch launches.
+- Explain job IDs and private server links beside the server field.
+- Explain exact and modified bundles beside each launch action.
+- Migrate old single-group account files without data loss.
+
 ### Suitable follow-up work
 
 - Signed and notarized release builds.

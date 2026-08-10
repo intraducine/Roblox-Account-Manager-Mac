@@ -45,15 +45,13 @@ final class AccountStore: ObservableObject {
     @Published private(set) var isStoppingAll = false
     @Published private(set) var batchStatus = "Select accounts from the shelf"
     @Published private(set) var launchMode: RobloxLaunchMode
+    @Published private(set) var groups: [String] = []
 
     private let repository: AccountRepository
     private let vault: any SecretVault
     private let api: any RobloxAPIProviding
     private let builder: RobloxLaunchURLBuilder
     private let launcher: any ParallelRobloxLaunching
-    private let preferences: UserDefaults
-
-    private static let launchModeKey = "RobloxLaunchModeV2"
 
     init(
         repository: AccountRepository = AccountRepository(),
@@ -61,7 +59,6 @@ final class AccountStore: ObservableObject {
         api: any RobloxAPIProviding = RobloxAPIClient(),
         builder: RobloxLaunchURLBuilder = RobloxLaunchURLBuilder(),
         launcher: (any ParallelRobloxLaunching)? = nil,
-        preferences: UserDefaults = .standard,
         launchMode: RobloxLaunchMode? = nil
     ) {
         self.repository = repository
@@ -69,10 +66,7 @@ final class AccountStore: ObservableObject {
         self.api = api
         self.builder = builder
         self.launcher = launcher ?? ParallelRobloxLauncher()
-        self.preferences = preferences
-        self.launchMode = launchMode
-            ?? preferences.string(forKey: Self.launchModeKey).flatMap(RobloxLaunchMode.init(rawValue:))
-            ?? .unmodifiedParallel
+        self.launchMode = launchMode == .modifiedParallel ? .modifiedParallel : .unmodifiedParallel
         load()
     }
 
@@ -85,15 +79,12 @@ final class AccountStore: ObservableObject {
             )
             return
         }
-        launchMode = mode
-        preferences.set(mode.rawValue, forKey: Self.launchModeKey)
-        switch mode {
-        case .unmodifiedParallel:
-            launchStatus = "Unmodified Parallel selected"
-        case .official:
-            launchStatus = "Official Roblox selected"
-        case .modifiedParallel:
+        if mode == .modifiedParallel {
+            launchMode = .modifiedParallel
             launchStatus = "Modified fallback selected"
+        } else {
+            launchMode = .unmodifiedParallel
+            launchStatus = "Unmodified Roblox selected"
         }
     }
 
@@ -105,23 +96,27 @@ final class AccountStore: ObservableObject {
     var filteredAccounts: [ManagedAccount] {
         let needle = search.trimmingCharacters(in: .whitespacesAndNewlines)
         let sorted = accounts.sorted {
-            if $0.group.localizedCaseInsensitiveCompare($1.group) == .orderedSame {
-                return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-            }
-            return $0.group.localizedCaseInsensitiveCompare($1.group) == .orderedAscending
+            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
         }
         guard !needle.isEmpty else { return sorted }
         return sorted.filter {
             $0.username.localizedCaseInsensitiveContains(needle)
                 || $0.displayName.localizedCaseInsensitiveContains(needle)
                 || $0.alias.localizedCaseInsensitiveContains(needle)
-                || $0.group.localizedCaseInsensitiveContains(needle)
+                || $0.groups.contains(where: { $0.localizedCaseInsensitiveContains(needle) })
         }
+    }
+
+    var groupNames: [String] {
+        ManagedAccount.normalizedGroups(groups + accounts.flatMap(\.groups))
     }
 
     func load() {
         do {
             accounts = try repository.load()
+            groups = ManagedAccount.normalizedGroups(
+                (try repository.loadGroups()) + accounts.flatMap(\.groups)
+            )
             if selectedID == nil { selectedID = accounts.first?.id }
             Task {
                 await refreshAvatarURLs()
@@ -150,9 +145,23 @@ final class AccountStore: ObservableObject {
         updateBatchSelectionStatus()
     }
 
+    func selectBatchRange(from anchorID: UUID?, to targetID: UUID, orderedAccounts: [ManagedAccount]) {
+        guard !isBatchLaunching else { return }
+        let eligibleAccounts = orderedAccounts.filter { !isRunning($0) }
+        guard let targetIndex = eligibleAccounts.firstIndex(where: { $0.id == targetID }) else { return }
+        let anchorIndex = anchorID.flatMap { anchor in
+            eligibleAccounts.firstIndex(where: { $0.id == anchor })
+        } ?? targetIndex
+        let range = min(anchorIndex, targetIndex)...max(anchorIndex, targetIndex)
+        let selectedIDs = Set(range.map { eligibleAccounts[$0].id })
+        batchSelectedIDs.formUnion(selectedIDs)
+        for accountID in selectedIDs { batchStates[accountID] = nil }
+        updateBatchSelectionStatus()
+    }
+
     func toggleBatchGroup(_ group: String) {
         guard !isBatchLaunching else { return }
-        let eligible = Set(accounts.lazy.filter { $0.group == group && !self.isRunning($0) }.map(\.id))
+        let eligible = Set(accounts.lazy.filter { $0.belongs(to: group) && !self.isRunning($0) }.map(\.id))
         guard !eligible.isEmpty else { return }
         if eligible.isSubset(of: batchSelectedIDs) {
             batchSelectedIDs.subtract(eligible)
@@ -164,7 +173,7 @@ final class AccountStore: ObservableObject {
     }
 
     func isBatchGroupSelected(_ group: String) -> Bool {
-        let eligible = Set(accounts.lazy.filter { $0.group == group && !self.isRunning($0) }.map(\.id))
+        let eligible = Set(accounts.lazy.filter { $0.belongs(to: group) && !self.isRunning($0) }.map(\.id))
         return !eligible.isEmpty && eligible.isSubset(of: batchSelectedIDs)
     }
 
@@ -175,8 +184,51 @@ final class AccountStore: ObservableObject {
         updateBatchSelectionStatus()
     }
 
+    @discardableResult
+    func createGroup(_ rawName: String, addingTo accountID: UUID? = nil) -> String? {
+        let cleanName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty else {
+            notice = Notice(title: "Enter a group name", message: "A group name cannot be empty.")
+            return nil
+        }
+        let groupName = groupNames.first(where: {
+            $0.caseInsensitiveCompare(cleanName) == .orderedSame
+        }) ?? cleanName
+        if !groups.contains(where: { $0.caseInsensitiveCompare(groupName) == .orderedSame }) {
+            groups = ManagedAccount.normalizedGroups(groups + [groupName])
+        }
+        if let accountID,
+           let index = accounts.firstIndex(where: { $0.id == accountID }),
+           !accounts[index].belongs(to: groupName) {
+            accounts[index].groups = ManagedAccount.normalizedGroups(accounts[index].groups + [groupName])
+        }
+        do {
+            try repository.saveGroups(groups)
+            if accountID != nil { try repository.save(accounts) }
+            launchStatus = "Group saved"
+            return groupName
+        } catch {
+            notice = Notice(title: "Group was not saved", message: error.localizedDescription)
+            return nil
+        }
+    }
+
+    func setMembership(of account: ManagedAccount, in group: String, isMember: Bool) {
+        guard let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
+        var updated = accounts[index]
+        if isMember {
+            updated.groups = ManagedAccount.normalizedGroups(updated.groups + [group])
+        } else {
+            updated.groups.removeAll { $0.caseInsensitiveCompare(group) == .orderedSame }
+        }
+        update(updated)
+    }
+
     func refreshRunningInstances() async {
-        runningAccountIDs = await launcher.runningAccountIDs(from: accounts.map(\.id))
+        let refreshedIDs = await launcher.runningAccountIDs(from: accounts.map(\.id))
+        if refreshedIDs != runningAccountIDs {
+            runningAccountIDs = refreshedIDs
+        }
     }
 
     private func refreshAvatarURLs() async {
@@ -237,14 +289,15 @@ final class AccountStore: ObservableObject {
     func update(_ account: ManagedAccount) {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
         var updated = account
-        let cleanGroup = updated.group.trimmingCharacters(in: .whitespacesAndNewlines)
-        updated.group = cleanGroup.isEmpty ? "Default" : cleanGroup
+        updated.groups = ManagedAccount.normalizedGroups(updated.groups)
         if updated.avatarURLString == nil {
             updated.avatarURLString = accounts[index].avatarURLString
         }
         accounts[index] = updated
+        groups = ManagedAccount.normalizedGroups(groups + updated.groups)
         do {
             try repository.save(accounts)
+            try repository.saveGroups(groups)
             launchStatus = "Saved"
         } catch {
             notice = Notice(title: "Changes were not saved", message: error.localizedDescription)

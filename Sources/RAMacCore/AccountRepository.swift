@@ -38,6 +38,23 @@ public final class AccountRepository: @unchecked Sendable {
         try encoder.encode(accounts).write(to: file, options: [.atomic, .completeFileProtection])
     }
 
+    public func loadGroups() throws -> [String] {
+        let file = dataDirectory.appendingPathComponent("Groups.json")
+        guard fileManager.fileExists(atPath: file.path) else { return [] }
+        return ManagedAccount.normalizedGroups(
+            try decoder.decode([String].self, from: Data(contentsOf: file))
+        )
+    }
+
+    public func saveGroups(_ groups: [String]) throws {
+        try fileManager.createDirectory(at: dataDirectory, withIntermediateDirectories: true)
+        let file = dataDirectory.appendingPathComponent("Groups.json")
+        try encoder.encode(ManagedAccount.normalizedGroups(groups)).write(
+            to: file,
+            options: [.atomic, .completeFileProtection]
+        )
+    }
+
     public static func defaultDataDirectory(fileManager: FileManager = .default) -> URL {
         let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return root.appendingPathComponent("Roblox Account Manager", isDirectory: true)

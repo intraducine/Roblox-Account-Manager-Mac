@@ -23,10 +23,10 @@ struct LicenseNoticeView: View {
                     )
                 }
 
-                Section("Launch Modes") {
-                    Text("Unmodified Parallel is the default. It runs byte-identical Roblox copies that keep Roblox's original signature.")
-                    Text("Official Roblox uses /Applications/Roblox.app directly. Roblox allows only one client in this mode.")
-                    Text("Modified Parallel Fallback can run more than one account. It changes and signs managed copies. Roblox says modified clients are not allowed.")
+                Section("Managed Roblox Clients") {
+                    Text("The manager always prepares a separate Roblox client. This lets you start another managed account without closing the first one.")
+                    Text("Normal launches use byte-identical copies of /Applications/Roblox.app. They keep Roblox's original bundle files and signature.")
+                    Text("The advanced modified fallback changes bundle settings and signs each copy again. Roblox says modified clients are not allowed.")
                         .foregroundStyle(.secondary)
                 }
 

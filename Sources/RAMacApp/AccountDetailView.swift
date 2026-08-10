@@ -5,14 +5,23 @@ struct AccountDetailView: View {
     @ObservedObject var store: AccountStore
     let account: ManagedAccount
     let showsLaunchBar: Bool
+    let onRequestModifiedFallback: () -> Void
     @State private var draft: ManagedAccount
     @State private var placeID: String
     @State private var server: String
+    @State private var showsNewGroup = false
+    @State private var newGroupName = ""
 
-    init(store: AccountStore, account: ManagedAccount, showsLaunchBar: Bool = true) {
+    init(
+        store: AccountStore,
+        account: ManagedAccount,
+        showsLaunchBar: Bool = true,
+        onRequestModifiedFallback: @escaping () -> Void = {}
+    ) {
         self.store = store
         self.account = account
         self.showsLaunchBar = showsLaunchBar
+        self.onRequestModifiedFallback = onRequestModifiedFallback
         _draft = State(initialValue: account)
         _placeID = State(initialValue: account.savedPlaceID)
         _server = State(initialValue: account.savedServer)
@@ -32,15 +41,32 @@ struct AccountDetailView: View {
                             .labelsHidden()
                             .frame(maxWidth: 360)
                     }
-                    LabeledContent("Group") {
-                        TextField("Group", text: $draft.group, prompt: Text("Default"))
-                            .labelsHidden()
-                            .frame(maxWidth: 360)
-                    }
                     HStack {
                         Spacer()
                         Button("Save Changes") { store.update(draft) }
                             .keyboardShortcut("s", modifiers: .command)
+                    }
+                }
+
+                Section("Groups") {
+                    if store.groupNames.isEmpty {
+                        Text("This account is not in a group.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(store.groupNames, id: \.self) { group in
+                            Toggle(
+                                group,
+                                isOn: Binding(
+                                    get: { draft.belongs(to: group) },
+                                    set: { isMember in setDraftMembership(group, isMember: isMember) }
+                                )
+                            )
+                            .toggleStyle(.checkbox)
+                        }
+                    }
+                    Button("New Group…", systemImage: "plus") {
+                        newGroupName = ""
+                        showsNewGroup = true
                     }
                 }
 
@@ -55,6 +81,26 @@ struct AccountDetailView: View {
             if showsLaunchBar {
                 accountLaunchBar
             }
+        }
+        .sheet(isPresented: $showsNewGroup) {
+            NewGroupSheet(
+                name: $newGroupName,
+                message: "Create a group and add this account to it. Save the account to keep the new membership.",
+                onCreate: {
+                    if let group = store.createGroup(newGroupName) {
+                        setDraftMembership(group, isMember: true)
+                    }
+                    newGroupName = ""
+                    showsNewGroup = false
+                },
+                onCancel: {
+                    newGroupName = ""
+                    showsNewGroup = false
+                }
+            )
+        }
+        .onChange(of: account.groups) { groups in
+            draft.groups = groups
         }
     }
 
@@ -104,19 +150,24 @@ struct AccountDetailView: View {
                     .fontWeight(.semibold)
                 Text("@\(draft.username)")
                     .foregroundStyle(.secondary)
-                Text("· \(store.launchMode.shortTitle)")
-                    .foregroundStyle(store.launchMode == .modifiedParallel ? Color.orange : .secondary)
                 Spacer()
                 Text(store.launchStatus)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
+            LaunchClientNotice(
+                store: store,
+                onRequestModifiedFallback: onRequestModifiedFallback
+            )
+
             HStack(spacing: 10) {
                 TextField("Place ID", text: $placeID)
                     .frame(width: 170)
                     .disabled(store.isRunning(account))
-                TextField("Job ID or private server link", text: $server)
+                ServerTargetHelpButton()
+                    .disabled(store.isRunning(account))
+                TextField("Specific server (optional)", text: $server)
                     .disabled(store.isRunning(account))
 
                 if store.isRunning(account) {
@@ -138,5 +189,13 @@ struct AccountDetailView: View {
         }
         .padding(14)
         .background(.bar)
+    }
+
+    private func setDraftMembership(_ group: String, isMember: Bool) {
+        if isMember {
+            draft.groups = ManagedAccount.normalizedGroups(draft.groups + [group])
+        } else {
+            draft.groups.removeAll { $0.caseInsensitiveCompare(group) == .orderedSame }
+        }
     }
 }

@@ -26,4 +26,33 @@ final class AccountRepositoryTests: XCTestCase {
             atPath: directory.appendingPathComponent("Accounts.backup.json").path
         ))
     }
+
+    func testLoadsLegacySingleGroupAndSavesMultipleGroups() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let account = ManagedAccount(
+            userID: 7,
+            username: "legacy",
+            displayName: "Legacy",
+            groups: ["First", "Second"]
+        )
+        try repository.save([account])
+
+        let file = directory.appendingPathComponent("Accounts.json")
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [[String: Any]]
+        )
+        object[0]["groups"] = nil
+        object[0]["group"] = "Legacy Group"
+        try JSONSerialization.data(withJSONObject: object).write(to: file)
+
+        let migrated = try XCTUnwrap(repository.load().first)
+        XCTAssertEqual(migrated.groups, ["Legacy Group"])
+
+        migrated.groups.forEach { XCTAssertTrue(migrated.belongs(to: $0)) }
+        try repository.saveGroups(["Second", "First", "first"])
+        XCTAssertEqual(try repository.loadGroups(), ["First", "Second"])
+    }
 }

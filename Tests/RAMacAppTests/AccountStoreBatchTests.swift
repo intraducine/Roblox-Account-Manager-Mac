@@ -5,33 +5,29 @@ import XCTest
 
 @MainActor
 final class AccountStoreBatchTests: XCTestCase {
-    func testLaunchModeDefaultsToUnmodifiedAndPersistsExplicitFallback() throws {
+    func testLaunchModeDefaultsToUnmodifiedAndFallbackIsSessionOnly() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-mode-tests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let suiteName = "RAMacAppModeTests-\(UUID().uuidString)"
-        let preferences = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { preferences.removePersistentDomain(forName: suiteName) }
         let launcher = BatchMockLauncher(failingAccountID: nil)
 
         let initial = AccountStore(
             repository: AccountRepository(dataDirectory: directory),
             vault: MemoryVault(),
             api: BatchMockAPI(),
-            launcher: launcher,
-            preferences: preferences
+            launcher: launcher
         )
         XCTAssertEqual(initial.launchMode, .unmodifiedParallel)
 
         initial.setLaunchMode(.modifiedParallel)
+        XCTAssertEqual(initial.launchMode, .modifiedParallel)
         let reloaded = AccountStore(
             repository: AccountRepository(dataDirectory: directory),
             vault: MemoryVault(),
             api: BatchMockAPI(),
-            launcher: launcher,
-            preferences: preferences
+            launcher: launcher
         )
-        XCTAssertEqual(reloaded.launchMode, .modifiedParallel)
+        XCTAssertEqual(reloaded.launchMode, .unmodifiedParallel)
     }
 
     func testGroupSelectionTogglesEveryEligibleAccount() throws {
@@ -45,6 +41,32 @@ final class AccountStoreBatchTests: XCTestCase {
         fixture.store.toggleBatchGroup("Wave")
         XCTAssertTrue(fixture.store.batchSelectedIDs.isEmpty)
         XCTAssertFalse(fixture.store.isBatchGroupSelected("Wave"))
+    }
+
+    func testAccountCanJoinSeveralGroupsAndEachGroupCanSelectIt() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        _ = fixture.store.createGroup("Favorites", addingTo: fixture.accounts[0].id)
+        let updated = try XCTUnwrap(fixture.store.accounts.first(where: { $0.id == fixture.accounts[0].id }))
+        XCTAssertTrue(updated.belongs(to: "Wave"))
+        XCTAssertTrue(updated.belongs(to: "Favorites"))
+
+        fixture.store.toggleBatchGroup("Favorites")
+        XCTAssertEqual(fixture.store.batchSelectedIDs, [fixture.accounts[0].id])
+    }
+
+    func testShiftRangeSelectionSelectsEveryEligibleAccountBetweenAnchors() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        fixture.store.selectBatchRange(
+            from: fixture.accounts[0].id,
+            to: fixture.accounts[2].id,
+            orderedAccounts: fixture.accounts
+        )
+
+        XCTAssertEqual(fixture.store.batchSelectedIDs, Set(fixture.accounts.map(\.id)))
     }
 
     func testBatchLaunchStartsRequestsTogetherAndKeepsOnlyFailuresSelected() async throws {
@@ -113,13 +135,11 @@ final class AccountStoreBatchTests: XCTestCase {
         let api = BatchMockAPI()
         let failingID = failingIndex.map { accounts[$0].id }
         let launcher = BatchMockLauncher(failingAccountID: failingID)
-        let preferences = try XCTUnwrap(UserDefaults(suiteName: "RAMacAppTests-\(UUID().uuidString)"))
         let store = AccountStore(
             repository: repository,
             vault: vault,
             api: api,
             launcher: launcher,
-            preferences: preferences,
             launchMode: .unmodifiedParallel
         )
         return Fixture(
