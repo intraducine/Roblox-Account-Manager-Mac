@@ -24,7 +24,8 @@ struct LicenseNoticeView: View {
                 }
 
                 Section("Launch Modes") {
-                    Text("Official Roblox is the default. It uses /Applications/Roblox.app without copying, editing, or signing it.")
+                    Text("Unmodified Parallel is the default. It runs byte-identical Roblox copies that keep Roblox's original signature.")
+                    Text("Official Roblox uses /Applications/Roblox.app directly. Roblox allows only one client in this mode.")
                     Text("Modified Parallel Fallback can run more than one account. It changes and signs managed copies. Roblox says modified clients are not allowed.")
                         .foregroundStyle(.secondary)
                 }
@@ -44,6 +45,6 @@ struct LicenseNoticeView: View {
                 }
             }
         }
-        .frame(width: 560, height: 620)
+        .frame(width: 640, height: 620)
     }
 }

@@ -5,7 +5,7 @@ import XCTest
 
 @MainActor
 final class AccountStoreBatchTests: XCTestCase {
-    func testLaunchModeDefaultsToOfficialAndPersistsExplicitFallback() throws {
+    func testLaunchModeDefaultsToUnmodifiedAndPersistsExplicitFallback() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-mode-tests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -21,7 +21,7 @@ final class AccountStoreBatchTests: XCTestCase {
             launcher: launcher,
             preferences: preferences
         )
-        XCTAssertEqual(initial.launchMode, .official)
+        XCTAssertEqual(initial.launchMode, .unmodifiedParallel)
 
         initial.setLaunchMode(.modifiedParallel)
         let reloaded = AccountStore(
@@ -60,7 +60,7 @@ final class AccountStoreBatchTests: XCTestCase {
         let runningAccountIDs = await fixture.launcher.runningAccountIDs(from: fixture.accounts.map(\.id))
         XCTAssertEqual(maximumConcurrentRequests, 3)
         XCTAssertEqual(attemptedAccountIDs, Set(fixture.accounts.map(\.id)))
-        XCTAssertEqual(attemptedModes, [.modifiedParallel])
+        XCTAssertEqual(attemptedModes, [.unmodifiedParallel])
         XCTAssertEqual(runningAccountIDs, Set([fixture.accounts[0].id, fixture.accounts[2].id]))
         XCTAssertEqual(fixture.store.batchSelectedIDs, Set([fixture.accounts[1].id]))
         XCTAssertEqual(fixture.store.batchStatus, "2 started, 1 failed")
@@ -83,7 +83,7 @@ final class AccountStoreBatchTests: XCTestCase {
         fixture.store.toggleBatchGroup("Wave")
         await fixture.store.launchBatch(placeText: "12345", serverText: "")
         XCTAssertEqual(fixture.store.runningAccountIDs, Set(fixture.accounts.map(\.id)))
-        XCTAssertEqual(fixture.store.launchStatus, "Running 3 accounts with parallel fallback")
+        XCTAssertEqual(fixture.store.launchStatus, "Running 3 accounts with unmodified Roblox")
 
         await fixture.store.stopAll()
 
@@ -120,7 +120,7 @@ final class AccountStoreBatchTests: XCTestCase {
             api: api,
             launcher: launcher,
             preferences: preferences,
-            launchMode: .modifiedParallel
+            launchMode: .unmodifiedParallel
         )
         return Fixture(
             directory: directory,

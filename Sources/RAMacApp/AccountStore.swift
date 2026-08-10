@@ -53,7 +53,7 @@ final class AccountStore: ObservableObject {
     private let launcher: any ParallelRobloxLaunching
     private let preferences: UserDefaults
 
-    private static let launchModeKey = "RobloxLaunchMode"
+    private static let launchModeKey = "RobloxLaunchModeV2"
 
     init(
         repository: AccountRepository = AccountRepository(),
@@ -72,7 +72,7 @@ final class AccountStore: ObservableObject {
         self.preferences = preferences
         self.launchMode = launchMode
             ?? preferences.string(forKey: Self.launchModeKey).flatMap(RobloxLaunchMode.init(rawValue:))
-            ?? .official
+            ?? .unmodifiedParallel
         load()
     }
 
@@ -81,13 +81,20 @@ final class AccountStore: ObservableObject {
         guard runningAccountIDs.isEmpty else {
             notice = Notice(
                 title: "Stop Roblox before changing mode",
-                message: "Use Stop All, then select (mode.title)."
+                message: "Use Stop All, then select \(mode.title)."
             )
             return
         }
         launchMode = mode
         preferences.set(mode.rawValue, forKey: Self.launchModeKey)
-        launchStatus = mode == .official ? "Official Roblox selected" : "Modified fallback selected"
+        switch mode {
+        case .unmodifiedParallel:
+            launchStatus = "Unmodified Parallel selected"
+        case .official:
+            launchStatus = "Official Roblox selected"
+        case .modifiedParallel:
+            launchStatus = "Modified fallback selected"
+        }
     }
 
     var selectedAccount: ManagedAccount? {
@@ -360,7 +367,14 @@ final class AccountStore: ObservableObject {
             launchStatus = "Requesting a launch ticket"
             let ticket = try await api.authenticationTicket(cookie: cookie)
             let url = try builder.makeURL(ticket: ticket, placeID: placeID, target: target)
-            launchStatus = launchMode == .official ? "Opening official Roblox" : "Preparing a modified Roblox copy"
+            switch launchMode {
+            case .unmodifiedParallel:
+                launchStatus = "Preparing an exact Roblox copy"
+            case .official:
+                launchStatus = "Opening official Roblox"
+            case .modifiedParallel:
+                launchStatus = "Preparing a modified Roblox copy"
+            }
             _ = try await launcher.launch(url, for: account.id, mode: launchMode)
             await refreshRunningInstances()
             guard isRunning(account) else {
@@ -374,9 +388,14 @@ final class AccountStore: ObservableObject {
             updated.savedPlaceID = placeText.trimmingCharacters(in: .whitespacesAndNewlines)
             updated.savedServer = serverInput
             update(updated)
-            launchStatus = launchMode == .official
-                ? "Running @\(account.username) with official Roblox"
-                : "Running @\(account.username) with parallel fallback"
+            switch launchMode {
+            case .unmodifiedParallel:
+                launchStatus = "Running @\(account.username) with unmodified Roblox"
+            case .official:
+                launchStatus = "Running @\(account.username) with official Roblox"
+            case .modifiedParallel:
+                launchStatus = "Running @\(account.username) with parallel fallback"
+            }
         } catch {
             launchStatus = "Launch failed"
             notice = Notice(title: "Roblox did not launch", message: error.localizedDescription)
@@ -496,9 +515,14 @@ final class AccountStore: ObservableObject {
             batchSelectedIDs.removeAll()
             batchStates.removeAll()
             batchStatus = "Started all \(total) accounts"
-            launchStatus = launchMode == .official
-                ? "Running \(total) accounts with official Roblox"
-                : "Running \(total) accounts with parallel fallback"
+            switch launchMode {
+            case .unmodifiedParallel:
+                launchStatus = "Running \(total) accounts with unmodified Roblox"
+            case .official:
+                launchStatus = "Running \(total) accounts with official Roblox"
+            case .modifiedParallel:
+                launchStatus = "Running \(total) accounts with parallel fallback"
+            }
         } else {
             batchSelectedIDs = Set(failures.map(\.accountID))
             batchStates = batchStates.filter { batchSelectedIDs.contains($0.key) }

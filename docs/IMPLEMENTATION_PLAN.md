@@ -74,6 +74,17 @@ The app uses standard macOS structure and controls. It follows the system appear
 - Never switch from official mode to the fallback automatically.
 - State the modified-client account risk in the app and README.
 
+### Phase 7: complete in version 0.7.0
+
+- Make byte-identical per-account copies of the official Roblox bundle.
+- Keep Roblox Corporation's original Team ID, bundle ID, files, and code-directory hash.
+- Store preparation metadata outside the copied app.
+- Bypass Launch Services by starting each unchanged executable directly.
+- Deliver each launch URL with a process-targeted Apple Event.
+- Keep authentication tickets out of command-line arguments and logs.
+- Reject and remove any copy that fails file or signature checks.
+- Make Unmodified Parallel the default and keep the modified method behind its warning.
+
 ### Suitable follow-up work
 
 - Signed and notarized release builds.

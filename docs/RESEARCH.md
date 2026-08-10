@@ -70,3 +70,15 @@ This produced two `RobloxPlayer` processes from different temporary bundles at t
 Version 0.2.0 implements that method per account. It uses AppKit to send the launch URL so the authentication ticket does not appear in a shell command or process argument. It verifies the official Roblox signature and Team ID `2CFABCH843` before making any copy.
 
 Version 0.5.0 supersedes the temporary-copy and unique-ID parts of that method. It keeps one copy per account, gives every copy one shared stable ID, uses an installed Apple signing identity when available, and tracks each process by its saved PID and exact app path.
+
+## Exact-copy parallel launch
+
+Version 0.7.0 tests a different boundary. Every file in each managed Roblox app must stay byte-identical to `/Applications/Roblox.app`, and the copy must keep Roblox Corporation's original signature.
+
+`open -n` and `NSWorkspace.OpenConfiguration.createsNewApplicationInstance` did not keep two exact copies open. Launch Services still applied `LSMultipleInstancesProhibited` from Roblox's unchanged `Info.plist`. Direct execution of `Contents/MacOS/RobloxPlayer` from two exact copies did keep two processes open on the same desktop. The old `/RobloxPlayerUniq` semaphore was absent and did not need removal.
+
+A second isolated test launched two exact copies without URL arguments. It sent a `kInternetEventClass` and `kAEGetURL` Apple Event to each exact process ID. Each process received its own invalid test ticket and returned Roblox's expected HTTP 403 response. The URL was not present in either process argument list. This proves that the manager can route a launch link to one selected exact process without Launch Services and without command-line ticket exposure.
+
+The implementation makes an APFS clone per account, runs recursive file comparison, performs strict deep code-signature validation, and compares the Team ID and code-directory hash with the installed app. Its small manifest stays outside the copied app. A changed file, changed signature, changed source version, or failed comparison causes a new copy or a stopped launch. The modified fallback remains separate.
+
+The signed version 0.7.0 app then launched two saved accounts into place `1818` on the same desktop. Both clients reached the game in separate windows. Their process IDs were distinct, and each process ran from its own `Unmodified/Roblox.app` path. Recursive comparison against `/Applications/Roblox.app` found no changed files. Both copies passed strict deep signature validation with bundle ID `com.roblox.RobloxPlayer`, Team ID `2CFABCH843`, and CDHash `05d0d0f609d987b9d1812d310a5fd4f315090eb4`. Their `Info.plist` and `RobloxPlayer` SHA-256 values matched the installed app. No password, microphone, local-network, notification, login-item, or Automation prompt appeared during this test. Stop All closed both games and both copied menu helpers, and a system process check found no managed Roblox process afterward.

@@ -13,7 +13,7 @@ struct BatchLaunchBar: View {
                 Text("\(selectionCount) account\(selectionCount == 1 ? "" : "s")")
                     .foregroundStyle(.secondary)
                 Text("· \(store.launchMode.shortTitle)")
-                    .foregroundStyle(store.launchMode == .official ? .secondary : Color.orange)
+                    .foregroundStyle(store.launchMode == .modifiedParallel ? Color.orange : .secondary)
                 Spacer()
                 Text(store.batchStatus)
                     .font(.caption)

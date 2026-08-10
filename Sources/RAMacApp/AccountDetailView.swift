@@ -105,7 +105,7 @@ struct AccountDetailView: View {
                 Text("@\(draft.username)")
                     .foregroundStyle(.secondary)
                 Text("· \(store.launchMode.shortTitle)")
-                    .foregroundStyle(store.launchMode == .official ? .secondary : Color.orange)
+                    .foregroundStyle(store.launchMode == .modifiedParallel ? Color.orange : .secondary)
                 Spacer()
                 Text(store.launchStatus)
                     .font(.caption)

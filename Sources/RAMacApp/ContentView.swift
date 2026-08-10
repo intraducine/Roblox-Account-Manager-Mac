@@ -40,6 +40,15 @@ struct ContentView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 Menu {
                     Button {
+                        store.setLaunchMode(.unmodifiedParallel)
+                    } label: {
+                        Label(
+                            "Unmodified Parallel",
+                            systemImage: store.launchMode == .unmodifiedParallel ? "checkmark" : "checkmark.shield"
+                        )
+                    }
+
+                    Button {
                         store.setLaunchMode(.official)
                     } label: {
                         Label("Official Roblox", systemImage: store.launchMode == .official ? "checkmark" : "app")
@@ -56,7 +65,10 @@ struct ContentView: View {
                         )
                     }
                 } label: {
-                    Label(store.launchMode.shortTitle, systemImage: store.launchMode == .official ? "checkmark.shield" : "exclamationmark.triangle")
+                    Label(
+                        store.launchMode.shortTitle,
+                        systemImage: store.launchMode == .modifiedParallel ? "exclamationmark.triangle" : "checkmark.shield"
+                    )
                 }
                 .help(store.launchMode.detail)
 
@@ -105,7 +117,7 @@ struct ContentView: View {
             Button("Use Modified Fallback", role: .destructive) {
                 store.setLaunchMode(.modifiedParallel)
             }
-            Button("Keep Official Roblox", role: .cancel) {}
+            Button("Keep Unmodified Parallel", role: .cancel) {}
         } message: {
             Text("This mode copies Roblox, changes the copy's bundle settings, and signs it again. Roblox says modified clients are not allowed. The app will never select this mode for you.")
         }

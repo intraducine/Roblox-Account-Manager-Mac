@@ -111,6 +111,79 @@ final class RobloxLauncherTests: XCTestCase {
         )
     }
 
+    func testUnmodifiedParallelModeDescribesExactOriginalSignatureCopies() {
+        XCTAssertEqual(RobloxLaunchMode.unmodifiedParallel.title, "Unmodified Parallel")
+        XCTAssertTrue(RobloxLaunchMode.unmodifiedParallel.detail.contains("byte-identical"))
+        XCTAssertTrue(RobloxLaunchMode.unmodifiedParallel.detail.contains("original signature"))
+    }
+
+    func testLiveConcurrentUnmodifiedLaunchWhenEnabled() async throws {
+        guard ProcessInfo.processInfo.environment["RAM_RUN_UNMODIFIED_INTEGRATION"] == "1" else {
+            throw XCTSkip("Set RAM_RUN_UNMODIFIED_INTEGRATION=1 to run the exact-copy integration test.")
+        }
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-unmodified-integration-\(UUID().uuidString)", isDirectory: true)
+        let launcher = ParallelRobloxLauncher(instancesRoot: root)
+        let accountIDs = [UUID(), UUID()]
+        addTeardownBlock {
+            for accountID in accountIDs {
+                _ = await launcher.stop(accountID: accountID)
+            }
+            try? FileManager.default.removeItem(at: root)
+        }
+        let invalidTicketURL = try builder.makeURL(
+            ticket: "invalid-unmodified-integration-ticket",
+            placeID: 920587237,
+            trackerID: "123456789012",
+            launchTime: 1
+        )
+
+        let instances = try await withThrowingTaskGroup(of: ParallelRobloxInstance.self) { group in
+            for accountID in accountIDs {
+                group.addTask {
+                    try await launcher.launch(
+                        invalidTicketURL,
+                        for: accountID,
+                        mode: .unmodifiedParallel
+                    )
+                }
+            }
+            var launched: [ParallelRobloxInstance] = []
+            for try await instance in group { launched.append(instance) }
+            return launched
+        }
+
+        XCTAssertEqual(instances.count, 2)
+        XCTAssertEqual(Set(instances.map(\.processIdentifier)).count, 2)
+        let runningAfterLaunch = await launcher.runningAccountIDs(from: accountIDs)
+        XCTAssertEqual(runningAfterLaunch, Set(accountIDs))
+        for instance in instances {
+            XCTAssertEqual(kill(instance.processIdentifier, 0), 0)
+            XCTAssertTrue(instance.applicationURL.path.contains("/Unmodified/Roblox.app"))
+            XCTAssertNoThrow(try runCommand(
+                "/usr/bin/diff",
+                ["-qr", ParallelRobloxLauncher.officialApplicationURL.path, instance.applicationURL.path]
+            ))
+            XCTAssertNoThrow(try runCommand(
+                "/usr/bin/codesign",
+                ["--verify", "--deep", "--strict", instance.applicationURL.path]
+            ))
+            let signature = try runCommand(
+                "/usr/bin/codesign",
+                ["-d", "--verbose=4", instance.applicationURL.path]
+            )
+            XCTAssertTrue(signature.contains("TeamIdentifier=\(ParallelRobloxLauncher.officialTeamIdentifier)"))
+        }
+
+        for accountID in accountIDs {
+            let stopped = await launcher.stop(accountID: accountID)
+            XCTAssertTrue(stopped)
+        }
+        let runningAfterStop = await launcher.runningAccountIDs(from: accountIDs)
+        XCTAssertTrue(runningAfterStop.isEmpty)
+    }
+
     func testLiveConcurrentParallelCopyLaunchWhenEnabled() async throws {
         guard ProcessInfo.processInfo.environment["RAM_RUN_PARALLEL_INTEGRATION"] == "1" else {
             throw XCTSkip("Set RAM_RUN_PARALLEL_INTEGRATION=1 to run the installed-Roblox integration test.")
@@ -169,4 +242,26 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertTrue(runningAfterStop.isEmpty)
         await launcher.removeStaleCopies()
     }
+}
+
+@discardableResult
+private func runCommand(_ executable: String, _ arguments: [String]) throws -> String {
+    let process = Process()
+    let pipe = Pipe()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    process.standardOutput = pipe
+    process.standardError = pipe
+    try process.run()
+    process.waitUntilExit()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    let output = String(data: data, encoding: .utf8) ?? ""
+    guard process.terminationStatus == 0 else {
+        throw NSError(
+            domain: "RobloxLauncherTests",
+            code: Int(process.terminationStatus),
+            userInfo: [NSLocalizedDescriptionKey: output]
+        )
+    }
+    return output
 }

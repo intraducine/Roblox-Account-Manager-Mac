@@ -10,6 +10,7 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
     case untrustedRobloxInstallation
     case accountAlreadyRunning
     case officialParallelUnavailable
+    case unmodifiedParallelUnavailable(String)
     case copyFailed(String)
     case signingFailed(String)
     case openFailed
@@ -29,7 +30,9 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
         case .accountAlreadyRunning:
             return "This account already has a Roblox instance open. Stop it before launching it again."
         case .officialParallelUnavailable:
-            return "The official Roblox app did not allow another client. Stop the running client or choose Modified Parallel Fallback."
+            return "The official Roblox app did not allow another client. Stop the running client or choose Unmodified Parallel."
+        case .unmodifiedParallelUnavailable(let detail):
+            return "The unmodified Roblox client could not start. \(detail)"
         case .copyFailed(let detail):
             return "The managed Roblox copy could not be prepared. \(detail)"
         case .signingFailed(let detail):
@@ -41,11 +44,13 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
 }
 
 public enum RobloxLaunchMode: String, Codable, CaseIterable, Hashable, Sendable {
+    case unmodifiedParallel
     case official
     case modifiedParallel
 
     public var title: String {
         switch self {
+        case .unmodifiedParallel: return "Unmodified Parallel"
         case .official: return "Official Roblox"
         case .modifiedParallel: return "Modified Parallel Fallback"
         }
@@ -53,6 +58,7 @@ public enum RobloxLaunchMode: String, Codable, CaseIterable, Hashable, Sendable 
 
     public var shortTitle: String {
         switch self {
+        case .unmodifiedParallel: return "Unmodified"
         case .official: return "Official"
         case .modifiedParallel: return "Parallel Fallback"
         }
@@ -60,6 +66,8 @@ public enum RobloxLaunchMode: String, Codable, CaseIterable, Hashable, Sendable 
 
     public var detail: String {
         switch self {
+        case .unmodifiedParallel:
+            return "Runs byte-identical Roblox copies with Roblox's original signature."
         case .official:
             return "Uses /Applications/Roblox.app without copying, editing, or signing it."
         case .modifiedParallel:
@@ -146,11 +154,18 @@ private struct ParallelProcessRecord: Codable {
     let applicationPath: String
 }
 
+private struct UnmodifiedCopyManifest: Codable {
+    let formatVersion: Int
+    let sourceBundleVersion: String
+    let sourceCodeDirectoryHash: String
+}
+
 public actor ParallelRobloxLauncher {
     public static let officialApplicationURL = URL(fileURLWithPath: "/Applications/Roblox.app", isDirectory: true)
     public static let officialTeamIdentifier = "2CFABCH843"
     public static let parallelBundleIdentifier = "com.intraducine.RobloxAccountManager.player"
     public static let preparationVersion = 4
+    public static let unmodifiedPreparationVersion = 1
 
     public static let managedClientSettings: [String: Bool] = [
         "DFFlagEnableMacDesktopNotifications2": false,
@@ -221,16 +236,21 @@ public actor ParallelRobloxLauncher {
 
         try verifyOfficialApplication()
         let applicationURL: URL
+        let openedProcessIdentifier: Int32
         switch mode {
+        case .unmodifiedParallel:
+            applicationURL = try prepareUnmodifiedCopy(for: accountID)
+            openedProcessIdentifier = try await launchUnmodified(url, with: applicationURL)
         case .official:
             applicationURL = Self.officialApplicationURL
+            openedProcessIdentifier = try await open(url, with: applicationURL)
         case .modifiedParallel:
             applicationURL = try prepareCopy(for: accountID)
             // Older Roblox builds used this named semaphore. Current builds may not create it.
             _ = sem_unlink("/RobloxPlayerUniq")
+            openedProcessIdentifier = try await open(url, with: applicationURL)
         }
 
-        let openedProcessIdentifier = try await open(url, with: applicationURL)
         let processIdentifier: Int32
         if mode == .official {
             processIdentifier = try await resolveOfficialProcessIdentifier(
@@ -260,8 +280,11 @@ public actor ParallelRobloxLauncher {
 
     public func runningAccountIDs(from accountIDs: [UUID]) async -> Set<UUID> {
         var result = Set<UUID>()
-        for accountID in accountIDs where await isRunning(accountID: accountID) {
-            result.insert(accountID)
+        for accountID in accountIDs {
+            if await isRunning(accountID: accountID) {
+                result.insert(accountID)
+            }
+            _ = await stopManagedHelpers(for: accountID)
         }
         return result
     }
@@ -275,17 +298,31 @@ public actor ParallelRobloxLauncher {
             }
             return stopped
         }
-        guard let application = await runningApplication(for: accountID) else { return true }
-        _ = await MainActor.run { application.terminate() }
-
-        if await waitUntilStopped(accountID: accountID, attempts: 20) {
-            return true
+        guard let record = validProcessRecord(for: accountID) else {
+            try? fileManager.removeItem(at: processRecordURL(for: accountID))
+            return await stopManagedHelpers(for: accountID)
         }
-
-        if let remaining = await runningApplication(for: accountID) {
-            _ = await MainActor.run { remaining.forceTerminate() }
+        let mainExecutablePath = canonicalPath(
+            URL(fileURLWithPath: record.applicationPath, isDirectory: true)
+                .appendingPathComponent("Contents/MacOS/RobloxPlayer")
+                .path
+        )
+        for attempt in 0..<8 {
+            _ = await stopManagedHelpers(for: accountID)
+            let matchingProcesses = runningProcessTable().filter { $0.value == mainExecutablePath }
+            if matchingProcesses.isEmpty {
+                try? fileManager.removeItem(at: processRecordURL(for: accountID))
+                return await stopManagedHelpers(for: accountID)
+            }
+            let signal = attempt < 4 ? SIGTERM : SIGKILL
+            for processIdentifier in matchingProcesses.keys {
+                _ = kill(processIdentifier, signal)
+            }
+            try? await Task.sleep(nanoseconds: 400_000_000)
         }
-        return await waitUntilStopped(accountID: accountID, attempts: 10)
+        let mainStopped = runningProcessTable().values.allSatisfy { $0 != mainExecutablePath }
+        let helpersStopped = await stopManagedHelpers(for: accountID)
+        return mainStopped && helpersStopped
     }
 
     private func stopOfficialApplications() async -> Bool {
@@ -344,28 +381,53 @@ public actor ParallelRobloxLauncher {
     }
 
     private func isRunning(accountID: UUID) async -> Bool {
-        await runningApplication(for: accountID) != nil
+        guard let record = validProcessRecord(for: accountID),
+              recordedProcessIsRunning(record) else {
+            try? fileManager.removeItem(at: processRecordURL(for: accountID))
+            return false
+        }
+        return true
     }
 
-    private func runningApplication(for accountID: UUID) async -> NSRunningApplication? {
+    private func validProcessRecord(for accountID: UUID) -> ParallelProcessRecord? {
         guard let record = readProcessRecord(for: accountID) else { return nil }
         let officialPath = Self.officialApplicationURL.standardizedFileURL.path
         let managedPath = copyURL(for: accountID).standardizedFileURL.path
-        guard record.applicationPath == officialPath || record.applicationPath == managedPath else {
+        let unmodifiedPath = unmodifiedCopyURL(for: accountID).standardizedFileURL.path
+        guard record.applicationPath == officialPath
+            || record.applicationPath == managedPath
+            || record.applicationPath == unmodifiedPath else {
             try? fileManager.removeItem(at: processRecordURL(for: accountID))
             return nil
         }
-        let expectedPath = record.applicationPath
-        let application = await MainActor.run { () -> NSRunningApplication? in
-            guard let application = NSRunningApplication(processIdentifier: record.processIdentifier),
-                  !application.isTerminated,
-                  application.bundleURL?.standardizedFileURL.path == expectedPath else { return nil }
-            return application
+        return record
+    }
+
+    private func recordedProcessIsRunning(_ record: ParallelProcessRecord) -> Bool {
+        let expectedExecutable = URL(fileURLWithPath: record.applicationPath, isDirectory: true)
+            .appendingPathComponent("Contents/MacOS/RobloxPlayer")
+            .path
+        let canonicalExecutable = canonicalPath(expectedExecutable)
+        return runningProcessTable()[record.processIdentifier] == canonicalExecutable
+    }
+
+    private func runningProcessTable() -> [Int32: String] {
+        guard let output = try? run(
+            executable: URL(fileURLWithPath: "/bin/ps"),
+            arguments: ["-axo", "pid=,comm="]
+        ) else { return [:] }
+        var table: [Int32: String] = [:]
+        for line in output.split(separator: "\n") {
+            let fields = line.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })
+            guard fields.count == 2, let processIdentifier = Int32(fields[0]) else { continue }
+            let path = String(fields[1]).trimmingCharacters(in: .whitespaces)
+            table[processIdentifier] = canonicalPath(path)
         }
-        if application == nil {
-            try? fileManager.removeItem(at: processRecordURL(for: accountID))
-        }
-        return application
+        return table
+    }
+
+    private func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
     }
 
     private func recordedProcessIdentifiers(excluding accountID: UUID) async -> Set<Int32> {
@@ -378,8 +440,9 @@ public actor ParallelRobloxLauncher {
         for directory in directories {
             guard let otherID = UUID(uuidString: directory.lastPathComponent),
                   otherID != accountID,
-                  let application = await runningApplication(for: otherID) else { continue }
-            result.insert(application.processIdentifier)
+                  let record = validProcessRecord(for: otherID),
+                  recordedProcessIsRunning(record) else { continue }
+            result.insert(record.processIdentifier)
         }
         return result
     }
@@ -422,14 +485,6 @@ public actor ParallelRobloxLauncher {
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
         throw RobloxLaunchError.officialParallelUnavailable
-    }
-
-    private func waitUntilStopped(accountID: UUID, attempts: Int) async -> Bool {
-        for _ in 0..<attempts {
-            if !(await isRunning(accountID: accountID)) { return true }
-            try? await Task.sleep(nanoseconds: 200_000_000)
-        }
-        return !(await isRunning(accountID: accountID))
     }
 
     private func prepareCopy(for accountID: UUID) throws -> URL {
@@ -486,6 +541,194 @@ public actor ParallelRobloxLauncher {
             throw RobloxLaunchError.signingFailed(error.localizedDescription)
         }
         return copyURL
+    }
+
+    private func prepareUnmodifiedCopy(for accountID: UUID) throws -> URL {
+        try fileManager.createDirectory(at: instancesRoot, withIntermediateDirectories: true)
+        let destinationRoot = unmodifiedRootURL(for: accountID)
+        let destination = unmodifiedCopyURL(for: accountID)
+        let sourceVersion = try bundleVersion(at: Self.officialApplicationURL)
+        let sourceHash = try codeDirectoryHash(at: Self.officialApplicationURL)
+
+        if unmodifiedCopyIsCurrent(
+            destination,
+            sourceVersion: sourceVersion,
+            sourceHash: sourceHash
+        ) {
+            return destination
+        }
+
+        try removeOwnedItem(destinationRoot)
+        try fileManager.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
+        do {
+            try run(
+                executable: URL(fileURLWithPath: "/bin/cp"),
+                arguments: ["-cR", Self.officialApplicationURL.path, destination.path]
+            )
+            try verifyByteIdenticalCopy(destination)
+            try writeUnmodifiedManifest(
+                UnmodifiedCopyManifest(
+                    formatVersion: Self.unmodifiedPreparationVersion,
+                    sourceBundleVersion: sourceVersion,
+                    sourceCodeDirectoryHash: sourceHash
+                ),
+                for: accountID
+            )
+        } catch let error as RobloxLaunchError {
+            try? removeOwnedItem(destinationRoot)
+            throw error
+        } catch {
+            try? removeOwnedItem(destinationRoot)
+            throw RobloxLaunchError.copyFailed(error.localizedDescription)
+        }
+        return destination
+    }
+
+    private func unmodifiedCopyIsCurrent(
+        _ copyURL: URL,
+        sourceVersion: String,
+        sourceHash: String
+    ) -> Bool {
+        guard let data = try? Data(contentsOf: unmodifiedManifestURL(for: copyURL)),
+              let manifest = try? JSONDecoder().decode(UnmodifiedCopyManifest.self, from: data),
+              manifest.formatVersion == Self.unmodifiedPreparationVersion,
+              manifest.sourceBundleVersion == sourceVersion,
+              manifest.sourceCodeDirectoryHash == sourceHash else { return false }
+        do {
+            try verifyByteIdenticalCopy(copyURL)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func verifyByteIdenticalCopy(_ copyURL: URL) throws {
+        do {
+            try run(
+                executable: URL(fileURLWithPath: "/usr/bin/diff"),
+                arguments: ["-qr", Self.officialApplicationURL.path, copyURL.path]
+            )
+            try run(
+                executable: URL(fileURLWithPath: "/usr/bin/codesign"),
+                arguments: ["--verify", "--deep", "--strict", "--verbose=4", copyURL.path]
+            )
+            let sourceHash = try codeDirectoryHash(at: Self.officialApplicationURL)
+            let copyHash = try codeDirectoryHash(at: copyURL)
+            guard sourceHash == copyHash else {
+                throw RobloxLaunchError.copyFailed("The copy does not have the official Roblox code hash.")
+            }
+            let details = try codeSigningDetails(at: copyURL)
+            guard details.contains("TeamIdentifier=\(Self.officialTeamIdentifier)") else {
+                throw RobloxLaunchError.copyFailed("The copy does not have Roblox Corporation's original signature.")
+            }
+        } catch let error as RobloxLaunchError {
+            throw error
+        } catch {
+            throw RobloxLaunchError.copyFailed("The copy differs from the installed Roblox app or its original signature is invalid.")
+        }
+    }
+
+    private func writeUnmodifiedManifest(_ manifest: UnmodifiedCopyManifest, for accountID: UUID) throws {
+        let data = try JSONEncoder().encode(manifest)
+        try data.write(to: unmodifiedManifestURL(for: accountID), options: .atomic)
+    }
+
+    private func launchUnmodified(_ url: URL, with applicationURL: URL) async throws -> Int32 {
+        let executableURL = applicationURL.appendingPathComponent("Contents/MacOS/RobloxPlayer")
+        guard fileManager.isExecutableFile(atPath: executableURL.path) else {
+            throw RobloxLaunchError.unmodifiedParallelUnavailable("The RobloxPlayer executable is missing.")
+        }
+
+        let expectedExecutablePath = canonicalPath(executableURL.path)
+        let existingProcessIdentifiers = Set(
+            runningProcessTable().compactMap { processIdentifier, path in
+                path == expectedExecutablePath ? processIdentifier : nil
+            }
+        )
+        let process = Process()
+        process.executableURL = executableURL
+        process.currentDirectoryURL = executableURL.deletingLastPathComponent()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            throw RobloxLaunchError.unmodifiedParallelUnavailable("macOS could not start the exact app copy.")
+        }
+
+        let processIdentifier = process.processIdentifier
+        do {
+            try await sendLaunchURL(url, to: processIdentifier)
+            return try await resolveUnmodifiedProcess(
+                processIdentifier,
+                executablePath: expectedExecutablePath,
+                excluding: existingProcessIdentifiers
+            )
+        } catch {
+            for candidate in runningProcessTable() where candidate.value == expectedExecutablePath {
+                _ = kill(candidate.key, SIGTERM)
+            }
+            if let launchError = error as? RobloxLaunchError { throw launchError }
+            throw RobloxLaunchError.unmodifiedParallelUnavailable(error.localizedDescription)
+        }
+    }
+
+    private func sendLaunchURL(_ url: URL, to processIdentifier: Int32) async throws {
+        let target = NSAppleEventDescriptor(processIdentifier: processIdentifier)
+        let event = NSAppleEventDescriptor(
+            eventClass: 0x4755524C,
+            eventID: 0x4755524C,
+            targetDescriptor: target,
+            returnID: -1,
+            transactionID: 0
+        )
+        event.setParam(
+            NSAppleEventDescriptor(string: url.absoluteString),
+            forKeyword: 0x2D2D2D2D
+        )
+
+        var lastError: Error?
+        for _ in 0..<20 {
+            guard kill(processIdentifier, 0) == 0 else {
+                throw RobloxLaunchError.unmodifiedParallelUnavailable("Roblox closed before it received the launch request.")
+            }
+            do {
+                _ = try event.sendEvent(options: .noReply, timeout: 2)
+                return
+            } catch {
+                lastError = error
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
+        throw RobloxLaunchError.unmodifiedParallelUnavailable(
+            lastError?.localizedDescription ?? "Roblox did not accept the launch request."
+        )
+    }
+
+    private func resolveUnmodifiedProcess(
+        _ startedProcessIdentifier: Int32,
+        executablePath: String,
+        excluding existingProcessIdentifiers: Set<Int32>
+    ) async throws -> Int32 {
+        var stableProcessIdentifier: Int32?
+        var stableSamples = 0
+        for _ in 0..<50 {
+            let candidates = runningProcessTable()
+                .filter { $0.value == executablePath && !existingProcessIdentifiers.contains($0.key) }
+                .map(\.key)
+            let candidate = candidates.contains(startedProcessIdentifier)
+                ? startedProcessIdentifier
+                : candidates.max()
+            if candidate == stableProcessIdentifier, candidate != nil {
+                stableSamples += 1
+                if stableSamples >= 8 { return candidate! }
+            } else {
+                stableProcessIdentifier = candidate
+                stableSamples = candidate == nil ? 0 : 1
+            }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        throw RobloxLaunchError.unmodifiedParallelUnavailable("Roblox did not remain open after launch.")
     }
 
     private func preparedCopyIsCurrent(_ copyURL: URL, sourceVersion: String) -> Bool {
@@ -580,6 +823,22 @@ public actor ParallelRobloxLauncher {
         accountRootURL(for: accountID).appendingPathComponent("Roblox.app", isDirectory: true)
     }
 
+    private func unmodifiedRootURL(for accountID: UUID) -> URL {
+        accountRootURL(for: accountID).appendingPathComponent("Unmodified", isDirectory: true)
+    }
+
+    private func unmodifiedCopyURL(for accountID: UUID) -> URL {
+        unmodifiedRootURL(for: accountID).appendingPathComponent("Roblox.app", isDirectory: true)
+    }
+
+    private func unmodifiedManifestURL(for accountID: UUID) -> URL {
+        unmodifiedRootURL(for: accountID).appendingPathComponent("Manifest.json")
+    }
+
+    private func unmodifiedManifestURL(for copyURL: URL) -> URL {
+        copyURL.deletingLastPathComponent().appendingPathComponent("Manifest.json")
+    }
+
     private func processRecordURL(for accountID: UUID) -> URL {
         accountRootURL(for: accountID).appendingPathComponent("Process.json")
     }
@@ -600,10 +859,7 @@ public actor ParallelRobloxLauncher {
                 executable: URL(fileURLWithPath: "/usr/bin/codesign"),
                 arguments: ["--verify", "--deep", "--strict", "--verbose=4", Self.officialApplicationURL.path]
             )
-            let details = try run(
-                executable: URL(fileURLWithPath: "/usr/bin/codesign"),
-                arguments: ["-d", "--verbose=4", Self.officialApplicationURL.path]
-            )
+            let details = try codeSigningDetails(at: Self.officialApplicationURL)
             guard (output + details).contains("TeamIdentifier=\(Self.officialTeamIdentifier)") else {
                 throw RobloxLaunchError.untrustedRobloxInstallation
             }
@@ -612,6 +868,44 @@ public actor ParallelRobloxLauncher {
         } catch {
             throw RobloxLaunchError.untrustedRobloxInstallation
         }
+    }
+
+    private func codeSigningDetails(at applicationURL: URL) throws -> String {
+        try run(
+            executable: URL(fileURLWithPath: "/usr/bin/codesign"),
+            arguments: ["-d", "--verbose=4", applicationURL.path]
+        )
+    }
+
+    private func codeDirectoryHash(at applicationURL: URL) throws -> String {
+        let details = try codeSigningDetails(at: applicationURL)
+        guard let line = details.split(separator: "\n").first(where: { $0.hasPrefix("CDHash=") }) else {
+            throw RobloxLaunchError.untrustedRobloxInstallation
+        }
+        return String(line.dropFirst("CDHash=".count))
+    }
+
+    private func stopManagedHelpers(for accountID: UUID) async -> Bool {
+        let helperExecutables = Set([
+            copyURL(for: accountID),
+            unmodifiedCopyURL(for: accountID)
+        ].map {
+            canonicalPath(
+                menuBarHelperURL(in: $0)
+                    .appendingPathComponent("Contents/MacOS/RobloxMenuBar")
+                    .path
+            )
+        })
+        for attempt in 0..<6 {
+            let matching = runningProcessTable().filter { helperExecutables.contains($0.value) }
+            if matching.isEmpty { return true }
+            let signal = attempt < 3 ? SIGTERM : SIGKILL
+            for processIdentifier in matching.keys {
+                _ = kill(processIdentifier, signal)
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        return runningProcessTable().values.allSatisfy { !helperExecutables.contains($0) }
     }
 
     @discardableResult
