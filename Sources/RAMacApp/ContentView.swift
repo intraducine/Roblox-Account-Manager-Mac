@@ -14,7 +14,6 @@ struct ContentView: View {
     @State private var newGroupName = ""
     @State private var newGroupAccountID: UUID?
     @State private var selectedGroupFilter: String?
-    @State private var batchSelectionAnchorID: UUID?
 
     var body: some View {
         NavigationSplitView {
@@ -145,23 +144,14 @@ struct ContentView: View {
                         batchState: store.batchStates[account.id],
                         isSelectionDisabled: store.isBatchLaunching,
                         onToggleBatch: {
-                            batchSelectionAnchorID = account.id
                             store.toggleBatchSelection(account)
                         }
                     )
                     .tag(account.id)
                     .contentShape(Rectangle())
                     .simultaneousGesture(
-                        TapGesture().onEnded {
-                            if NSEvent.modifierFlags.contains(.shift) {
-                                store.selectBatchRange(
-                                    from: batchSelectionAnchorID,
-                                    to: account.id,
-                                    orderedAccounts: visibleAccounts
-                                )
-                            } else {
-                                batchSelectionAnchorID = account.id
-                            }
+                        TapGesture().modifiers(.shift).onEnded {
+                            store.toggleBatchSelection(account)
                         }
                     )
                     .contextMenu {
@@ -329,7 +319,10 @@ private struct AccountRow: View {
                 "Select @\(account.username) for batch launch",
                 isOn: Binding(
                     get: { isBatchSelected },
-                    set: { _ in onToggleBatch() }
+                    set: { _ in
+                        guard !NSEvent.modifierFlags.contains(.shift) else { return }
+                        onToggleBatch()
+                    }
                 )
             )
             .labelsHidden()

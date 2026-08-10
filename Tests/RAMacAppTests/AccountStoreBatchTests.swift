@@ -56,17 +56,15 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(fixture.store.batchSelectedIDs, [fixture.accounts[0].id])
     }
 
-    func testShiftRangeSelectionSelectsEveryEligibleAccountBetweenAnchors() throws {
+    func testIndividualBatchSelectionSelectsAndDeselectsOnlyTheTargetAccount() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        fixture.store.selectBatchRange(
-            from: fixture.accounts[0].id,
-            to: fixture.accounts[2].id,
-            orderedAccounts: fixture.accounts
-        )
+        fixture.store.toggleBatchSelection(fixture.accounts[1])
+        XCTAssertEqual(fixture.store.batchSelectedIDs, [fixture.accounts[1].id])
 
-        XCTAssertEqual(fixture.store.batchSelectedIDs, Set(fixture.accounts.map(\.id)))
+        fixture.store.toggleBatchSelection(fixture.accounts[1])
+        XCTAssertTrue(fixture.store.batchSelectedIDs.isEmpty)
     }
 
     func testBatchLaunchStartsRequestsTogetherAndKeepsOnlyFailuresSelected() async throws {

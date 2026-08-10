@@ -180,20 +180,6 @@ final class AccountStore: ObservableObject {
         updateBatchSelectionStatus()
     }
 
-    func selectBatchRange(from anchorID: UUID?, to targetID: UUID, orderedAccounts: [ManagedAccount]) {
-        guard !isBatchLaunching else { return }
-        let eligibleAccounts = orderedAccounts.filter { !isRunning($0) }
-        guard let targetIndex = eligibleAccounts.firstIndex(where: { $0.id == targetID }) else { return }
-        let anchorIndex = anchorID.flatMap { anchor in
-            eligibleAccounts.firstIndex(where: { $0.id == anchor })
-        } ?? targetIndex
-        let range = min(anchorIndex, targetIndex)...max(anchorIndex, targetIndex)
-        let selectedIDs = Set(range.map { eligibleAccounts[$0].id })
-        batchSelectedIDs.formUnion(selectedIDs)
-        for accountID in selectedIDs { batchStates[accountID] = nil }
-        updateBatchSelectionStatus()
-    }
-
     func toggleBatchGroup(_ group: String) {
         guard !isBatchLaunching else { return }
         let eligible = Set(accounts.lazy.filter { $0.belongs(to: group) && !self.isRunning($0) }.map(\.id))

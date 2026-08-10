@@ -14,7 +14,7 @@ Version `0.9.0` is made for running several Roblox accounts at the same time:
 - Save a game and an optional server choice for each account.
 - Let Roblox choose a public server, browse public servers by available space, or join a player whose server Roblox makes public.
 - Use private server links and manual Job IDs from the same server chooser.
-- Select accounts with checkboxes, Shift-click, or a complete group. Then launch them together.
+- Select accounts with checkboxes, Shift-click one profile at a time, or a complete group. Shift-click again to deselect that profile.
 - Run each account in a separate copy that exactly matches `/Applications/Roblox.app`.
 - Show which accounts are running. Stop one account or stop all managed clients.
 - Keep the advanced fallback behind a clear risk warning. The app does not enable it by itself.

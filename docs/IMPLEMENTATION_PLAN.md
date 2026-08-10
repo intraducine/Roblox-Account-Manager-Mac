@@ -104,7 +104,7 @@ The phases below record how the product was built. They are not current usage in
 - Keep the modified fallback inside an advanced explanation with a clear warning.
 - Replace the single group field with reusable multi-group membership.
 - Add visible group creation, group filtering, and right-click membership actions.
-- Add Shift-click range selection for batch launches.
+- Add Shift-click batch selection for individual profiles.
 - Explain job IDs and private server links beside the server field.
 - Explain exact and modified bundles beside each launch action.
 - Migrate old single-group account files without data loss.
