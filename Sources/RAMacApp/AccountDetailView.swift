@@ -41,11 +41,6 @@ struct AccountDetailView: View {
                             .labelsHidden()
                             .frame(maxWidth: 360)
                     }
-                    HStack {
-                        Spacer()
-                        Button("Save Changes") { store.update(draft) }
-                            .keyboardShortcut("s", modifiers: .command)
-                    }
                 }
 
                 Section("Groups") {
@@ -74,6 +69,16 @@ struct AccountDetailView: View {
                     TextEditor(text: $draft.notes)
                         .font(.body)
                         .frame(minHeight: 110)
+                }
+
+                Section {
+                    HStack {
+                        Text("Saves alias, group memberships, and notes.")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Save Changes") { store.update(draft) }
+                            .keyboardShortcut("s", modifiers: .command)
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -167,7 +172,7 @@ struct AccountDetailView: View {
                     .disabled(store.isRunning(account))
                 ServerTargetHelpButton()
                     .disabled(store.isRunning(account))
-                TextField("Specific server (optional)", text: $server)
+                TextField("Job ID or private server link (optional)", text: $server)
                     .disabled(store.isRunning(account))
 
                 if store.isRunning(account) {

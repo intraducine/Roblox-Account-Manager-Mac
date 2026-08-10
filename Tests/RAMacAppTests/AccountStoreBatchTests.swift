@@ -105,7 +105,7 @@ final class AccountStoreBatchTests: XCTestCase {
         fixture.store.toggleBatchGroup("Wave")
         await fixture.store.launchBatch(placeText: "12345", serverText: "")
         XCTAssertEqual(fixture.store.runningAccountIDs, Set(fixture.accounts.map(\.id)))
-        XCTAssertEqual(fixture.store.launchStatus, "Running 3 accounts with unmodified Roblox")
+        XCTAssertEqual(fixture.store.launchStatus, "Running 3 accounts with the recommended method")
 
         await fixture.store.stopAll()
 

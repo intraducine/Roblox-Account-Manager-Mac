@@ -3,7 +3,7 @@ import SwiftUI
 struct AddAccountView: View {
     enum Method: String, CaseIterable, Identifiable {
         case browser = "Browser Sign-In"
-        case cookie = "Session Cookie"
+        case cookie = "Advanced Import"
         var id: String { rawValue }
     }
 
@@ -55,7 +55,7 @@ struct AddAccountView: View {
 
     private var browserSignIn: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Sign in on Roblox. The browser session is temporary. The accepted account session moves to this Mac's Keychain.")
+            Text("Sign in to Roblox below. This window does not keep browsing history. After Roblox signs you in, the app saves the sign-in securely in macOS Keychain. The app does not store your Roblox password.")
                 .foregroundStyle(.secondary)
 
             ZStack {
@@ -73,7 +73,7 @@ struct AddAccountView: View {
 
             HStack {
                 Label(
-                    browser.hasSession ? "Signed-in session found" : "Sign in above to continue",
+                    browser.hasSession ? "Roblox sign-in ready" : "Sign in above to continue",
                     systemImage: browser.hasSession ? "checkmark.circle.fill" : "person.crop.circle"
                 )
                 .foregroundStyle(browser.hasSession ? .green : .secondary)
@@ -93,9 +93,9 @@ struct AddAccountView: View {
 
     private var cookieImport: some View {
         Form {
-            Section("Session Cookie") {
+            Section("Advanced Account Import") {
                 SecureField(".ROBLOSECURITY value", text: $cookie)
-                Text("Paste only a session that belongs to you. Treat this value like a password.")
+                Text("Use this only if you know how to copy the .ROBLOSECURITY value from an account you own. This value gives access to the account. Protect it like a password.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

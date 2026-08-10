@@ -2,6 +2,8 @@
 
 Research date: 2026-08-10.
 
+This file records tests and earlier designs. It is not a user guide. See the README for current launch instructions.
+
 ## Upstream findings
 
 The source is [ic3w0lf22/Roblox-Account-Manager](https://github.com/ic3w0lf22/Roblox-Account-Manager). The default branch is `master`. The latest published release found during research was 3.7.2. The project uses GNU GPL version 3.
@@ -16,7 +18,7 @@ The upstream application is a Windows Forms program that targets .NET Framework 
 
 The Windows account file uses Windows Data Protection API or password-based libsodium encryption. A Mac cannot use the machine-bound Windows Data Protection API. The port therefore keeps each session as a separate generic-password item in macOS Keychain. It keeps only non-secret metadata in JSON.
 
-## Local Mac findings
+## Historical Mac findings
 
 The installed client is `/Applications/Roblox.app`, bundle ID `com.roblox.RobloxPlayer`. Its `Info.plist` registers the `roblox-player` and `roblox` URL schemes. It also sets `LSMultipleInstancesProhibited` to `true`.
 
@@ -83,10 +85,10 @@ The implementation makes an APFS clone per account, runs recursive file comparis
 
 The signed version 0.7.0 app then launched two saved accounts into place `1818` on the same desktop. Both clients reached the game in separate windows. Their process IDs were distinct, and each process ran from its own `Unmodified/Roblox.app` path. Recursive comparison against `/Applications/Roblox.app` found no changed files. Both copies passed strict deep signature validation with bundle ID `com.roblox.RobloxPlayer`, Team ID `2CFABCH843`, and CDHash `05d0d0f609d987b9d1812d310a5fd4f315090eb4`. Their `Info.plist` and `RobloxPlayer` SHA-256 values matched the installed app. No password, microphone, local-network, notification, login-item, or Automation prompt appeared during this test. Stop All closed both games and both copied menu helpers, and a system process check found no managed Roblox process afterward.
 
-## Focused parallel interface
+## Current parallel interface
 
-Version 0.8.0 removes Official Roblox from the launch interface. A user can open `/Applications/Roblox.app` directly for a normal single client. Every manager launch now starts from the exact-copy path, even when only one managed account is selected. This keeps that process separate so another managed account can start later.
+Every manager launch uses a separate, unchanged copy of Roblox, even when only one account is selected. This lets another managed account start later without closing the first one. Opening `/Applications/Roblox.app` is outside the manager.
 
-The account format now stores a `groups` array instead of one `group` string. Decoding still accepts the old string and converts it to a one-item array. A separate `Groups.json` file keeps empty groups available. Group names are trimmed, sorted, and deduplicated without case sensitivity.
+The account format stores a `groups` array. It can also read the older single `group` value and convert it to a one-item array. A separate `Groups.json` file keeps empty groups available. Group names are trimmed, sorted, and deduplicated without case sensitivity.
 
-The native interface adds a group filter, a visible New Group action, account-level membership checkboxes, and a right-click Groups menu. One account can belong to several groups. Shift-click selects the eligible account range for a batch. The bottom launch area explains the exact-copy boundary and the advanced modified fallback. A separate information control explains that a Job ID selects one running public server and is not a Place ID.
+The native interface has a group filter, a visible New Group action, account-level membership checkboxes, and a right-click Groups menu. One account can belong to several groups. Shift-click selects the eligible account range for a batch. The bottom launch area explains unchanged copies and the advanced modified fallback. A separate information control explains that a Job ID selects one running public server and is not a Place ID.

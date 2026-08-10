@@ -17,7 +17,20 @@ The project has no third-party runtime dependencies.
 
 The app uses standard macOS structure and controls. It follows the system appearance. A native sidebar holds account selection, search, group actions, and batch checkboxes. A grouped form holds the selected account details. A bottom bar keeps the place, server, status, and launch action in one path.
 
-## Delivery phases
+## Current product behavior
+
+- Every manager launch uses a separate, unchanged copy of the installed Roblox app.
+- The first managed account also uses a separate copy. A second account can start later without closing it.
+- Opening `/Applications/Roblox.app` is outside the manager.
+- The optional advanced fallback changes and signs each copied app again. It stays off unless the user accepts the risk warning.
+- A Place ID selects the experience or place.
+- An empty server field lets Roblox choose a public server.
+- A Job ID selects one public server that is already running.
+- A full private server link selects a private server.
+
+## Development history
+
+The phases below record how the product was built. They are not current usage instructions. Phase 8 describes the active interface.
 
 ### Phase 1: complete in version 0.1.0
 
@@ -105,7 +118,7 @@ The app uses standard macOS structure and controls. It follows the system appear
 - Server browser using supported Roblox endpoints.
 - Session health checks that run only when the user asks.
 
-### Not planned without new research
+### Not planned without further research
 
 - Process injection or anti-cheat workarounds.
 - Password storage.

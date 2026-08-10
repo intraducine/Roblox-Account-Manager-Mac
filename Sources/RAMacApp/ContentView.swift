@@ -82,18 +82,18 @@ struct ContentView: View {
             }
             Button("Cancel", role: .cancel) { pendingRemoval = nil }
         } message: {
-            Text("This removes the account metadata and its Keychain session from this Mac.")
+            Text("This removes the saved account details and Roblox sign-in from this Mac.")
         }
         .confirmationDialog(
-            "Use the modified parallel fallback?",
+            "Use the advanced fallback?",
             isPresented: $showsFallbackWarning
         ) {
-            Button("Use Modified Fallback", role: .destructive) {
+            Button("Use Advanced Fallback", role: .destructive) {
                 store.setLaunchMode(.modifiedParallel)
             }
-            Button("Keep Unmodified Parallel", role: .cancel) {}
+            Button("Keep Recommended Method", role: .cancel) {}
         } message: {
-            Text("This mode copies Roblox, changes the copy's bundle settings, and signs it again. Roblox says modified clients are not allowed. The app will never select this mode for you.")
+            Text("This option changes each Roblox app copy so macOS can open it separately. Roblox does not allow modified clients and may restrict accounts that use them. The app never turns this option on by itself.")
         }
         .sheet(isPresented: $showsNewGroup) {
             NewGroupSheet(

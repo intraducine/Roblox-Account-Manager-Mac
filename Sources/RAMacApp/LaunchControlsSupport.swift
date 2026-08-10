@@ -13,7 +13,7 @@ struct LaunchClientNotice: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(isModified ? "Modified fallback is active" : "Unmodified Roblox copies")
+                Text(isModified ? "Advanced fallback is active" : "Recommended launch method")
                     .fontWeight(.semibold)
                 Text(summary)
                     .font(.caption)
@@ -23,11 +23,11 @@ struct LaunchClientNotice: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if isModified {
-                Button("Use Unmodified") { store.setLaunchMode(.unmodifiedParallel) }
+                Button("Use Recommended Method") { store.setLaunchMode(.unmodifiedParallel) }
                     .disabled(store.isWorking || store.isBatchLaunching || !store.runningAccountIDs.isEmpty)
             }
 
-            Button("How This Works") { showsDetails = true }
+            Button("How Launching Works") { showsDetails = true }
                 .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
                     details
                 }
@@ -41,37 +41,35 @@ struct LaunchClientNotice: View {
 
     private var summary: String {
         if isModified {
-            return "This fallback changes bundle settings and signs each copy again. Roblox may detect it."
+            return "This option changes the Roblox copy. Roblox may treat it as a modified client."
         }
-        return "Exact copies keep Roblox's original files and signature."
+        return "Each account opens in a separate, unchanged copy of your installed Roblox app."
     }
 
     private var details: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Parallel Roblox Launch")
+            Text("How Accounts Run Together")
                 .font(.headline)
 
-            Text("The manager uses an exact Roblox copy even when you start one account. This keeps that client separate, so you can start another managed account later without closing the first one.")
+            Text("Every account you launch here opens in its own Roblox app copy. This lets you keep several accounts open at the same time.")
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Unmodified")
+                Text("Recommended method")
                     .fontWeight(.semibold)
-                Text("The copy matches /Applications/Roblox.app byte for byte and keeps Roblox's original signature. This is the normal mode.")
-                    .foregroundStyle(.secondary)
+                Text("The manager copies the Roblox app already installed on your Mac without changing its files. macOS still verifies the copy as the official Roblox app. The manager uses this method unless you choose the advanced fallback.")
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Modified fallback")
+                Text("Advanced fallback")
                     .fontWeight(.semibold)
-                Text("The manager changes bundle settings and signs the copy again. Use this only if Roblox stops the unmodified method from working.")
-                    .foregroundStyle(.secondary)
+                Text("Use this only if the recommended method stops working. It changes how macOS identifies each copy. Roblox may treat the changed copy as a modified client, which can put an account at risk.")
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             if !isModified {
-                Button("Advanced: Try Modified Fallback…") {
+                Button("Show Advanced Fallback Warning…") {
                     showsDetails = false
                     onRequestModifiedFallback()
                 }
@@ -89,11 +87,11 @@ struct ServerTargetHelpButton: View {
         Button {
             showsHelp = true
         } label: {
-            Image(systemName: "info.circle")
+            Label("Server Help", systemImage: "info.circle")
         }
         .buttonStyle(.plain)
-        .help("Explain the optional server field")
-        .accessibilityLabel("About specific servers")
+        .fixedSize()
+        .help("Explain public, exact, and private server choices")
         .sheet(isPresented: $showsHelp) {
             ServerTargetHelpSheet()
         }
@@ -105,15 +103,28 @@ private struct ServerTargetHelpSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Specific Server")
+            Text("Choose a Server")
                 .font(.title2.weight(.semibold))
 
-            Text("Leave this field empty to join a normal public server.")
+            Text("The Place ID chooses the Roblox experience. The optional server field chooses where inside that experience the account will join.")
 
-            Text("A Job ID identifies one running public server. Use it only when you want every selected account to join that exact server. It is not the Place ID.")
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Any public server")
+                    .fontWeight(.semibold)
+                Text("Leave the server field empty. Roblox will choose an available public server.")
+            }
 
-            Text("You can also paste a complete Roblox private server link here.")
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("One exact public server")
+                    .fontWeight(.semibold)
+                Text("Paste its Job ID. A Job ID is the unique code for one public server that is already running. It is different from the Place ID. If you do not already have a Job ID, leave this field empty.")
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("A private server")
+                    .fontWeight(.semibold)
+                Text("Copy the private server link from Roblox and paste the complete link into the field.")
+            }
 
             HStack {
                 Spacer()
@@ -122,6 +133,6 @@ private struct ServerTargetHelpSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 440)
+        .frame(width: 500)
     }
 }

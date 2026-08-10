@@ -28,7 +28,7 @@ struct BatchLaunchBar: View {
                 TextField("Shared place ID", text: $placeID)
                     .frame(width: 180)
                 ServerTargetHelpButton()
-                TextField("Specific server for all (optional)", text: $server)
+                TextField("Job ID or private server link (optional)", text: $server)
                 Button(store.isBatchLaunching ? "Starting" : buttonTitle) {
                     Task { await store.launchBatch(placeText: placeID, serverText: server) }
                 }

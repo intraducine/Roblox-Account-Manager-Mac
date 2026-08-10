@@ -81,10 +81,10 @@ final class AccountStore: ObservableObject {
         }
         if mode == .modifiedParallel {
             launchMode = .modifiedParallel
-            launchStatus = "Modified fallback selected"
+            launchStatus = "Advanced fallback selected"
         } else {
             launchMode = .unmodifiedParallel
-            launchStatus = "Unmodified Roblox selected"
+            launchStatus = "Recommended launch method selected"
         }
     }
 
@@ -277,7 +277,7 @@ final class AccountStore: ObservableObject {
                     throw error
                 }
                 selectedID = accountWithAvatar.id
-                notice = Notice(title: "Account added", message: "\(user.name) is stored in this Mac's Keychain.")
+                notice = Notice(title: "Account added", message: "\(user.name) is saved securely on this Mac.")
             }
             return true
         } catch {
@@ -422,11 +422,11 @@ final class AccountStore: ObservableObject {
             let url = try builder.makeURL(ticket: ticket, placeID: placeID, target: target)
             switch launchMode {
             case .unmodifiedParallel:
-                launchStatus = "Preparing an exact Roblox copy"
+                launchStatus = "Preparing a separate Roblox copy"
             case .official:
                 launchStatus = "Opening official Roblox"
             case .modifiedParallel:
-                launchStatus = "Preparing a modified Roblox copy"
+                launchStatus = "Preparing the advanced fallback copy"
             }
             _ = try await launcher.launch(url, for: account.id, mode: launchMode)
             await refreshRunningInstances()
@@ -443,11 +443,11 @@ final class AccountStore: ObservableObject {
             update(updated)
             switch launchMode {
             case .unmodifiedParallel:
-                launchStatus = "Running @\(account.username) with unmodified Roblox"
+                launchStatus = "Running @\(account.username) with the recommended method"
             case .official:
                 launchStatus = "Running @\(account.username) with official Roblox"
             case .modifiedParallel:
-                launchStatus = "Running @\(account.username) with parallel fallback"
+                launchStatus = "Running @\(account.username) with the advanced fallback"
             }
         } catch {
             launchStatus = "Launch failed"
@@ -570,11 +570,11 @@ final class AccountStore: ObservableObject {
             batchStatus = "Started all \(total) accounts"
             switch launchMode {
             case .unmodifiedParallel:
-                launchStatus = "Running \(total) accounts with unmodified Roblox"
+                launchStatus = "Running \(total) accounts with the recommended method"
             case .official:
                 launchStatus = "Running \(total) accounts with official Roblox"
             case .modifiedParallel:
-                launchStatus = "Running \(total) accounts with parallel fallback"
+                launchStatus = "Running \(total) accounts with the advanced fallback"
             }
         } else {
             batchSelectedIDs = Set(failures.map(\.accountID))

@@ -6,38 +6,28 @@ struct LicenseNoticeView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Roblox Account Manager for Mac") {
-                    Text("Free software under GNU GPL version 3. This is a new Mac port based on the Roblox Account Manager project by ic3w0lf22 and contributors.")
-                    Text("There is no warranty. You can share and change the program under the license terms.")
-                        .foregroundStyle(.secondary)
+                Section("What This App Does") {
+                    Text("Save several Roblox accounts and keep them open at the same time.")
+                    Text("Open Roblox from Applications for one normal account. Use this manager for accounts that must stay open together.")
                 }
 
-                Section("Source Code") {
-                    Link(
-                        "Open Mac Source",
-                        destination: URL(string: "https://github.com/intraducine/Roblox-Account-Manager-Mac")!
-                    )
-                    Link(
-                        "Open Original Project",
-                        destination: URL(string: "https://github.com/ic3w0lf22/Roblox-Account-Manager")!
-                    )
+                Section("Accounts and Privacy") {
+                    Text("The app saves each Roblox sign-in in macOS Keychain, the secure password storage built into your Mac. It never stores your Roblox password.")
+                    Text("Account names, groups, notes, and launch choices stay on this Mac. At launch, the app sends the saved sign-in only to Roblox.")
                 }
 
-                Section("Managed Roblox Clients") {
-                    Text("The manager always prepares a separate Roblox client. This lets you start another managed account without closing the first one.")
-                    Text("Normal launches use byte-identical copies of /Applications/Roblox.app. They keep Roblox's original bundle files and signature.")
-                    Text("The advanced modified fallback changes bundle settings and signs each copy again. Roblox says modified clients are not allowed.")
-                        .foregroundStyle(.secondary)
+                Section("How Accounts Run Together") {
+                    Text("Each account opens in its own unchanged copy of the Roblox app on your Mac. This lets you launch another account without closing the first one.")
+                    Text("An advanced fallback changes the Roblox copy. Roblox may treat it as modified, so the app warns you before you can use it.")
                 }
 
-                Section {
-                    Text("Roblox is a trademark of Roblox Corporation. This project is not made by or approved by Roblox Corporation.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                Section("Project and License") {
+                    Text("This app is based on Roblox Account Manager by ic3w0lf22 and its contributors. Roblox Corporation does not make or approve it. Roblox is a trademark of Roblox Corporation.")
+                    Text("GNU GPL version 3 lets you inspect, share, and change the source code. The software has no warranty.")
                 }
             }
             .formStyle(.grouped)
-            .navigationTitle("About")
+            .navigationTitle("About This App")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
@@ -45,6 +35,6 @@ struct LicenseNoticeView: View {
                 }
             }
         }
-        .frame(width: 640, height: 620)
+        .frame(width: 760, height: 680)
     }
 }
