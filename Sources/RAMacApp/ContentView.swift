@@ -147,10 +147,18 @@ struct ContentView: View {
 
             HStack {
                 Text("\(store.runningAccountIDs.count) running")
+                    .foregroundStyle(.secondary)
+                if !store.runningAccountIDs.isEmpty {
+                    Button(store.isStoppingAll ? "Stopping" : "Stop All", role: .destructive) {
+                        Task { await store.stopAll() }
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(store.isWorking || store.isBatchLaunching)
+                }
                 Spacer()
                 Text("\(store.accounts.count) account\(store.accounts.count == 1 ? "" : "s")")
+                    .foregroundStyle(.secondary)
             }
-            .foregroundStyle(.secondary)
         }
         .font(.caption)
         .padding(.horizontal, 12)

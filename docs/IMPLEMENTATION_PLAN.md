@@ -53,7 +53,18 @@ The app uses standard macOS structure and controls. It follows the system appear
 - Follow the macOS system appearance and semantic colors.
 - Keep the batch launch path visible without decorative effects or custom control styles.
 
-### Phase 5: suitable follow-up work
+### Phase 5: complete in version 0.5.0
+
+- Keep one prepared Roblox copy per account instead of deleting it after each run.
+- Sign the manager and parallel clients with an installed Apple identity when available.
+- Give all parallel clients one stable shared permission identity.
+- Track each account by its saved process ID and exact app path.
+- Restore running-account state when the manager restarts.
+- Stop all managed Roblox clients from the sidebar.
+- Keep the optional Roblox menu-bar helper out of managed copies.
+- Use one stable client identity for login-item and notification decisions.
+
+### Phase 6: suitable follow-up work
 
 - Signed and notarized release builds.
 - Export and import for non-secret account metadata.

@@ -33,6 +33,7 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(runningAccountIDs, Set([fixture.accounts[0].id, fixture.accounts[2].id]))
         XCTAssertEqual(fixture.store.batchSelectedIDs, Set([fixture.accounts[1].id]))
         XCTAssertEqual(fixture.store.batchStatus, "2 started, 1 failed")
+        XCTAssertEqual(fixture.store.launchStatus, "2 running, 1 failed")
         XCTAssertEqual(fixture.store.notice?.title, "1 account did not start")
         guard case .failed = fixture.store.batchStates[fixture.accounts[1].id] else {
             return XCTFail("The failed account must stay marked for retry.")
@@ -42,6 +43,22 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[0].id })?.savedPlaceID, "12345")
         XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[0].id })?.savedServer, "shared-job")
         XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[1].id })?.savedPlaceID, "")
+    }
+
+    func testStopAllStopsEveryRunningAccount() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        fixture.store.toggleBatchGroup("Wave")
+        await fixture.store.launchBatch(placeText: "12345", serverText: "")
+        XCTAssertEqual(fixture.store.runningAccountIDs, Set(fixture.accounts.map(\.id)))
+        XCTAssertEqual(fixture.store.launchStatus, "Running 3 accounts in parallel")
+
+        await fixture.store.stopAll()
+
+        XCTAssertTrue(fixture.store.runningAccountIDs.isEmpty)
+        XCTAssertEqual(fixture.store.launchStatus, "Stopped all Roblox clients")
+        XCTAssertEqual(fixture.store.batchStatus, "All Roblox clients stopped")
     }
 
     private func makeFixture(failingIndex: Int? = nil) throws -> Fixture {
@@ -166,6 +183,8 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     }
 
     func removeStaleCopies() async {}
+
+    func removePreparedCopy(accountID: UUID) async {}
 
     func attemptedAccountIDs() -> Set<UUID> {
         attempted

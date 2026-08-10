@@ -28,9 +28,9 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
         case .accountAlreadyRunning:
             return "This account already has a Roblox instance open. Stop it before launching it again."
         case .copyFailed(let detail):
-            return "The temporary Roblox copy could not be prepared. \(detail)"
+            return "The managed Roblox copy could not be prepared. \(detail)"
         case .signingFailed(let detail):
-            return "The temporary Roblox copy could not be signed. \(detail)"
+            return "The managed Roblox copy could not be signed. \(detail)"
         case .openFailed:
             return "macOS could not open the isolated Roblox instance."
         }
@@ -102,6 +102,7 @@ public protocol ParallelRobloxLaunching: Sendable {
     func runningAccountIDs(from accountIDs: [UUID]) async -> Set<UUID>
     func stop(accountID: UUID) async -> Bool
     func removeStaleCopies() async
+    func removePreparedCopy(accountID: UUID) async
 }
 
 private struct CommandFailure: LocalizedError {
@@ -109,9 +110,23 @@ private struct CommandFailure: LocalizedError {
     var errorDescription: String? { output.isEmpty ? "The system command failed." : output }
 }
 
+private struct ParallelProcessRecord: Codable {
+    let processIdentifier: Int32
+    let applicationPath: String
+}
+
 public actor ParallelRobloxLauncher {
     public static let officialApplicationURL = URL(fileURLWithPath: "/Applications/Roblox.app", isDirectory: true)
     public static let officialTeamIdentifier = "2CFABCH843"
+    public static let parallelBundleIdentifier = "com.intraducine.RobloxAccountManager.player"
+    public static let preparationVersion = 4
+
+    public static let managedClientSettings: [String: Bool] = [
+        "DFFlagEnableMacDesktopNotifications2": false,
+        "FFlagEnableMacDesktopNotifications": false,
+        "FFlagEnableMacMenuBar": false,
+        "FFlagEnableMacMenuBar9": false
+    ]
 
     private let fileManager: FileManager
     private let instancesRoot: URL
@@ -124,23 +139,31 @@ public actor ParallelRobloxLauncher {
         if let instancesRoot {
             self.instancesRoot = instancesRoot
         } else {
-            let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            self.instancesRoot = caches
+            let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            self.instancesRoot = applicationSupport
                 .appendingPathComponent("Roblox Account Manager", isDirectory: true)
                 .appendingPathComponent("Instances", isDirectory: true)
         }
     }
 
     public static func bundleIdentifier(for accountID: UUID) -> String {
-        "com.intraducine.RobloxAccountManager.instance.\(accountID.uuidString.replacingOccurrences(of: "-", with: ""))"
+        parallelBundleIdentifier
     }
 
-    public static func patchedInfoPlist(_ data: Data, accountID: UUID) throws -> Data {
+    public static func patchedInfoPlist(
+        _ data: Data,
+        accountID: UUID,
+        sourceBundleVersion: String? = nil
+    ) throws -> Data {
         let object = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
         guard var info = object as? [String: Any] else { throw RobloxLaunchError.copyFailed("Its Info.plist is invalid.") }
         info["CFBundleIdentifier"] = bundleIdentifier(for: accountID)
         info["LSMultipleInstancesProhibited"] = false
         info["CFBundleDisplayName"] = "Roblox Parallel"
+        info["RAMPreparationVersion"] = preparationVersion
+        if let sourceBundleVersion {
+            info["RAMSourceBundleVersion"] = sourceBundleVersion
+        }
         return try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
     }
 
@@ -157,6 +180,13 @@ public actor ParallelRobloxLauncher {
         _ = sem_unlink("/RobloxPlayerUniq")
 
         let processIdentifier = try await open(url, with: copyURL)
+        try writeProcessRecord(
+            ParallelProcessRecord(
+                processIdentifier: processIdentifier,
+                applicationPath: copyURL.standardizedFileURL.path
+            ),
+            for: accountID
+        )
         return ParallelRobloxInstance(
             accountID: accountID,
             processIdentifier: processIdentifier,
@@ -173,24 +203,17 @@ public actor ParallelRobloxLauncher {
     }
 
     public func stop(accountID: UUID) async -> Bool {
-        let bundleIdentifier = Self.bundleIdentifier(for: accountID)
-        let applications = await runningApplications(withBundleIdentifier: bundleIdentifier)
-        guard !applications.isEmpty else { return true }
-        for application in applications {
-            _ = await MainActor.run { application.terminate() }
-        }
+        guard let application = await runningApplication(for: accountID) else { return true }
+        _ = await MainActor.run { application.terminate() }
 
-        if await waitUntilStopped(bundleIdentifier: bundleIdentifier, attempts: 20) {
+        if await waitUntilStopped(accountID: accountID, attempts: 20) {
             return true
         }
 
-        // Only force-stop the account-specific bundle. The signed Roblox app in
-        // /Applications and every other isolated account stay untouched.
-        let remaining = await runningApplications(withBundleIdentifier: bundleIdentifier)
-        for application in remaining {
-            _ = await MainActor.run { application.forceTerminate() }
+        if let remaining = await runningApplication(for: accountID) {
+            _ = await MainActor.run { remaining.forceTerminate() }
         }
-        return await waitUntilStopped(bundleIdentifier: bundleIdentifier, attempts: 10)
+        return await waitUntilStopped(accountID: accountID, attempts: 10)
     }
 
     public func removeStaleCopies() async {
@@ -202,38 +225,55 @@ public actor ParallelRobloxLauncher {
         for directory in directories {
             guard let accountID = UUID(uuidString: directory.lastPathComponent) else { continue }
             if !(await isRunning(accountID: accountID)) {
-                try? removeOwnedItem(directory)
+                try? fileManager.removeItem(at: processRecordURL(for: accountID))
             }
         }
+    }
+
+    public func removePreparedCopy(accountID: UUID) async {
+        guard !(await isRunning(accountID: accountID)) else { return }
+        try? removeOwnedItem(accountRootURL(for: accountID))
     }
 
     private func isRunning(accountID: UUID) async -> Bool {
-        let bundleIdentifier = Self.bundleIdentifier(for: accountID)
-        return !(await runningApplications(withBundleIdentifier: bundleIdentifier)).isEmpty
+        await runningApplication(for: accountID) != nil
     }
 
-    private func runningApplications(withBundleIdentifier bundleIdentifier: String) async -> [NSRunningApplication] {
-        await MainActor.run {
-            NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+    private func runningApplication(for accountID: UUID) async -> NSRunningApplication? {
+        guard let record = readProcessRecord(for: accountID) else { return nil }
+        let expectedPath = copyURL(for: accountID).standardizedFileURL.path
+        let application = await MainActor.run { () -> NSRunningApplication? in
+            guard let application = NSRunningApplication(processIdentifier: record.processIdentifier),
+                  !application.isTerminated,
+                  application.bundleURL?.standardizedFileURL.path == expectedPath else { return nil }
+            return application
         }
+        if application == nil {
+            try? fileManager.removeItem(at: processRecordURL(for: accountID))
+        }
+        return application
     }
 
-    private func waitUntilStopped(bundleIdentifier: String, attempts: Int) async -> Bool {
+    private func waitUntilStopped(accountID: UUID, attempts: Int) async -> Bool {
         for _ in 0..<attempts {
-            if (await runningApplications(withBundleIdentifier: bundleIdentifier)).isEmpty {
-                return true
-            }
+            if !(await isRunning(accountID: accountID)) { return true }
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
-        return (await runningApplications(withBundleIdentifier: bundleIdentifier)).isEmpty
+        return !(await isRunning(accountID: accountID))
     }
 
     private func prepareCopy(for accountID: UUID) throws -> URL {
         try fileManager.createDirectory(at: instancesRoot, withIntermediateDirectories: true)
-        let accountRoot = instancesRoot.appendingPathComponent(accountID.uuidString, isDirectory: true)
+        let accountRoot = accountRootURL(for: accountID)
+        let copyURL = copyURL(for: accountID)
+        let sourceVersion = try bundleVersion(at: Self.officialApplicationURL)
+
+        if preparedCopyIsCurrent(copyURL, sourceVersion: sourceVersion) {
+            return copyURL
+        }
+
         try removeOwnedItem(accountRoot)
         try fileManager.createDirectory(at: accountRoot, withIntermediateDirectories: true)
-        let copyURL = accountRoot.appendingPathComponent("Roblox.app", isDirectory: true)
 
         do {
             try run(
@@ -241,8 +281,14 @@ public actor ParallelRobloxLauncher {
                 arguments: ["-cR", Self.officialApplicationURL.path, copyURL.path]
             )
             let infoURL = copyURL.appendingPathComponent("Contents/Info.plist")
-            let patched = try Self.patchedInfoPlist(Data(contentsOf: infoURL), accountID: accountID)
+            let patched = try Self.patchedInfoPlist(
+                Data(contentsOf: infoURL),
+                accountID: accountID,
+                sourceBundleVersion: sourceVersion
+            )
             try patched.write(to: infoURL, options: .atomic)
+            try writeManagedClientSettings(to: copyURL)
+            try removeManagedMenuBarHelper(from: copyURL)
         } catch let error as RobloxLaunchError {
             try? removeOwnedItem(accountRoot)
             throw error
@@ -252,15 +298,130 @@ public actor ParallelRobloxLauncher {
         }
 
         do {
+            let identity = codeSigningIdentity()
             try run(
                 executable: URL(fileURLWithPath: "/usr/bin/codesign"),
-                arguments: ["--force", "--deep", "--sign", "-", copyURL.path]
+                arguments: [
+                    "--force",
+                    "--deep",
+                    "--preserve-metadata=entitlements,flags,runtime",
+                    "--timestamp=none",
+                    "--sign",
+                    identity,
+                    copyURL.path
+                ]
             )
         } catch {
             try? removeOwnedItem(accountRoot)
             throw RobloxLaunchError.signingFailed(error.localizedDescription)
         }
         return copyURL
+    }
+
+    private func preparedCopyIsCurrent(_ copyURL: URL, sourceVersion: String) -> Bool {
+        let infoURL = copyURL.appendingPathComponent("Contents/Info.plist")
+        guard let data = try? Data(contentsOf: infoURL),
+              let object = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let info = object as? [String: Any],
+              info["CFBundleIdentifier"] as? String == Self.parallelBundleIdentifier,
+              info["RAMPreparationVersion"] as? Int == Self.preparationVersion,
+              info["RAMSourceBundleVersion"] as? String == sourceVersion,
+              info["LSMultipleInstancesProhibited"] as? Bool == false,
+              managedClientSettingsAreCurrent(in: copyURL),
+              !fileManager.fileExists(atPath: menuBarHelperURL(in: copyURL).path) else { return false }
+        return (try? run(
+            executable: URL(fileURLWithPath: "/usr/bin/codesign"),
+            arguments: ["--verify", "--deep", "--strict", copyURL.path]
+        )) != nil
+    }
+
+    private func writeManagedClientSettings(to copyURL: URL) throws {
+        let settingsDirectory = copyURL
+            .appendingPathComponent("Contents/MacOS/ClientSettings", isDirectory: true)
+        try fileManager.createDirectory(at: settingsDirectory, withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(
+            withJSONObject: Self.managedClientSettings,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try data.write(
+            to: settingsDirectory.appendingPathComponent("ClientAppSettings.json"),
+            options: .atomic
+        )
+    }
+
+    private func managedClientSettingsAreCurrent(in copyURL: URL) -> Bool {
+        let settingsURL = copyURL
+            .appendingPathComponent("Contents/MacOS/ClientSettings/ClientAppSettings.json")
+        guard let data = try? Data(contentsOf: settingsURL),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let settings = object as? [String: Bool] else { return false }
+        return settings == Self.managedClientSettings
+    }
+
+    private func removeManagedMenuBarHelper(from copyURL: URL) throws {
+        let helperURL = menuBarHelperURL(in: copyURL)
+        if fileManager.fileExists(atPath: helperURL.path) {
+            try fileManager.removeItem(at: helperURL)
+        }
+    }
+
+    private func menuBarHelperURL(in copyURL: URL) -> URL {
+        copyURL.appendingPathComponent(
+            "Contents/MacOS/RobloxMenuBar.app",
+            isDirectory: true
+        )
+    }
+
+    private func bundleVersion(at applicationURL: URL) throws -> String {
+        let infoURL = applicationURL.appendingPathComponent("Contents/Info.plist")
+        let data = try Data(contentsOf: infoURL)
+        let object = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+        guard let info = object as? [String: Any],
+              let version = info["CFBundleVersion"] as? String,
+              !version.isEmpty else {
+            throw RobloxLaunchError.copyFailed("The installed Roblox version could not be read.")
+        }
+        return version
+    }
+
+    private func codeSigningIdentity() -> String {
+        guard let output = try? run(
+            executable: URL(fileURLWithPath: "/usr/bin/security"),
+            arguments: ["find-identity", "-v", "-p", "codesigning"]
+        ) else { return "-" }
+
+        let preferredLabels = ["Developer ID Application", "Apple Development", "Mac Developer"]
+        for label in preferredLabels {
+            for line in output.split(separator: "\n") where line.contains(label) {
+                let fields = line.split(whereSeparator: { $0.isWhitespace })
+                if fields.count >= 2, fields[1].count == 40 {
+                    return String(fields[1])
+                }
+            }
+        }
+        return "-"
+    }
+
+    private func accountRootURL(for accountID: UUID) -> URL {
+        instancesRoot.appendingPathComponent(accountID.uuidString, isDirectory: true)
+    }
+
+    private func copyURL(for accountID: UUID) -> URL {
+        accountRootURL(for: accountID).appendingPathComponent("Roblox.app", isDirectory: true)
+    }
+
+    private func processRecordURL(for accountID: UUID) -> URL {
+        accountRootURL(for: accountID).appendingPathComponent("Process.json")
+    }
+
+    private func writeProcessRecord(_ record: ParallelProcessRecord, for accountID: UUID) throws {
+        try JSONEncoder().encode(record).write(to: processRecordURL(for: accountID), options: .atomic)
+    }
+
+    private func readProcessRecord(for accountID: UUID) -> ParallelProcessRecord? {
+        let url = processRecordURL(for: accountID)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(ParallelProcessRecord.self, from: data)
     }
 
     private func verifyOfficialApplication() throws {
@@ -328,7 +489,7 @@ public actor ParallelRobloxLauncher {
         let root = instancesRoot.standardizedFileURL.path + "/"
         let candidate = url.standardizedFileURL.path
         guard candidate.hasPrefix(root) else {
-            throw RobloxLaunchError.copyFailed("The instance path was outside the managed cache.")
+            throw RobloxLaunchError.copyFailed("The instance path was outside the managed app data.")
         }
         if fileManager.fileExists(atPath: candidate) {
             try fileManager.removeItem(at: url)

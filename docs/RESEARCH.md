@@ -30,6 +30,12 @@ The automated test suite uses isolated mock URL sessions. It checks the authenti
 
 Live testing on 2026-08-10 found that Roblox rejects the authentication-ticket POST with HTTP 415 when the request has no media type. Version 0.4.1 sends `{}` as `application/json` for both the CSRF challenge and ticket request. An end-to-end test then launched two saved accounts into place `1818` at the same time. macOS reported two running `Roblox Parallel` apps with distinct account-specific bundle IDs, and both Roblox windows loaded the experience.
 
+Apple documents that local-network privacy tracks macOS programs through their code signatures and that ad hoc signing is not reliable for this purpose. Version 0.5.0 uses an installed Apple code-signing identity when available, gives all managed Roblox copies one shared bundle ID, and keeps the signed copies in Application Support. Two real clients launched together with that shared identity. After `Stop All`, the same two clients launched again without rebuilding their app bundles. Their modification times and CDHash values stayed unchanged, and no password or privacy prompt appeared during the test. Restarting the manager while both clients ran also restored both account states from their saved process records.
+
+The same live logs showed that Roblox launched its bundled `RobloxMenuBar` helper. The helper registered the login item and requested notification permission. The current client ignored the old `FFlagEnableMacMenuBar` and `FFlagEnableMacDesktopNotifications` names. Roblox's live `MacDesktopClient` configuration showed the current names as `FFlagEnableMacMenuBar9` and `DFFlagEnableMacDesktopNotifications2`. The managed copies set both current settings to false, retain the old settings as a compatibility control, and remove the optional `RobloxMenuBar.app` helper before signing. The main Roblox executable is not modified.
+
+A clean repeat test stopped the official Roblox tray and every old per-copy menu-bar process before launch. Two real accounts still joined place `1818`. No new tray or `RobloxMenuBar` process appeared. No visible password, microphone, local-network, login-item, or notification prompt appeared. Roblox still logged its menu-bar experiment and a denied notification-permission check, so the code does not claim that Roblox stopped making those API calls. macOS kept the shared managed background item disabled and already notified. A second launch reused both prepared copies with unchanged modification times, CDHash, bundle ID, and Team ID.
+
 ## Port boundary
 
 Version 0.1.0 ports the account, storage, organization, and launch path. It does not copy Windows process injection, mutex control, registry access, Chromium download logic, Win32 window movement, local web control, or executor features. Those parts need separate Mac designs and separate safety review.
@@ -45,7 +51,7 @@ The user supplied [Insadem/multi-roblox-macos](https://github.com/Insadem/multi-
 
 Live testing on 2026-08-10 showed that the old method no longer works unchanged. A copied app with the original `com.roblox.RobloxPlayer` bundle ID was redirected to the installed tray client. The current Roblox build also did not create `/RobloxPlayerUniq` during the probes.
 
-The working current method was:
+The working version 0.2.0 method was:
 
 1. Make an APFS clone of the valid installed Roblox bundle.
 2. Assign the clone a unique bundle ID.
@@ -56,3 +62,5 @@ The working current method was:
 This produced two `RobloxPlayer` processes from different temporary bundles at the same time while the official `/Applications/Roblox.app` tray process stayed running. The test confirmed distinct process IDs, per-account process tracking, and selected-instance stop behavior. It used invalid tickets, so it could not join a game or expose an account. The test processes and bundles were removed afterward.
 
 Version 0.2.0 implements that method per account. It uses AppKit to send the launch URL so the authentication ticket does not appear in a shell command or process argument. It verifies the official Roblox signature and Team ID `2CFABCH843` before making any copy.
+
+Version 0.5.0 supersedes the temporary-copy and unique-ID parts of that method. It keeps one copy per account, gives every copy one shared stable ID, uses an installed Apple signing identity when available, and tracks each process by its saved PID and exact app path.

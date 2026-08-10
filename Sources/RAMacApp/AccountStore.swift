@@ -42,6 +42,7 @@ final class AccountStore: ObservableObject {
     @Published private(set) var batchSelectedIDs = Set<UUID>()
     @Published private(set) var batchStates: [UUID: BatchLaunchState] = [:]
     @Published private(set) var isBatchLaunching = false
+    @Published private(set) var isStoppingAll = false
     @Published private(set) var batchStatus = "Select accounts from the shelf"
 
     private let repository: AccountRepository
@@ -233,6 +234,7 @@ final class AccountStore: ObservableObject {
             batchSelectedIDs.remove(account.id)
             batchStates[account.id] = nil
             selectedID = accounts.first?.id
+            Task { await launcher.removePreparedCopy(accountID: account.id) }
         } catch {
             try? repository.save(original)
             notice = Notice(title: "Account was not removed", message: error.localizedDescription)
@@ -254,6 +256,47 @@ final class AccountStore: ObservableObject {
         } else {
             launchStatus = "Stop failed"
             notice = Notice(title: "Roblox did not stop", message: "Close this Roblox window normally, then try again.")
+        }
+    }
+
+    func stopAll() async {
+        let accountIDs = runningAccountIDs
+        guard !accountIDs.isEmpty, !isWorking, !isBatchLaunching else { return }
+
+        isWorking = true
+        isStoppingAll = true
+        launchStatus = "Stopping all Roblox clients"
+        batchStatus = "Stopping all Roblox clients"
+        defer {
+            isWorking = false
+            isStoppingAll = false
+        }
+
+        let launcher = self.launcher
+        var failedAccountIDs = Set<UUID>()
+        await withTaskGroup(of: (UUID, Bool).self) { group in
+            for accountID in accountIDs {
+                group.addTask {
+                    (accountID, await launcher.stop(accountID: accountID))
+                }
+            }
+            for await (accountID, stopped) in group where !stopped {
+                failedAccountIDs.insert(accountID)
+            }
+        }
+
+        await refreshRunningInstances()
+        if runningAccountIDs.isEmpty {
+            launchStatus = "Stopped all Roblox clients"
+            batchStatus = "All Roblox clients stopped"
+        } else {
+            let failedCount = max(failedAccountIDs.count, runningAccountIDs.count)
+            launchStatus = "Some Roblox clients are still closing"
+            batchStatus = "\(failedCount) client\(failedCount == 1 ? "" : "s") still running"
+            notice = Notice(
+                title: "Some Roblox clients did not stop",
+                message: "Close the remaining Roblox windows normally, then try again."
+            )
         }
     }
 
@@ -335,6 +378,7 @@ final class AccountStore: ObservableObject {
         isBatchLaunching = true
         batchStates = Dictionary(uniqueKeysWithValues: selectedAccounts.map { ($0.id, .starting) })
         batchStatus = "Starting 0 of \(total)"
+        launchStatus = "Starting selected accounts"
         defer {
             isWorking = false
             isBatchLaunching = false
@@ -405,10 +449,12 @@ final class AccountStore: ObservableObject {
             batchSelectedIDs.removeAll()
             batchStates.removeAll()
             batchStatus = "Started all \(total) accounts"
+            launchStatus = "Running \(total) accounts in parallel"
         } else {
             batchSelectedIDs = Set(failures.map(\.accountID))
             batchStates = batchStates.filter { batchSelectedIDs.contains($0.key) }
             batchStatus = "\(total - failures.count) started, \(failures.count) failed"
+            launchStatus = "\(total - failures.count) running, \(failures.count) failed"
             notice = Notice(
                 title: "\(failures.count) account\(failures.count == 1 ? "" : "s") did not start",
                 message: batchFailureMessage(failures)

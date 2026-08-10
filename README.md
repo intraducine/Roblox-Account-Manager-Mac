@@ -6,7 +6,7 @@ This project is independent and is not made by or approved by Roblox Corporation
 
 ## Current release
 
-Version `0.4.1` includes the complete parallel and batch-account Mac workflow:
+Version `0.5.0` includes the complete parallel and batch-account Mac workflow:
 
 - Add an account through a private embedded Roblox sign-in page.
 - Import a `.ROBLOSECURITY` session as an advanced option.
@@ -23,6 +23,10 @@ Version `0.4.1` includes the complete parallel and batch-account Mac workflow:
 - Keep an automatic metadata backup.
 - Use a standard native macOS interface that follows the system appearance.
 - Send the JSON media type required by Roblox when requesting launch tickets.
+- Reuse stable Apple-signed Roblox copies so macOS permission decisions persist.
+- Use one shared parallel-client identity so microphone and local-network approval applies to every managed account.
+- Stop every running managed Roblox client with one native `Stop All` action.
+- Omit the Roblox menu-bar helper from managed copies and reuse one stable system identity for all managed clients.
 
 ## Requirements
 
@@ -38,7 +42,7 @@ swift test
 open "dist/Roblox Account Manager.app"
 ```
 
-The packaging script builds a universal Intel and Apple silicon release binary, makes the app icon, creates the `.app` bundle, and applies an ad hoc local signature. Apple notarization needs a paid Apple Developer identity and is not part of this repository.
+The packaging script builds a universal Intel and Apple silicon release binary, makes the app icon, and creates the `.app` bundle. It uses an installed Apple code-signing identity when one is available and otherwise falls back to an ad hoc local signature. Apple notarization is not part of this repository.
 
 ## How launches work
 
@@ -48,9 +52,10 @@ The app uses the same core method as the Windows project:
 2. It completes Roblox's CSRF request challenge.
 3. It requests a short-lived authentication ticket.
 4. It verifies the installed Roblox app has a valid Roblox Corporation signature.
-5. It makes an APFS-cloned temporary copy for the selected account.
-6. It gives that copy a unique bundle ID, allows a new instance, and applies a local ad hoc signature.
-7. It sends the launch URL directly to that isolated copy.
+5. It makes an APFS-cloned persistent copy for the selected account when one does not exist or Roblox has updated.
+6. It removes the menu-bar helper and disables the related Roblox client features in the managed copy.
+7. It gives every managed copy one shared parallel-client bundle ID, allows a new instance, and applies a stable Apple signature when available.
+8. It sends the launch URL directly to that isolated copy.
 
 The app never writes a session cookie into the launch URL or a log.
 
@@ -59,18 +64,20 @@ The app never writes a session cookie into the launch URL or a log.
 - Treat `.ROBLOSECURITY` as a password. Never send it to another person.
 - The browser sign-in uses a non-persistent WebKit data store. The accepted session moves to Keychain.
 - Network requests use an isolated URL session and do not share cookies between accounts.
-- Parallel copies are made only in `~/Library/Caches/Roblox Account Manager/Instances`.
+- Parallel copies are kept in `~/Library/Application Support/Roblox Account Manager/Instances` so macOS can reuse their permission identity.
 - The app never edits or re-signs `/Applications/Roblox.app`.
 - Removing an account deletes its Keychain item and its local metadata.
 - Metadata is stored at `~/Library/Application Support/Roblox Account Manager/Accounts.json`.
 
 ## Parallel-launch limits
 
-The installed Roblox app declares `LSMultipleInstancesProhibited`. This port works around that limit only in disposable per-account copies. Roblox can change its client checks at any time. A future Roblox update can stop parallel mode from working until this project is updated.
+The installed Roblox app declares `LSMultipleInstancesProhibited`. This port works around that limit only in managed per-account copies. Roblox can change its client checks at any time. A future Roblox update can stop parallel mode from working until this project is updated.
+
+Version 0.5.0 changes the parallel clients to a stable shared identity. The first launch after this update can show each microphone, local-network, login-item, or notification decision one final time. Later launches reuse the same signed copies and identity, so macOS does not treat every account as a new app. The managed copy also omits the optional menu-bar helper, so it does not leave one tray process running for each account. Roblox still calls some macOS registration and permission APIs during startup. The app cannot change macOS permission decisions. If no Apple code-signing identity is installed, the app uses ad hoc signing and macOS can ask again after a Roblox update.
 
 Use accounts that belong to you. Some Roblox experiences can prohibit alternate accounts or farming even when Roblox itself allows both accounts to sign in. This app does not hide automation, inject code, or change the Roblox executable.
 
-Windows-only features from the original project are not in version 0.4.1. These include Win32 window placement, FPS file patches, CefSharp browser profiles, the local developer API, Nexus account control, and process watcher automation. See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the feature decisions.
+Windows-only features from the original project are not in version 0.5.0. These include Win32 window placement, FPS file patches, CefSharp browser profiles, the local developer API, Nexus account control, and process watcher automation. See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the feature decisions.
 
 ## License
 

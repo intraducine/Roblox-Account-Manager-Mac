@@ -56,14 +56,14 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertThrowsError(try builder.makeURL(ticket: "ticket", placeID: 0))
     }
 
-    func testParallelBundleIdentifierIsStableAndUnique() {
+    func testParallelBundleIdentifierIsSharedForPermissionReuse() {
         let first = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
         let second = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
         XCTAssertEqual(
             ParallelRobloxLauncher.bundleIdentifier(for: first),
-            "com.intraducine.RobloxAccountManager.instance.AAAAAAAABBBBCCCCDDDDEEEEEEEEEEEE"
+            ParallelRobloxLauncher.parallelBundleIdentifier
         )
-        XCTAssertNotEqual(
+        XCTAssertEqual(
             ParallelRobloxLauncher.bundleIdentifier(for: first),
             ParallelRobloxLauncher.bundleIdentifier(for: second)
         )
@@ -78,7 +78,11 @@ final class RobloxLauncherTests: XCTestCase {
             "LSMultipleInstancesProhibited": true
         ]
         let data = try PropertyListSerialization.data(fromPropertyList: source, format: .xml, options: 0)
-        let patched = try ParallelRobloxLauncher.patchedInfoPlist(data, accountID: accountID)
+        let patched = try ParallelRobloxLauncher.patchedInfoPlist(
+            data,
+            accountID: accountID,
+            sourceBundleVersion: "7330989"
+        )
         let object = try PropertyListSerialization.propertyList(from: patched, options: [], format: nil)
         let info = try XCTUnwrap(object as? [String: Any])
         XCTAssertEqual(info["CFBundleExecutable"] as? String, "RobloxPlayer")
@@ -86,7 +90,24 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertEqual(info["LSMultipleInstancesProhibited"] as? Bool, false)
         XCTAssertEqual(
             info["CFBundleIdentifier"] as? String,
-            ParallelRobloxLauncher.bundleIdentifier(for: accountID)
+            ParallelRobloxLauncher.parallelBundleIdentifier
+        )
+        XCTAssertEqual(info["RAMSourceBundleVersion"] as? String, "7330989")
+        XCTAssertEqual(
+            info["RAMPreparationVersion"] as? Int,
+            ParallelRobloxLauncher.preparationVersion
+        )
+    }
+
+    func testManagedClientSettingsDisableMenuBarAndDesktopNotifications() {
+        XCTAssertEqual(
+            ParallelRobloxLauncher.managedClientSettings,
+            [
+                "DFFlagEnableMacDesktopNotifications2": false,
+                "FFlagEnableMacDesktopNotifications": false,
+                "FFlagEnableMacMenuBar": false,
+                "FFlagEnableMacMenuBar9": false
+            ]
         )
     }
 
