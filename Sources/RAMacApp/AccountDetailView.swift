@@ -8,7 +8,7 @@ struct AccountDetailView: View {
     let onRequestModifiedFallback: () -> Void
     @State private var draft: ManagedAccount
     @State private var placeID: String
-    @State private var server: String
+    @State private var serverSelection: RobloxServerSelection
     @State private var showsNewGroup = false
     @State private var newGroupName = ""
 
@@ -24,7 +24,7 @@ struct AccountDetailView: View {
         self.onRequestModifiedFallback = onRequestModifiedFallback
         _draft = State(initialValue: account)
         _placeID = State(initialValue: account.savedPlaceID)
-        _server = State(initialValue: account.savedServer)
+        _serverSelection = State(initialValue: .savedValue(account.savedServer))
     }
 
     var body: some View {
@@ -170,9 +170,12 @@ struct AccountDetailView: View {
                 TextField("Place ID", text: $placeID)
                     .frame(width: 170)
                     .disabled(store.isRunning(account))
-                ServerTargetHelpButton()
-                    .disabled(store.isRunning(account))
-                TextField("Job ID or private server link (optional)", text: $server)
+                ServerSelectionControl(
+                    store: store,
+                    placeID: $placeID,
+                    selection: $serverSelection,
+                    requiredSpaces: 1
+                )
                     .disabled(store.isRunning(account))
 
                 if store.isRunning(account) {
@@ -184,7 +187,7 @@ struct AccountDetailView: View {
                     .disabled(store.isWorking)
                 } else {
                     Button(store.isWorking ? "Launching" : "Launch") {
-                        Task { await store.launch(account: draft, placeText: placeID, serverText: server) }
+                        Task { await store.launch(account: draft, placeText: placeID, server: serverSelection) }
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(store.isWorking)

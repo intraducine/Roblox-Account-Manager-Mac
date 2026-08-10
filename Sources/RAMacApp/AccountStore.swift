@@ -1,6 +1,16 @@
 import Foundation
 import RAMacCore
 
+struct PublicServerSnapshot: Sendable {
+    let page: RobloxPublicServerPage
+    let fetchedAt: Date
+}
+
+struct JoinablePlayerServer: Sendable {
+    let user: RobloxUserSearchResult
+    let presence: RobloxUserPresence
+}
+
 @MainActor
 final class AccountStore: ObservableObject {
     struct Notice: Identifiable {
@@ -52,6 +62,8 @@ final class AccountStore: ObservableObject {
     private let api: any RobloxAPIProviding
     private let builder: RobloxLaunchURLBuilder
     private let launcher: any ParallelRobloxLaunching
+    private var serverPageCache: [String: PublicServerSnapshot] = [:]
+    private let serverCacheLifetime: TimeInterval = 60
 
     init(
         repository: AccountRepository = AccountRepository(),
@@ -91,6 +103,29 @@ final class AccountStore: ObservableObject {
     var selectedAccount: ManagedAccount? {
         guard let selectedID else { return nil }
         return accounts.first(where: { $0.id == selectedID })
+    }
+
+    func publicServerPage(
+        placeID: Int64,
+        cursor: String? = nil,
+        forceRefresh: Bool = false
+    ) async throws -> PublicServerSnapshot {
+        let key = "\(placeID):\(cursor ?? "first")"
+        if !forceRefresh,
+           let cached = serverPageCache[key],
+           Date().timeIntervalSince(cached.fetchedAt) < serverCacheLifetime {
+            return cached
+        }
+        let page = try await api.publicServers(placeID: placeID, cursor: cursor)
+        let snapshot = PublicServerSnapshot(page: page, fetchedAt: Date())
+        serverPageCache[key] = snapshot
+        return snapshot
+    }
+
+    func joinableServer(for username: String) async throws -> JoinablePlayerServer {
+        let user = try await api.user(named: username)
+        let presence = try await api.presence(userID: user.id)
+        return JoinablePlayerServer(user: user, presence: presence)
     }
 
     var filteredAccounts: [ManagedAccount] {
@@ -385,6 +420,14 @@ final class AccountStore: ObservableObject {
     }
 
     func launch(account: ManagedAccount, placeText: String, serverText: String) async {
+        await launch(
+            account: account,
+            placeText: placeText,
+            server: RobloxServerSelection.savedValue(serverText)
+        )
+    }
+
+    func launch(account: ManagedAccount, placeText: String, server: RobloxServerSelection) async {
         guard !isRunning(account) else {
             notice = Notice(title: "Account is already running", message: RobloxLaunchError.accountAlreadyRunning.localizedDescription)
             return
@@ -401,21 +444,15 @@ final class AccountStore: ObservableObject {
             guard let cookie = try vault.read(for: account.id), !cookie.isEmpty else {
                 throw RobloxAPIError.invalidSession
             }
-            let serverInput = serverText.trimmingCharacters(in: .whitespacesAndNewlines)
-            let target: RobloxServerTarget
-            if serverInput.isEmpty {
-                target = .publicServer
-            } else if let linkCode = RobloxLaunchURLBuilder.privateLinkCode(from: serverInput) {
+            if case .privateLink = server {
                 launchStatus = "Resolving the private server"
-                let accessCode = try await api.privateServerAccessCode(
-                    placeID: placeID,
-                    linkCode: linkCode,
-                    cookie: cookie
-                )
-                target = .privateServer(accessCode: accessCode, linkCode: linkCode)
-            } else {
-                target = .job(serverInput)
             }
+            let target = try await makeServerTarget(
+                server,
+                placeID: placeID,
+                cookie: cookie,
+                api: api
+            )
 
             launchStatus = "Requesting a launch ticket"
             let ticket = try await api.authenticationTicket(cookie: cookie)
@@ -439,7 +476,7 @@ final class AccountStore: ObservableObject {
             var updated = account
             updated.lastUsed = Date()
             updated.savedPlaceID = placeText.trimmingCharacters(in: .whitespacesAndNewlines)
-            updated.savedServer = serverInput
+            updated.savedServer = server.persistedValue
             update(updated)
             switch launchMode {
             case .unmodifiedParallel:
@@ -456,6 +493,10 @@ final class AccountStore: ObservableObject {
     }
 
     func launchBatch(placeText: String, serverText: String) async {
+        await launchBatch(placeText: placeText, server: RobloxServerSelection.savedValue(serverText))
+    }
+
+    func launchBatch(placeText: String, server: RobloxServerSelection) async {
         guard !isWorking, !isBatchLaunching else { return }
         guard let placeID = Int64(placeText.trimmingCharacters(in: .whitespacesAndNewlines)), placeID > 0 else {
             notice = Notice(title: "Check the shared place ID", message: RobloxLaunchError.invalidPlaceID.localizedDescription)
@@ -470,7 +511,6 @@ final class AccountStore: ObservableObject {
             return
         }
 
-        let serverInput = serverText.trimmingCharacters(in: .whitespacesAndNewlines)
         let vault = self.vault
         let api = self.api
         let builder = self.builder
@@ -497,19 +537,12 @@ final class AccountStore: ObservableObject {
                             throw RobloxAPIError.invalidSession
                         }
 
-                        let target: RobloxServerTarget
-                        if serverInput.isEmpty {
-                            target = .publicServer
-                        } else if let linkCode = RobloxLaunchURLBuilder.privateLinkCode(from: serverInput) {
-                            let accessCode = try await api.privateServerAccessCode(
-                                placeID: placeID,
-                                linkCode: linkCode,
-                                cookie: cookie
-                            )
-                            target = .privateServer(accessCode: accessCode, linkCode: linkCode)
-                        } else {
-                            target = .job(serverInput)
-                        }
+                        let target = try await makeServerTarget(
+                            server,
+                            placeID: placeID,
+                            cookie: cookie,
+                            api: api
+                        )
 
                         let ticket = try await api.authenticationTicket(cookie: cookie)
                         let url = try builder.makeURL(ticket: ticket, placeID: placeID, target: target)
@@ -554,7 +587,7 @@ final class AccountStore: ObservableObject {
             if let index = accounts.firstIndex(where: { $0.id == outcome.accountID }) {
                 accounts[index].lastUsed = Date()
                 accounts[index].savedPlaceID = String(placeID)
-                accounts[index].savedServer = serverInput
+                accounts[index].savedServer = server.persistedValue
             }
         }
         do {
@@ -602,5 +635,34 @@ final class AccountStore: ObservableObject {
             return (shown + ["\(remaining) more failed."]).joined(separator: "\n")
         }
         return shown.joined(separator: "\n")
+    }
+}
+
+private func makeServerTarget(
+    _ selection: RobloxServerSelection,
+    placeID: Int64,
+    cookie: String,
+    api: any RobloxAPIProviding
+) async throws -> RobloxServerTarget {
+    switch selection {
+    case .automatic:
+        return .publicServer
+    case .publicInstance(let jobID, _, _), .player(_, _, let jobID), .manualJob(let jobID):
+        let clean = jobID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard UUID(uuidString: clean) != nil else { throw RobloxLaunchError.invalidServer }
+        return .job(clean)
+    case .privateLink(let link):
+        if RobloxLaunchURLBuilder.privateShareCode(from: link) != nil {
+            throw RobloxLaunchError.unsupportedPrivateServerLink
+        }
+        guard let linkCode = RobloxLaunchURLBuilder.privateLinkCode(from: link) else {
+            throw RobloxLaunchError.invalidServer
+        }
+        let accessCode = try await api.privateServerAccessCode(
+            placeID: placeID,
+            linkCode: linkCode,
+            cookie: cookie
+        )
+        return .privateServer(accessCode: accessCode, linkCode: linkCode)
     }
 }

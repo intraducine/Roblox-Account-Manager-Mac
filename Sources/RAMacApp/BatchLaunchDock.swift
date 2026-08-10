@@ -1,9 +1,10 @@
+import RAMacCore
 import SwiftUI
 
 struct BatchLaunchBar: View {
     @ObservedObject var store: AccountStore
     @Binding var placeID: String
-    @Binding var server: String
+    @Binding var serverSelection: RobloxServerSelection
     let onRequestModifiedFallback: () -> Void
 
     var body: some View {
@@ -27,10 +28,14 @@ struct BatchLaunchBar: View {
             HStack(spacing: 10) {
                 TextField("Shared place ID", text: $placeID)
                     .frame(width: 180)
-                ServerTargetHelpButton()
-                TextField("Job ID or private server link (optional)", text: $server)
+                ServerSelectionControl(
+                    store: store,
+                    placeID: $placeID,
+                    selection: $serverSelection,
+                    requiredSpaces: max(1, selectionCount)
+                )
                 Button(store.isBatchLaunching ? "Starting" : buttonTitle) {
-                    Task { await store.launchBatch(placeText: placeID, serverText: server) }
+                    Task { await store.launchBatch(placeText: placeID, server: serverSelection) }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(store.isBatchLaunching)

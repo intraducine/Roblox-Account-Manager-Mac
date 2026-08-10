@@ -71,10 +71,11 @@ final class AccountStoreBatchTests: XCTestCase {
 
     func testBatchLaunchStartsRequestsTogetherAndKeepsOnlyFailuresSelected() async throws {
         let fixture = try makeFixture(failingIndex: 1)
+        let jobID = "11111111-2222-3333-4444-555555555555"
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         fixture.store.toggleBatchGroup("Wave")
-        await fixture.store.launchBatch(placeText: "12345", serverText: "shared-job")
+        await fixture.store.launchBatch(placeText: "12345", serverText: jobID)
 
         let maximumConcurrentRequests = await fixture.api.maximumConcurrentTicketRequests()
         let attemptedAccountIDs = await fixture.launcher.attemptedAccountIDs()
@@ -94,7 +95,7 @@ final class AccountStoreBatchTests: XCTestCase {
 
         let saved = try fixture.repository.load()
         XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[0].id })?.savedPlaceID, "12345")
-        XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[0].id })?.savedServer, "shared-job")
+        XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[0].id })?.savedServer, jobID)
         XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[1].id })?.savedPlaceID, "")
     }
 
@@ -112,6 +113,32 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertTrue(fixture.store.runningAccountIDs.isEmpty)
         XCTAssertEqual(fixture.store.launchStatus, "Stopped all Roblox clients")
         XCTAssertEqual(fixture.store.batchStatus, "All Roblox clients stopped")
+    }
+
+    func testPublicServerPagesAreCachedToProtectRobloxRateLimit() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let first = try await fixture.store.publicServerPage(placeID: 1818)
+        let second = try await fixture.store.publicServerPage(placeID: 1818)
+        let cachedRequestCount = await fixture.api.publicServerRequestCount()
+        _ = try await fixture.store.publicServerPage(placeID: 1818, forceRefresh: true)
+        let refreshedRequestCount = await fixture.api.publicServerRequestCount()
+
+        XCTAssertEqual(first.page, second.page)
+        XCTAssertEqual(cachedRequestCount, 1)
+        XCTAssertEqual(refreshedRequestCount, 2)
+    }
+
+    func testJoinablePlayerServerUsesPublicPresence() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let result = try await fixture.store.joinableServer(for: "builderman")
+
+        XCTAssertEqual(result.user.name, "builderman")
+        XCTAssertEqual(result.presence.placeId, 1818)
+        XCTAssertEqual(result.presence.gameId, "11111111-2222-3333-4444-555555555555")
     }
 
     private func makeFixture(failingIndex: Int? = nil) throws -> Fixture {
@@ -188,6 +215,7 @@ private final class MemoryVault: SecretVault, @unchecked Sendable {
 private actor BatchMockAPI: RobloxAPIProviding {
     private var activeTicketRequests = 0
     private var maximumActiveTicketRequests = 0
+    private var publicServerRequests = 0
 
     func authenticatedUser(cookie rawCookie: String) async throws -> RobloxUser {
         throw RobloxAPIError.invalidSession
@@ -207,8 +235,40 @@ private actor BatchMockAPI: RobloxAPIProviding {
         "access-\(rawCookie)"
     }
 
+    func publicServers(placeID: Int64, cursor: String?) async throws -> RobloxPublicServerPage {
+        publicServerRequests += 1
+        return RobloxPublicServerPage(data: [
+            RobloxPublicServer(
+                id: "11111111-2222-3333-4444-555555555555",
+                maxPlayers: 8,
+                playing: 2,
+                ping: 80
+            )
+        ])
+    }
+
+    func user(named username: String) async throws -> RobloxUserSearchResult {
+        RobloxUserSearchResult(id: 156, name: "builderman", displayName: "builderman")
+    }
+
+    func presence(userID: Int64) async throws -> RobloxUserPresence {
+        RobloxUserPresence(
+            userPresenceType: 2,
+            lastLocation: "Test Place",
+            placeId: 1818,
+            rootPlaceId: 1818,
+            gameId: "11111111-2222-3333-4444-555555555555",
+            universeId: 13058,
+            userId: userID
+        )
+    }
+
     func maximumConcurrentTicketRequests() -> Int {
         maximumActiveTicketRequests
+    }
+
+    func publicServerRequestCount() -> Int {
+        publicServerRequests
     }
 }
 

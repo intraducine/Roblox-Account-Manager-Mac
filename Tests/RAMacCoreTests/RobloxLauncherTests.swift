@@ -52,6 +52,35 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertNil(RobloxLaunchURLBuilder.privateLinkCode(from: "not a link"))
     }
 
+    func testServerSelectionDoesNotPersistDiscoveredJobIDs() {
+        let jobID = "11111111-2222-3333-4444-555555555555"
+        XCTAssertEqual(
+            RobloxServerSelection.publicInstance(jobID: jobID, playing: 2, maxPlayers: 8).persistedValue,
+            ""
+        )
+        XCTAssertEqual(
+            RobloxServerSelection.player(username: "builder", userID: 42, jobID: jobID).persistedValue,
+            ""
+        )
+        XCTAssertEqual(RobloxServerSelection.manualJob(jobID).persistedValue, jobID)
+    }
+
+    func testModernPrivateShareLinkIsRecognizedSeparately() {
+        let link = "https://www.roblox.com/share?code=abc123&type=Server"
+        XCTAssertEqual(RobloxLaunchURLBuilder.privateShareCode(from: link), "abc123")
+        XCTAssertNil(RobloxLaunchURLBuilder.privateLinkCode(from: link))
+        XCTAssertEqual(RobloxServerSelection.savedValue(link), .privateLink(link))
+    }
+
+    func testPrivateServerLinksRejectLookAlikeDomains() {
+        XCTAssertNil(RobloxLaunchURLBuilder.privateShareCode(
+            from: "https://evilroblox.com/share?code=abc123&type=Server"
+        ))
+        XCTAssertNil(RobloxLaunchURLBuilder.privateLinkCode(
+            from: "https://evilroblox.com/games/123?privateServerLinkCode=abc123"
+        ))
+    }
+
     func testRejectsInvalidPlace() {
         XCTAssertThrowsError(try builder.makeURL(ticket: "ticket", placeID: 0))
     }

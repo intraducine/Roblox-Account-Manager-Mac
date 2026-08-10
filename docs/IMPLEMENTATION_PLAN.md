@@ -24,13 +24,12 @@ The app uses standard macOS structure and controls. It follows the system appear
 - Opening `/Applications/Roblox.app` is outside the manager.
 - The optional advanced fallback changes and signs each copied app again. It stays off unless the user accepts the risk warning.
 - A Place ID selects the experience or place.
-- An empty server field lets Roblox choose a public server.
-- A Job ID selects one public server that is already running.
-- A full private server link selects a private server.
+- The server chooser can let Roblox choose, browse public servers, or find a player through public presence.
+- Advanced options accept an existing Job ID or a supported private server link.
 
 ## Development history
 
-The phases below record how the product was built. They are not current usage instructions. Phase 8 describes the active interface.
+The phases below record how the product was built. They are not current usage instructions. Phase 9 describes the active server-selection interface.
 
 ### Phase 1: complete in version 0.1.0
 
@@ -110,12 +109,23 @@ The phases below record how the product was built. They are not current usage in
 - Explain exact and modified bundles beside each launch action.
 - Migrate old single-group account files without data loss.
 
+### Phase 9: complete in version 0.9.0
+
+- Replace the raw server field with one native Choose Server flow.
+- Browse public servers by player count and open spaces.
+- Put servers with enough room for the selected batch first.
+- Find a player only when Roblox provides public, joinable presence.
+- Keep discovery requests separate from saved account sign-ins.
+- Cache public server results for one minute to respect Roblox request limits.
+- Keep discovered Job IDs temporary because running servers can close.
+- Keep manual Job ID entry under Advanced.
+- Detect newer private-server share links and explain the current account-selection limit.
+
 ### Suitable follow-up work
 
 - Signed and notarized release builds.
 - Export and import for non-secret account metadata.
 - Better avatar caching and offline handling.
-- Server browser using supported Roblox endpoints.
 - Session health checks that run only when the user asks.
 
 ### Not planned without further research

@@ -6,13 +6,14 @@ This project is independent and is not made by or approved by Roblox Corporation
 
 ## What the app does
 
-Version `0.8.0` is made for running several Roblox accounts at the same time:
+Version `0.9.0` is made for running several Roblox accounts at the same time:
 
 - Add an account through a temporary Roblox sign-in page inside the app.
 - Store each Roblox sign-in in macOS Keychain. The account list does not contain sign-in secrets.
 - Search accounts and organize them with aliases, groups, and notes. One account can be in several groups.
 - Save a game and an optional server choice for each account.
-- Join any public server, one specific public server, or a private server.
+- Let Roblox choose a public server, browse public servers by available space, or join a player whose server Roblox makes public.
+- Use private server links and manual Job IDs from the same server chooser.
 - Select accounts with checkboxes, Shift-click, or a complete group. Then launch them together.
 - Run each account in a separate copy that exactly matches `/Applications/Roblox.app`.
 - Show which accounts are running. Stop one account or stop all managed clients.
@@ -48,11 +49,15 @@ If you only want to use Roblox without the account manager, open `/Applications/
 ### Choose a game and server
 
 - **Place ID:** This number identifies a Roblox experience or a place inside an experience. It is the number after `/games/` in a Roblox game link.
-- **Public server:** Leave the optional server field empty. Roblox chooses an available public server for you.
-- **Job ID:** This text identifies one public server that is already running. Use it when you want all selected accounts to join that same public server. A Job ID is not a Place ID.
-- **Private server link:** Paste the full Roblox private server link. The link contains the code that Roblox needs to join that private server.
+- **Roblox chooses:** This is the default. Roblox selects an available public server.
+- **Browse public servers:** Choose a running server by its player count and open spaces. For a batch, the app puts servers with enough room first.
+- **Join a player:** Enter a Roblox username. The app uses the public presence that Roblox provides. It cannot find hidden, private, or offline players.
+- **Private server link:** Paste a supported link for a private server that every selected account can access.
+- **Manual Job ID:** Open Advanced when you already have the unique code for one running public server.
 
-You must enter a Place ID for every launch. Then leave the server field empty, enter a Job ID, or paste a private server link. Do not put a normal game link in the server field.
+Enter a Place ID before browsing public servers, using a private server link, or entering a Job ID. Join a Player fills the current Place ID from Roblox automatically.
+
+Public server lists are cached for one minute because Roblox limits how often they can refresh. The app does not send a saved account sign-in when it browses servers, looks up a username, or checks public player presence.
 
 For each launch, the manager:
 
@@ -97,7 +102,7 @@ Fallback mode uses a stable shared identity. Its first launch can show microphon
 
 Use accounts that belong to you. Some Roblox experiences can prohibit alternate accounts or farming even when Roblox itself allows both accounts to sign in. Roblox can see normal process, session, network, device, and account behavior. An unchanged bundle is not an invisibility promise or a policy exception. The app does not inject code or hide its launches. Normal managed copies keep the complete Roblox bundle unchanged. Fallback mode does not patch Roblox's machine code, but re-signing changes signature data in the copied executable. Do not treat the fallback as an unmodified client.
 
-Windows-only features from the original project are not in version 0.8.0. These include Win32 window placement, FPS file patches, CefSharp browser profiles, the local developer API, Nexus account control, and process watcher automation. See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the feature decisions.
+Windows-only features from the original project are not in version 0.9.0. These include Win32 window placement, FPS file patches, CefSharp browser profiles, the local developer API, Nexus account control, and process watcher automation. See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the feature decisions.
 
 ## License
 

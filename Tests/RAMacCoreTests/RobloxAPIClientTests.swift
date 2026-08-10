@@ -85,6 +85,73 @@ final class RobloxAPIClientTests: XCTestCase {
         }
     }
 
+    func testLoadsPublicServersWithoutSendingAccountCookie() async throws {
+        let client = makeClient { request in
+            XCTAssertEqual(request.url?.host, "games.roblox.com")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            XCTAssertEqual(components?.queryItems?.first(where: { $0.name == "limit" })?.value, "100")
+            XCTAssertEqual(components?.queryItems?.first(where: { $0.name == "excludeFullGames" })?.value, "true")
+            return Self.response(
+                request: request,
+                status: 200,
+                body: #"{"previousPageCursor":null,"nextPageCursor":"next","data":[{"id":"11111111-2222-3333-4444-555555555555","maxPlayers":8,"playing":3,"fps":59.9,"ping":92}]}"#
+            )
+        }
+
+        let page = try await client.publicServers(placeID: 1818, cursor: nil)
+        XCTAssertEqual(page.nextPageCursor, "next")
+        XCTAssertEqual(page.data.first?.openSpaces, 5)
+    }
+
+    func testLooksUpPublicPlayerPresenceWithoutSendingAccountCookie() async throws {
+        var call = 0
+        let client = makeClient { request in
+            call += 1
+            XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+            if call == 1 {
+                XCTAssertEqual(request.url?.host, "users.roblox.com")
+                return Self.response(
+                    request: request,
+                    status: 200,
+                    body: #"{"data":[{"requestedUsername":"builderman","id":156,"name":"builderman","displayName":"builderman"}]}"#
+                )
+            }
+            XCTAssertEqual(request.url?.host, "presence.roblox.com")
+            return Self.response(
+                request: request,
+                status: 200,
+                body: #"{"userPresences":[{"userPresenceType":2,"lastLocation":"Test Place","placeId":1818,"rootPlaceId":1818,"gameId":"11111111-2222-3333-4444-555555555555","universeId":13058,"userId":156}]}"#
+            )
+        }
+
+        let user = try await client.user(named: "@builderman")
+        let presence = try await client.presence(userID: user.id)
+        XCTAssertEqual(user.id, 156)
+        XCTAssertEqual(presence.placeId, 1818)
+        XCTAssertEqual(presence.gameId, "11111111-2222-3333-4444-555555555555")
+        XCTAssertEqual(call, 2)
+    }
+
+    func testPublicServerRateLimitHasDirectError() async {
+        let client = makeClient { request in
+            Self.response(
+                request: request,
+                status: 429,
+                headers: ["x-ratelimit-reset": "12"]
+            )
+        }
+
+        do {
+            _ = try await client.publicServers(placeID: 1818, cursor: nil)
+            XCTFail("Expected rate limit")
+        } catch let error as RobloxAPIError {
+            XCTAssertEqual(error, .rateLimited(12))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     private func makeClient(
         handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
     ) -> RobloxAPIClient {

@@ -6,6 +6,8 @@ public enum RobloxAPIError: LocalizedError, Equatable {
     case csrfUnavailable
     case authenticationTicketUnavailable
     case privateServerUnavailable
+    case rateLimited(Int?)
+    case userNotFound
     case server(Int, String)
 
     public var errorDescription: String? {
@@ -20,6 +22,13 @@ public enum RobloxAPIError: LocalizedError, Equatable {
             return "Roblox did not issue a launch ticket. Try again in a moment."
         case .privateServerUnavailable:
             return "The private server link could not be resolved for this account."
+        case .rateLimited(let retryAfter):
+            if let retryAfter, retryAfter > 0 {
+                return "Roblox is limiting server requests. Try again in \(retryAfter) seconds."
+            }
+            return "Roblox is limiting server requests. Try again in a minute."
+        case .userNotFound:
+            return "Roblox could not find that username."
         case .server(let status, let message):
             return "Roblox returned \(status): \(message)"
         }
@@ -31,6 +40,23 @@ public protocol RobloxAPIProviding: Sendable {
     func avatarURL(userID: Int64) async -> URL?
     func authenticationTicket(cookie rawCookie: String) async throws -> String
     func privateServerAccessCode(placeID: Int64, linkCode: String, cookie rawCookie: String) async throws -> String
+    func publicServers(placeID: Int64, cursor: String?) async throws -> RobloxPublicServerPage
+    func user(named username: String) async throws -> RobloxUserSearchResult
+    func presence(userID: Int64) async throws -> RobloxUserPresence
+}
+
+public extension RobloxAPIProviding {
+    func publicServers(placeID: Int64, cursor: String?) async throws -> RobloxPublicServerPage {
+        throw RobloxAPIError.invalidResponse
+    }
+
+    func user(named username: String) async throws -> RobloxUserSearchResult {
+        throw RobloxAPIError.userNotFound
+    }
+
+    func presence(userID: Int64) async throws -> RobloxUserPresence {
+        throw RobloxAPIError.invalidResponse
+    }
 }
 
 public struct RobloxAPIClient: Sendable {
@@ -94,6 +120,78 @@ public struct RobloxAPIClient: Sendable {
               let payload = try? decoder.decode(RobloxThumbnailResponse.self, from: data),
               let image = payload.data.first?.imageUrl else { return nil }
         return URL(string: image)
+    }
+
+    public func publicServers(placeID: Int64, cursor: String? = nil) async throws -> RobloxPublicServerPage {
+        guard placeID > 0 else { throw RobloxLaunchError.invalidPlaceID }
+        var components = URLComponents(string: "https://games.roblox.com/v1/games/\(placeID)/servers/Public")!
+        var queryItems = [
+            URLQueryItem(name: "sortOrder", value: "Asc"),
+            URLQueryItem(name: "limit", value: "100"),
+            URLQueryItem(name: "excludeFullGames", value: "true")
+        ]
+        if let cursor, !cursor.isEmpty {
+            queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        components.queryItems = queryItems
+        var request = URLRequest(url: components.url!)
+        applyPublicHeaders(to: &request)
+        let (data, response) = try await session.data(for: request)
+        let http = try httpResponse(response)
+        try checkDiscoveryStatus(http, data: data)
+        do {
+            return try decoder.decode(RobloxPublicServerPage.self, from: data)
+        } catch {
+            throw RobloxAPIError.invalidResponse
+        }
+    }
+
+    public func user(named username: String) async throws -> RobloxUserSearchResult {
+        let clean = username.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+        guard !clean.isEmpty else { throw RobloxAPIError.userNotFound }
+        var request = URLRequest(url: URL(string: "https://users.roblox.com/v1/usernames/users")!)
+        request.httpMethod = "POST"
+        applyPublicHeaders(to: &request)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "usernames": [clean],
+            "excludeBannedUsers": true
+        ])
+        let (data, response) = try await session.data(for: request)
+        let http = try httpResponse(response)
+        try checkDiscoveryStatus(http, data: data)
+        do {
+            guard let user = try decoder.decode(RobloxUserSearchResponse.self, from: data).data.first else {
+                throw RobloxAPIError.userNotFound
+            }
+            return user
+        } catch let error as RobloxAPIError {
+            throw error
+        } catch {
+            throw RobloxAPIError.invalidResponse
+        }
+    }
+
+    public func presence(userID: Int64) async throws -> RobloxUserPresence {
+        var request = URLRequest(url: URL(string: "https://presence.roblox.com/v1/presence/users")!)
+        request.httpMethod = "POST"
+        applyPublicHeaders(to: &request)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["userIds": [userID]])
+        let (data, response) = try await session.data(for: request)
+        let http = try httpResponse(response)
+        try checkDiscoveryStatus(http, data: data)
+        do {
+            guard let presence = try decoder.decode(RobloxPresenceResponse.self, from: data).userPresences.first else {
+                throw RobloxAPIError.invalidResponse
+            }
+            return presence
+        } catch let error as RobloxAPIError {
+            throw error
+        } catch {
+            throw RobloxAPIError.invalidResponse
+        }
     }
 
     public func authenticationTicket(cookie rawCookie: String) async throws -> String {
@@ -166,6 +264,11 @@ public struct RobloxAPIClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 
+    private func applyPublicHeaders(to request: inout URLRequest) {
+        request.setValue("Roblox Account Manager for Mac/0.9", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+    }
+
     private func applyJSONBody(to request: inout URLRequest) {
         request.httpBody = Data("{}".utf8)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -174,6 +277,17 @@ public struct RobloxAPIClient: Sendable {
     private func httpResponse(_ response: URLResponse) throws -> HTTPURLResponse {
         guard let response = response as? HTTPURLResponse else { throw RobloxAPIError.invalidResponse }
         return response
+    }
+
+    private func checkDiscoveryStatus(_ response: HTTPURLResponse, data: Data) throws {
+        guard (200...299).contains(response.statusCode) else {
+            if response.statusCode == 429 {
+                let retry = response.value(forHTTPHeaderField: "x-ratelimit-reset").flatMap(Int.init)
+                    ?? response.value(forHTTPHeaderField: "retry-after").flatMap(Int.init)
+                throw RobloxAPIError.rateLimited(retry)
+            }
+            throw RobloxAPIError.server(response.statusCode, serverMessage(from: data))
+        }
     }
 
     private func serverMessage(from data: Data) -> String {

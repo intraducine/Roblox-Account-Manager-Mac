@@ -8,7 +8,7 @@ struct ContentView: View {
     @State private var showsLicense = false
     @State private var pendingRemoval: ManagedAccount?
     @State private var batchPlaceID = ""
-    @State private var batchServer = ""
+    @State private var batchServerSelection = RobloxServerSelection.automatic
     @State private var showsFallbackWarning = false
     @State private var showsNewGroup = false
     @State private var newGroupName = ""
@@ -35,7 +35,7 @@ struct ContentView: View {
                         BatchLaunchBar(
                             store: store,
                             placeID: $batchPlaceID,
-                            server: $batchServer,
+                            serverSelection: $batchServerSelection,
                             onRequestModifiedFallback: { showsFallbackWarning = true }
                         )
                     }
@@ -122,7 +122,7 @@ struct ContentView: View {
                   batchPlaceID.isEmpty,
                   let selectedAccount = store.selectedAccount else { return }
             batchPlaceID = selectedAccount.savedPlaceID
-            batchServer = selectedAccount.savedServer
+            batchServerSelection = .savedValue(selectedAccount.savedServer)
         }
         .onChange(of: store.groupNames) { groupNames in
             if let selectedGroupFilter,

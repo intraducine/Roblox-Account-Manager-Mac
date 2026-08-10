@@ -5,6 +5,7 @@ import Foundation
 public enum RobloxLaunchError: LocalizedError, Equatable {
     case invalidPlaceID
     case invalidServer
+    case unsupportedPrivateServerLink
     case invalidURL
     case robloxNotInstalled
     case untrustedRobloxInstallation
@@ -20,7 +21,9 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
         case .invalidPlaceID:
             return "Enter a valid numeric place ID."
         case .invalidServer:
-            return "Enter a valid job ID or private server link."
+            return "Choose a valid server."
+        case .unsupportedPrivateServerLink:
+            return "This newer Roblox share link cannot select a saved account yet. Use an older private server link that contains privateServerLinkCode."
         case .invalidURL:
             return "The Roblox launch link could not be built."
         case .robloxNotInstalled:
@@ -118,9 +121,25 @@ public struct RobloxLaunchURLBuilder: Sendable {
 
     public static func privateLinkCode(from input: String) -> String? {
         guard let components = URLComponents(string: input),
+              isRobloxHost(components.host),
               let value = components.queryItems?.first(where: { $0.name == "privateServerLinkCode" })?.value,
               !value.isEmpty else { return nil }
         return value
+    }
+
+    public static func privateShareCode(from input: String) -> String? {
+        guard let components = URLComponents(string: input),
+              isRobloxHost(components.host),
+              components.path.lowercased() == "/share",
+              components.queryItems?.first(where: { $0.name.lowercased() == "type" })?.value?.lowercased() == "server",
+              let value = components.queryItems?.first(where: { $0.name.lowercased() == "code" })?.value,
+              !value.isEmpty else { return nil }
+        return value
+    }
+
+    private static func isRobloxHost(_ host: String?) -> Bool {
+        guard let host = host?.lowercased() else { return false }
+        return host == "roblox.com" || host.hasSuffix(".roblox.com")
     }
 
     public static func makeTrackerID() -> String {
