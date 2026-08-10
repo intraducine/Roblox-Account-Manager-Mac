@@ -11,37 +11,46 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            accountShelf
-                .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 350)
+            accountSidebar
+                .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 380)
         } detail: {
-            Group {
-                if let account = store.selectedAccount {
-                    VStack(spacing: 0) {
-                        AccountDetailView(
+            if let account = store.selectedAccount {
+                VStack(spacing: 0) {
+                    AccountDetailView(
+                        store: store,
+                        account: account,
+                        showsLaunchBar: store.batchSelectedIDs.isEmpty
+                    )
+                    .id(account.id)
+
+                    if !store.batchSelectedIDs.isEmpty {
+                        BatchLaunchBar(
                             store: store,
-                            account: account,
-                            showsLaunchDock: store.batchSelectedIDs.isEmpty
+                            placeID: $batchPlaceID,
+                            server: $batchServer
                         )
-                        .id(account.id)
-                        if !store.batchSelectedIDs.isEmpty {
-                            BatchLaunchDock(
-                                store: store,
-                                placeID: $batchPlaceID,
-                                server: $batchServer
-                            )
-                            .padding(.horizontal, 28)
-                            .padding(.bottom, 24)
-                        }
                     }
-                } else {
-                    emptyState
+                }
+            } else {
+                emptyState
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    showsAddAccount = true
+                } label: {
+                    Label("Add Account", systemImage: "plus")
+                }
+                .keyboardShortcut("n", modifiers: .command)
+
+                Button {
+                    showsLicense = true
+                } label: {
+                    Label("About", systemImage: "info.circle")
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(RAMPalette.ground)
         }
-        .background(RAMPalette.ground)
-        .preferredColorScheme(.dark)
         .sheet(isPresented: $showsAddAccount) {
             AddAccountView(store: store)
         }
@@ -58,7 +67,7 @@ struct ContentView: View {
                 set: { if !$0 { pendingRemoval = nil } }
             )
         ) {
-            Button("Remove account", role: .destructive) {
+            Button("Remove Account", role: .destructive) {
                 if let pendingRemoval { store.remove(pendingRemoval) }
                 pendingRemoval = nil
             }
@@ -78,74 +87,8 @@ struct ContentView: View {
         }
     }
 
-    private var accountShelf: some View {
+    private var accountSidebar: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("RAM")
-                        .font(.system(size: 21, weight: .black, design: .rounded))
-                        .foregroundStyle(RAMPalette.ink)
-                    Text("Account shelf")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(RAMPalette.muted)
-                }
-                Spacer()
-                Button {
-                    showsLicense = true
-                } label: {
-                    Image(systemName: "info.circle")
-                        .accessibilityLabel("License and notices")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(RAMPalette.muted)
-                Button {
-                    showsAddAccount = true
-                } label: {
-                    Label("Add account", systemImage: "plus")
-                }
-                .buttonStyle(QuietButtonStyle())
-                .keyboardShortcut("n", modifiers: .command)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 17)
-            .padding(.bottom, 13)
-
-            TextField("Search accounts", text: $store.search)
-                .textFieldStyle(.plain)
-                .padding(.horizontal, 11)
-                .frame(height: 34)
-                .background(RAMPalette.raised)
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .padding(.horizontal, 14)
-                .padding(.bottom, 9)
-
-            HStack(spacing: 8) {
-                Text(store.batchSelectedIDs.isEmpty
-                     ? "Batch selection"
-                     : "\(store.batchSelectedIDs.count) selected")
-                Spacer()
-                Menu("Groups") {
-                    ForEach(groupNames, id: \.self) { group in
-                        Button(store.isBatchGroupSelected(group) ? "Clear \(group)" : "Select \(group)") {
-                            store.toggleBatchGroup(group)
-                        }
-                    }
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .disabled(store.isBatchLaunching)
-                if !store.batchSelectedIDs.isEmpty {
-                    Button("Clear") { store.clearBatchSelection() }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(RAMPalette.ink)
-                        .disabled(store.isBatchLaunching)
-                }
-            }
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(RAMPalette.muted)
-            .padding(.horizontal, 15)
-            .frame(height: 27)
-
             List(selection: $store.selectedID) {
                 ForEach(groupNames, id: \.self) { group in
                     Section(group) {
@@ -158,31 +101,61 @@ struct ContentView: View {
                                 isSelectionDisabled: store.isBatchLaunching,
                                 onToggleBatch: { store.toggleBatchSelection(account) }
                             )
-                                .tag(account.id)
-                                .contextMenu {
-                                    Button("Remove account", role: .destructive) {
-                                        pendingRemoval = account
-                                    }
+                            .tag(account.id)
+                            .contextMenu {
+                                Button("Remove Account", role: .destructive) {
+                                    pendingRemoval = account
                                 }
+                            }
                         }
                     }
                 }
             }
             .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
-            .background(RAMPalette.shelf)
+
+            sidebarStatus
+        }
+        .navigationTitle("Accounts")
+        .searchable(text: $store.search, placement: .sidebar, prompt: "Search accounts")
+    }
+
+    private var sidebarStatus: some View {
+        VStack(spacing: 9) {
+            HStack(spacing: 10) {
+                Text(store.batchSelectedIDs.isEmpty
+                     ? "Batch selection"
+                     : "\(store.batchSelectedIDs.count) selected")
+                    .fontWeight(.medium)
+                Spacer()
+                Menu("Groups") {
+                    ForEach(groupNames, id: \.self) { group in
+                        Button(store.isBatchGroupSelected(group) ? "Clear \(group)" : "Select \(group)") {
+                            store.toggleBatchGroup(group)
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(store.isBatchLaunching)
+
+                if !store.batchSelectedIDs.isEmpty {
+                    Button("Clear") { store.clearBatchSelection() }
+                        .buttonStyle(.plain)
+                        .disabled(store.isBatchLaunching)
+                }
+            }
 
             HStack {
                 Text("\(store.runningAccountIDs.count) running")
                 Spacer()
                 Text("\(store.accounts.count) account\(store.accounts.count == 1 ? "" : "s")")
             }
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(RAMPalette.muted)
-            .padding(.horizontal, 15)
-            .frame(height: 33)
+            .foregroundStyle(.secondary)
         }
-        .background(RAMPalette.shelf)
+        .font(.caption)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.bar)
     }
 
     private var groupNames: [String] {
@@ -196,19 +169,22 @@ struct ContentView: View {
     }
 
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Your account shelf is empty")
-                .font(.system(size: 34, weight: .bold, design: .rounded))
-            Text("Add an account with the Roblox sign-in page. This app keeps the session in Keychain and uses it only for Roblox requests.")
-                .font(.system(size: 15))
-                .foregroundStyle(RAMPalette.muted)
-                .frame(maxWidth: 480, alignment: .leading)
-            Button("Add your first account") { showsAddAccount = true }
-                .buttonStyle(LaunchButtonStyle())
+        VStack(spacing: 14) {
+            Image(systemName: "person.2")
+                .font(.system(size: 34, weight: .regular))
+                .foregroundStyle(.secondary)
+            Text("No Accounts")
+                .font(.title2.weight(.semibold))
+            Text("Add a Roblox account to launch and manage it from this Mac.")
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Add Account") { showsAddAccount = true }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
         }
-        .padding(48)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .foregroundStyle(RAMPalette.ink)
+        .frame(maxWidth: 360)
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -221,7 +197,7 @@ private struct AccountRow: View {
     let onToggleBatch: () -> Void
 
     var body: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 9) {
             Toggle(
                 "Select @\(account.username) for batch launch",
                 isOn: Binding(
@@ -237,36 +213,37 @@ private struct AccountRow: View {
                 image.resizable().scaledToFill()
             } placeholder: {
                 ZStack {
-                    RAMPalette.raised
-                    Text(String(account.username.prefix(1)).uppercased())
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(RAMPalette.straw)
+                    Color(nsColor: .controlBackgroundColor)
+                    Image(systemName: "person.crop.square.fill")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
                 }
             }
-            .frame(width: 40, height: 40)
-            .clipShape(AccountCutShape())
+            .frame(width: 34, height: 34)
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(account.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .fontWeight(.medium)
                     .lineLimit(1)
                 Text("@\(account.username)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(RAMPalette.muted)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 4)
+
             if let batchState {
                 Text(batchState.label)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(batchState.errorMessage == nil ? RAMPalette.muted : RAMPalette.rust)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(batchState.errorMessage == nil ? Color.secondary : Color.red)
                     .help(batchState.errorMessage ?? "Preparing this account")
             } else if isRunning {
                 Text("Running")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(RAMPalette.straw)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.green)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
     }
 }

@@ -4,15 +4,15 @@ import SwiftUI
 struct AccountDetailView: View {
     @ObservedObject var store: AccountStore
     let account: ManagedAccount
-    let showsLaunchDock: Bool
+    let showsLaunchBar: Bool
     @State private var draft: ManagedAccount
     @State private var placeID: String
     @State private var server: String
 
-    init(store: AccountStore, account: ManagedAccount, showsLaunchDock: Bool = true) {
+    init(store: AccountStore, account: ManagedAccount, showsLaunchBar: Bool = true) {
         self.store = store
         self.account = account
-        self.showsLaunchDock = showsLaunchDock
+        self.showsLaunchBar = showsLaunchBar
         _draft = State(initialValue: account)
         _placeID = State(initialValue: account.savedPlaceID)
         _server = State(initialValue: account.savedServer)
@@ -20,167 +20,121 @@ struct AccountDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 30) {
+            Form {
+                Section {
                     identityHeader
-                    accountEditor
+                        .padding(.vertical, 6)
                 }
-                .padding(.horizontal, 36)
-                .padding(.top, 30)
-                .padding(.bottom, 28)
-                .frame(maxWidth: 900, alignment: .leading)
+
+                Section("Account Details") {
+                    LabeledContent("Alias") {
+                        TextField("Alias", text: $draft.alias, prompt: Text("Name shown in the sidebar"))
+                            .labelsHidden()
+                            .frame(maxWidth: 360)
+                    }
+                    LabeledContent("Group") {
+                        TextField("Group", text: $draft.group, prompt: Text("Default"))
+                            .labelsHidden()
+                            .frame(maxWidth: 360)
+                    }
+                    HStack {
+                        Spacer()
+                        Button("Save Changes") { store.update(draft) }
+                            .keyboardShortcut("s", modifiers: .command)
+                    }
+                }
+
+                Section("Notes") {
+                    TextEditor(text: $draft.notes)
+                        .font(.body)
+                        .frame(minHeight: 110)
+                }
             }
-            if showsLaunchDock {
-                launchDock
-                    .padding(.horizontal, 28)
-                    .padding(.bottom, 24)
+            .formStyle(.grouped)
+
+            if showsLaunchBar {
+                accountLaunchBar
             }
         }
-        .foregroundStyle(RAMPalette.ink)
     }
 
     private var identityHeader: some View {
-        HStack(alignment: .top, spacing: 20) {
+        HStack(spacing: 14) {
             AsyncImage(url: account.avatarURL) { image in
                 image.resizable().scaledToFill()
             } placeholder: {
-                RAMPalette.raised
+                ZStack {
+                    Color(nsColor: .controlBackgroundColor)
+                    Image(systemName: "person.crop.square.fill")
+                        .font(.system(size: 30))
+                        .foregroundStyle(.secondary)
+                }
             }
-            .frame(width: 88, height: 88)
-            .clipShape(AccountCutShape())
+            .frame(width: 68, height: 68)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(draft.title)
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .font(.title2.weight(.semibold))
                     .lineLimit(2)
-                Text("@\(draft.username)  ·  User \(draft.userID)")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(RAMPalette.muted)
+                Text("@\(draft.username) · User \(draft.userID)")
+                    .foregroundStyle(.secondary)
                 if store.isRunning(account) {
-                    Text("Running in an isolated Roblox instance")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(RAMPalette.straw)
+                    Label("Running in a separate Roblox instance", systemImage: "play.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
                 } else if let lastUsed = draft.lastUsed {
                     Text("Last launched \(lastUsed.formatted(date: .abbreviated, time: .shortened))")
-                        .font(.system(size: 12))
-                        .foregroundStyle(RAMPalette.muted)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 } else {
                     Text("Not launched from this Mac yet")
-                        .font(.system(size: 12))
-                        .foregroundStyle(RAMPalette.muted)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             Spacer()
         }
     }
 
-    private var accountEditor: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Account details")
-                    .font(.system(size: 18, weight: .bold))
+    private var accountLaunchBar: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Label("Launch Account", systemImage: "play.fill")
+                    .fontWeight(.semibold)
+                Text("@\(draft.username)")
+                    .foregroundStyle(.secondary)
                 Spacer()
-                Button("Save changes") {
-                    store.update(draft)
-                }
-                .buttonStyle(QuietButtonStyle())
-                .keyboardShortcut("s", modifiers: .command)
-            }
-
-            HStack(alignment: .top, spacing: 16) {
-                field("Alias", text: $draft.alias, prompt: "Name shown in the shelf")
-                field("Group", text: $draft.group, prompt: "Default")
-            }
-            VStack(alignment: .leading, spacing: 7) {
-                Text("Notes")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(RAMPalette.muted)
-                TextEditor(text: $draft.notes)
-                    .font(.system(size: 13))
-                    .scrollContentBackground(.hidden)
-                    .padding(9)
-                    .frame(minHeight: 92)
-                    .background(RAMPalette.shelf)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-        }
-    }
-
-    private func field(_ label: String, text: Binding<String>, prompt: String) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(RAMPalette.muted)
-            TextField(prompt, text: text)
-                .textFieldStyle(.plain)
-                .padding(.horizontal, 11)
-                .frame(height: 38)
-                .background(RAMPalette.shelf)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private var launchDock: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Parallel launch dock")
-                    .font(.system(size: 16, weight: .bold))
                 Text(store.launchStatus)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(RAMPalette.muted)
-                Spacer()
-                Text("as @\(draft.username)")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(RAMPalette.straw)
-                    .padding(.trailing, 22)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            HStack(alignment: .bottom, spacing: 12) {
-                launchField("Place ID", text: $placeID, prompt: "920587237")
-                    .frame(minWidth: 170, maxWidth: 230)
+            HStack(spacing: 10) {
+                TextField("Place ID", text: $placeID)
+                    .frame(width: 170)
                     .disabled(store.isRunning(account))
-                launchField("Job ID or private server link", text: $server, prompt: "Optional")
+                TextField("Job ID or private server link", text: $server)
                     .disabled(store.isRunning(account))
+
                 if store.isRunning(account) {
-                    Button(store.isWorking ? "Stopping" : "Stop instance") {
+                    Button(store.isWorking ? "Stopping" : "Stop") {
                         Task { await store.stop(account) }
                     }
-                    .buttonStyle(StopButtonStyle())
+                    .buttonStyle(.bordered)
+                    .tint(.red)
                     .disabled(store.isWorking)
                 } else {
-                    Button {
+                    Button(store.isWorking ? "Launching" : "Launch") {
                         Task { await store.launch(account: draft, placeText: placeID, serverText: server) }
-                    } label: {
-                        HStack(spacing: 7) {
-                            Text(store.isWorking ? "Working" : "Launch parallel")
-                            Image(systemName: "arrow.up.forward")
-                        }
                     }
-                    .buttonStyle(LaunchButtonStyle())
+                    .buttonStyle(.borderedProminent)
                     .disabled(store.isWorking)
                 }
             }
+            .controlSize(.large)
         }
-        .padding(.leading, 21)
-        .padding(.trailing, 28)
-        .padding(.vertical, 18)
-        .background(RAMPalette.raised)
-        .clipShape(LaunchDockShape())
-        .accessibilityElement(children: .contain)
-    }
-
-    private func launchField(_ label: String, text: Binding<String>, prompt: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(RAMPalette.muted)
-            TextField(prompt, text: text)
-                .textFieldStyle(.plain)
-                .padding(.horizontal, 10)
-                .frame(height: 40)
-                .background(RAMPalette.ground)
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        }
+        .padding(14)
+        .background(.bar)
     }
 }

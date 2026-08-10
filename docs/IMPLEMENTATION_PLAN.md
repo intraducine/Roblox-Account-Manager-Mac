@@ -7,7 +7,7 @@ Give a Mac user one clear place to store their own Roblox account sessions and k
 ## Architecture
 
 - `RAMacCore`: account model, metadata repository, Keychain vault, Roblox HTTPS client, launch URL builder, and isolated parallel-instance launcher.
-- `RAMacApp`: SwiftUI account shelf, account editor, launch dock, embedded WebKit sign-in, notices, and app commands.
+- `RAMacApp`: SwiftUI account sidebar, account editor, launch bar, embedded WebKit sign-in, notices, and app commands.
 - `RAMacCoreTests`: deterministic tests for storage, requests, and launch links.
 - `RAMacAppTests`: batch-selection, concurrent-start, result, and retry tests.
 
@@ -15,9 +15,7 @@ The project has no third-party runtime dependencies.
 
 ## Interface direction
 
-The app uses a dark olive operations surface. Account avatars use one cut corner. The fixed launch dock repeats that cut at a larger scale. This links the account shelf to the final action without decorative cards, glows, or status chips.
-
-The account shelf stays narrow. The selected account owns the detail view. The launch dock stays at the bottom and keeps the selected identity, place, server, status, and action in one path.
+The app uses standard macOS structure and controls. It follows the system appearance. A native sidebar holds account selection, search, group actions, and batch checkboxes. A grouped form holds the selected account details. A bottom bar keeps the place, server, status, and launch action in one path.
 
 ## Delivery phases
 
@@ -48,7 +46,14 @@ The account shelf stays narrow. The selected account owns the detail view. The l
 - Continue-on-error behavior with failed accounts retained for one-step retry.
 - Live batch progress, running state, and failure details.
 
-### Phase 4: suitable follow-up work
+### Phase 4: complete in version 0.4.0
+
+- Replace the custom dark interface with standard SwiftUI macOS controls.
+- Use a native split view, sidebar list, toolbar, grouped forms, sheets, and bottom bars.
+- Follow the macOS system appearance and semantic colors.
+- Keep the batch launch path visible without decorative effects or custom control styles.
+
+### Phase 5: suitable follow-up work
 
 - Signed and notarized release builds.
 - Export and import for non-secret account metadata.

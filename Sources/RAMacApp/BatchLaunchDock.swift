@@ -1,43 +1,38 @@
 import SwiftUI
 
-struct BatchLaunchDock: View {
+struct BatchLaunchBar: View {
     @ObservedObject var store: AccountStore
     @Binding var placeID: String
     @Binding var server: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("Launch \(selectionCount) account\(selectionCount == 1 ? "" : "s")")
-                    .font(.system(size: 16, weight: .bold))
-                Text(store.batchStatus)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(RAMPalette.muted)
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Label("Batch Launch", systemImage: "person.2.fill")
+                    .fontWeight(.semibold)
+                Text("\(selectionCount) account\(selectionCount == 1 ? "" : "s")")
+                    .foregroundStyle(.secondary)
                 Spacer()
-                Text("One shared destination")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(RAMPalette.straw)
-                    .padding(.trailing, 22)
+                Text(store.batchStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            HStack(alignment: .bottom, spacing: 12) {
-                launchField("Place ID", text: $placeID, prompt: "920587237")
-                    .frame(minWidth: 170, maxWidth: 230)
-                launchField("Job ID or private server link", text: $server, prompt: "Optional")
-                Button(store.isBatchLaunching ? "Starting accounts" : buttonTitle) {
+            HStack(spacing: 10) {
+                TextField("Shared place ID", text: $placeID)
+                    .frame(width: 180)
+                TextField("Shared job ID or private server link", text: $server)
+                Button(store.isBatchLaunching ? "Starting" : buttonTitle) {
                     Task { await store.launchBatch(placeText: placeID, serverText: server) }
                 }
-                .buttonStyle(LaunchButtonStyle())
+                .buttonStyle(.borderedProminent)
                 .disabled(store.isBatchLaunching)
             }
+            .controlSize(.large)
             .disabled(store.isBatchLaunching)
         }
-        .padding(.leading, 21)
-        .padding(.trailing, 28)
-        .padding(.vertical, 18)
-        .background(RAMPalette.raised)
-        .clipShape(LaunchDockShape())
-        .accessibilityElement(children: .contain)
+        .padding(14)
+        .background(.bar)
     }
 
     private var selectionCount: Int {
@@ -49,20 +44,6 @@ struct BatchLaunchDock: View {
             if case .failed = $0 { return true }
             return false
         }
-        return hasFailures ? "Retry \(selectionCount) now" : "Launch \(selectionCount) now"
-    }
-
-    private func launchField(_ label: String, text: Binding<String>, prompt: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(RAMPalette.muted)
-            TextField(prompt, text: text)
-                .textFieldStyle(.plain)
-                .padding(.horizontal, 10)
-                .frame(height: 40)
-                .background(RAMPalette.ground)
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        }
+        return hasFailures ? "Retry \(selectionCount)" : "Launch \(selectionCount)"
     }
 }

@@ -2,8 +2,8 @@ import SwiftUI
 
 struct AddAccountView: View {
     enum Method: String, CaseIterable, Identifiable {
-        case browser = "Browser sign-in"
-        case cookie = "Session cookie"
+        case browser = "Browser Sign-In"
+        case cookie = "Session Cookie"
         var id: String { rawValue }
     }
 
@@ -14,74 +14,104 @@ struct AddAccountView: View {
     @State private var cookie = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Add a Roblox account")
-                        .font(.system(size: 24, weight: .bold, design: .rounded))
-                    Text("The session stays in this Mac's Keychain.")
-                        .foregroundStyle(RAMPalette.muted)
-                }
-                Spacer()
-                Button("Close") { dismiss() }
-                    .buttonStyle(QuietButtonStyle())
-            }
-
-            Picker("Add method", selection: $method) {
-                ForEach(Method.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 300)
-
-            if method == .browser {
-                VStack(alignment: .leading, spacing: 10) {
-                    RobloxLoginWebView(model: browser)
-                        .frame(minWidth: 760, minHeight: 470)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    HStack {
-                        Text(browser.hasSession ? "A signed-in Roblox session is ready." : "Sign in above, then add the signed-in account.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(browser.hasSession ? RAMPalette.straw : RAMPalette.muted)
-                        Spacer()
-                        Button(store.isWorking ? "Adding account" : "Add signed-in account") {
-                            Task {
-                                guard let sessionCookie = await browser.sessionCookie() else { return }
-                                if await store.importSession(sessionCookie) { dismiss() }
-                            }
-                        }
-                        .buttonStyle(LaunchButtonStyle())
-                        .disabled(!browser.hasSession || store.isWorking)
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                LabeledContent("Sign-in method") {
+                    Picker("Sign-in method", selection: $method) {
+                        ForEach(Method.allCases) { Text($0.rawValue).tag($0) }
                     }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 280)
                 }
-            } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Paste only a session that belongs to you. Never send this value to another person.")
-                        .foregroundStyle(RAMPalette.muted)
-                    SecureField(".ROBLOSECURITY value", text: $cookie)
-                        .textFieldStyle(.roundedBorder)
-                    HStack {
-                        Spacer()
-                        Button(store.isWorking ? "Checking session" : "Check and add") {
-                            Task {
-                                if await store.importSession(cookie) { dismiss() }
-                            }
-                        }
-                        .buttonStyle(LaunchButtonStyle())
-                        .disabled(cookie.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isWorking)
-                    }
+                .frame(maxWidth: 430)
+
+                if method == .browser {
+                    browserSignIn
+                } else {
+                    cookieImport
                 }
-                .frame(minWidth: 640, minHeight: 220, alignment: .top)
+            }
+            .padding(20)
+            .navigationTitle("Add Roblox Account")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                }
             }
         }
-        .padding(24)
-        .background(RAMPalette.ground)
-        .foregroundStyle(RAMPalette.ink)
-        .preferredColorScheme(.dark)
+        .frame(
+            minWidth: method == .browser ? 820 : 620,
+            minHeight: method == .browser ? 620 : 300
+        )
         .alert(item: $store.notice) { notice in
             Alert(title: Text(notice.title), message: Text(notice.message), dismissButton: .default(Text("OK")))
         }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
             if method == .browser { browser.updateSessionState() }
         }
+    }
+
+    private var browserSignIn: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Sign in on Roblox. The browser session is temporary. The accepted account session moves to this Mac's Keychain.")
+                .foregroundStyle(.secondary)
+
+            ZStack {
+                RobloxLoginWebView(model: browser)
+                if browser.isLoading {
+                    ProgressView()
+                        .controlSize(.large)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+            }
+
+            HStack {
+                Label(
+                    browser.hasSession ? "Signed-in session found" : "Sign in above to continue",
+                    systemImage: browser.hasSession ? "checkmark.circle.fill" : "person.crop.circle"
+                )
+                .foregroundStyle(browser.hasSession ? .green : .secondary)
+                Spacer()
+                Button(store.isWorking ? "Adding" : "Add Signed-In Account") {
+                    Task {
+                        guard let sessionCookie = await browser.sessionCookie() else { return }
+                        if await store.importSession(sessionCookie) { dismiss() }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(!browser.hasSession || store.isWorking)
+            }
+        }
+    }
+
+    private var cookieImport: some View {
+        Form {
+            Section("Session Cookie") {
+                SecureField(".ROBLOSECURITY value", text: $cookie)
+                Text("Paste only a session that belongs to you. Treat this value like a password.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Spacer()
+                Button(store.isWorking ? "Checking" : "Check and Add") {
+                    Task {
+                        if await store.importSession(cookie) { dismiss() }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(cookie.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isWorking)
+            }
+        }
+        .formStyle(.grouped)
     }
 }

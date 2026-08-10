@@ -7,10 +7,11 @@ struct RAMacApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(store: store)
-                .frame(minWidth: 980, minHeight: 650)
+                .frame(minWidth: 900, minHeight: 600)
         }
         .windowStyle(.titleBar)
-        .windowToolbarStyle(.unifiedCompact)
+        .windowToolbarStyle(.unified)
+        .defaultSize(width: 1120, height: 720)
         .commands {
             CommandGroup(replacing: .newItem) { }
         }
