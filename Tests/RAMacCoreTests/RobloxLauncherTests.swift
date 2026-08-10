@@ -90,7 +90,7 @@ final class RobloxLauncherTests: XCTestCase {
         )
     }
 
-    func testLiveParallelCopyLaunchWhenEnabled() async throws {
+    func testLiveConcurrentParallelCopyLaunchWhenEnabled() async throws {
         guard ProcessInfo.processInfo.environment["RAM_RUN_PARALLEL_INTEGRATION"] == "1" else {
             throw XCTSkip("Set RAM_RUN_PARALLEL_INTEGRATION=1 to run the installed-Roblox integration test.")
         }
@@ -113,15 +113,22 @@ final class RobloxLauncherTests: XCTestCase {
             launchTime: 1
         )
 
-        let first = try await launcher.launch(invalidTicketURL, for: accountIDs[0])
-        let second = try await launcher.launch(invalidTicketURL, for: accountIDs[1])
-        XCTAssertGreaterThan(first.processIdentifier, 0)
-        XCTAssertGreaterThan(second.processIdentifier, 0)
-        XCTAssertNotEqual(first.processIdentifier, second.processIdentifier)
+        let instances = try await withThrowingTaskGroup(of: ParallelRobloxInstance.self) { group in
+            for accountID in accountIDs {
+                group.addTask { try await launcher.launch(invalidTicketURL, for: accountID) }
+            }
+            var launched: [ParallelRobloxInstance] = []
+            for try await instance in group { launched.append(instance) }
+            return launched
+        }
+        XCTAssertEqual(instances.count, 2)
+        XCTAssertTrue(instances.allSatisfy { $0.processIdentifier > 0 })
+        XCTAssertEqual(Set(instances.map(\.processIdentifier)).count, 2)
         let runningAfterLaunch = await launcher.runningAccountIDs(from: accountIDs)
         XCTAssertEqual(runningAfterLaunch, Set(accountIDs))
-        XCTAssertEqual(kill(first.processIdentifier, 0), 0)
-        XCTAssertEqual(kill(second.processIdentifier, 0), 0)
+        for instance in instances {
+            XCTAssertEqual(kill(instance.processIdentifier, 0), 0)
+        }
 
         for accountID in accountIDs {
             let stopped = await launcher.stop(accountID: accountID)

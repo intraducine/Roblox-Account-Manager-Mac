@@ -22,6 +22,7 @@ let package = Package(
             dependencies: ["RAMacCore"],
             linkerSettings: [.linkedFramework("WebKit")]
         ),
-        .testTarget(name: "RAMacCoreTests", dependencies: ["RAMacCore"])
+        .testTarget(name: "RAMacCoreTests", dependencies: ["RAMacCore"]),
+        .testTarget(name: "RAMacAppTests", dependencies: ["RAMacApp", "RAMacCore"])
     ]
 )

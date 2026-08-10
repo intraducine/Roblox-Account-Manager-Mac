@@ -26,6 +26,13 @@ public enum RobloxAPIError: LocalizedError, Equatable {
     }
 }
 
+public protocol RobloxAPIProviding: Sendable {
+    func authenticatedUser(cookie rawCookie: String) async throws -> RobloxUser
+    func avatarURL(userID: Int64) async -> URL?
+    func authenticationTicket(cookie rawCookie: String) async throws -> String
+    func privateServerAccessCode(placeID: Int64, linkCode: String, cookie rawCookie: String) async throws -> String
+}
+
 public struct RobloxAPIClient: Sendable {
     private let session: URLSession
     private let decoder = JSONDecoder()
@@ -154,7 +161,7 @@ public struct RobloxAPIClient: Sendable {
     private func applyHeaders(cookie: String, to request: inout URLRequest) {
         request.setValue(".ROBLOSECURITY=\(cookie)", forHTTPHeaderField: "Cookie")
         request.setValue("https://www.roblox.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Roblox Account Manager for Mac/0.2", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox Account Manager for Mac/0.3", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 
@@ -172,3 +179,5 @@ public struct RobloxAPIClient: Sendable {
         return message
     }
 }
+
+extension RobloxAPIClient: RobloxAPIProviding {}

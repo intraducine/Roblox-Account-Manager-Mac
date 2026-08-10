@@ -6,6 +6,8 @@ struct ContentView: View {
     @State private var showsAddAccount = false
     @State private var showsLicense = false
     @State private var pendingRemoval: ManagedAccount?
+    @State private var batchPlaceID = ""
+    @State private var batchServer = ""
 
     var body: some View {
         NavigationSplitView {
@@ -14,8 +16,23 @@ struct ContentView: View {
         } detail: {
             Group {
                 if let account = store.selectedAccount {
-                    AccountDetailView(store: store, account: account)
+                    VStack(spacing: 0) {
+                        AccountDetailView(
+                            store: store,
+                            account: account,
+                            showsLaunchDock: store.batchSelectedIDs.isEmpty
+                        )
                         .id(account.id)
+                        if !store.batchSelectedIDs.isEmpty {
+                            BatchLaunchDock(
+                                store: store,
+                                placeID: $batchPlaceID,
+                                server: $batchServer
+                            )
+                            .padding(.horizontal, 28)
+                            .padding(.bottom, 24)
+                        }
+                    }
                 } else {
                     emptyState
                 }
@@ -51,6 +68,13 @@ struct ContentView: View {
         }
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
             Task { await store.refreshRunningInstances() }
+        }
+        .onChange(of: store.batchSelectedIDs) { selectedIDs in
+            guard !selectedIDs.isEmpty,
+                  batchPlaceID.isEmpty,
+                  let selectedAccount = store.selectedAccount else { return }
+            batchPlaceID = selectedAccount.savedPlaceID
+            batchServer = selectedAccount.savedServer
         }
     }
 
@@ -95,11 +119,45 @@ struct ContentView: View {
                 .padding(.horizontal, 14)
                 .padding(.bottom, 9)
 
+            HStack(spacing: 8) {
+                Text(store.batchSelectedIDs.isEmpty
+                     ? "Batch selection"
+                     : "\(store.batchSelectedIDs.count) selected")
+                Spacer()
+                Menu("Groups") {
+                    ForEach(groupNames, id: \.self) { group in
+                        Button(store.isBatchGroupSelected(group) ? "Clear \(group)" : "Select \(group)") {
+                            store.toggleBatchGroup(group)
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(store.isBatchLaunching)
+                if !store.batchSelectedIDs.isEmpty {
+                    Button("Clear") { store.clearBatchSelection() }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(RAMPalette.ink)
+                        .disabled(store.isBatchLaunching)
+                }
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(RAMPalette.muted)
+            .padding(.horizontal, 15)
+            .frame(height: 27)
+
             List(selection: $store.selectedID) {
                 ForEach(groupNames, id: \.self) { group in
                     Section(group) {
                         ForEach(accounts(in: group)) { account in
-                            AccountRow(account: account, isRunning: store.isRunning(account))
+                            AccountRow(
+                                account: account,
+                                isRunning: store.isRunning(account),
+                                isBatchSelected: store.isBatchSelected(account),
+                                batchState: store.batchStates[account.id],
+                                isSelectionDisabled: store.isBatchLaunching,
+                                onToggleBatch: { store.toggleBatchSelection(account) }
+                            )
                                 .tag(account.id)
                                 .contextMenu {
                                     Button("Remove account", role: .destructive) {
@@ -157,9 +215,24 @@ struct ContentView: View {
 private struct AccountRow: View {
     let account: ManagedAccount
     let isRunning: Bool
+    let isBatchSelected: Bool
+    let batchState: AccountStore.BatchLaunchState?
+    let isSelectionDisabled: Bool
+    let onToggleBatch: () -> Void
 
     var body: some View {
         HStack(spacing: 11) {
+            Toggle(
+                "Select @\(account.username) for batch launch",
+                isOn: Binding(
+                    get: { isBatchSelected },
+                    set: { _ in onToggleBatch() }
+                )
+            )
+            .labelsHidden()
+            .toggleStyle(.checkbox)
+            .disabled(isRunning || isSelectionDisabled)
+
             AsyncImage(url: account.avatarURL) { image in
                 image.resizable().scaledToFill()
             } placeholder: {
@@ -183,7 +256,12 @@ private struct AccountRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
-            if isRunning {
+            if let batchState {
+                Text(batchState.label)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(batchState.errorMessage == nil ? RAMPalette.muted : RAMPalette.rust)
+                    .help(batchState.errorMessage ?? "Preparing this account")
+            } else if isRunning {
                 Text("Running")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(RAMPalette.straw)

@@ -9,6 +9,7 @@ Give a Mac user one clear place to store their own Roblox account sessions and k
 - `RAMacCore`: account model, metadata repository, Keychain vault, Roblox HTTPS client, launch URL builder, and isolated parallel-instance launcher.
 - `RAMacApp`: SwiftUI account shelf, account editor, launch dock, embedded WebKit sign-in, notices, and app commands.
 - `RAMacCoreTests`: deterministic tests for storage, requests, and launch links.
+- `RAMacAppTests`: batch-selection, concurrent-start, result, and retry tests.
 
 The project has no third-party runtime dependencies.
 
@@ -38,7 +39,16 @@ The account shelf stays narrow. The selected account owns the detail view. The l
 - Stop one selected account instance without closing other accounts.
 - Clean stale copies after their processes exit.
 
-### Phase 3: suitable follow-up work
+### Phase 3: complete in version 0.3.0
+
+- Native checkbox selection for any account mix.
+- A group menu that selects or clears a complete account group.
+- One shared place, job, or private server target for the batch.
+- Concurrent ticket requests with no artificial launch delay.
+- Continue-on-error behavior with failed accounts retained for one-step retry.
+- Live batch progress, running state, and failure details.
+
+### Phase 4: suitable follow-up work
 
 - Signed and notarized release builds.
 - Export and import for non-secret account metadata.

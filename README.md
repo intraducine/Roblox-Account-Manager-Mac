@@ -6,7 +6,7 @@ This project is independent and is not made by or approved by Roblox Corporation
 
 ## Current release
 
-Version `0.2.0` includes the complete parallel-account Mac workflow:
+Version `0.3.0` includes the complete parallel and batch-account Mac workflow:
 
 - Add an account through a private embedded Roblox sign-in page.
 - Import a `.ROBLOSECURITY` session as an advanced option.
@@ -16,6 +16,9 @@ Version `0.2.0` includes the complete parallel-account Mac workflow:
 - Save a place ID and optional server target for each account.
 - Launch a public server, a job ID, or a private server link as the selected account.
 - Keep different accounts running in separate Roblox processes at the same time.
+- Select accounts with checkboxes or select a complete group.
+- Launch the selected accounts immediately with one shared place and server target.
+- Continue the batch when one account fails, then keep failed accounts selected for retry.
 - Show which accounts are running and stop one account without closing the others.
 - Keep an automatic metadata backup.
 
@@ -65,7 +68,7 @@ The installed Roblox app declares `LSMultipleInstancesProhibited`. This port wor
 
 Use accounts that belong to you. Some Roblox experiences can prohibit alternate accounts or farming even when Roblox itself allows both accounts to sign in. This app does not hide automation, inject code, or change the Roblox executable.
 
-Windows-only features from the original project are not in version 0.2.0. These include Win32 window placement, FPS file patches, CefSharp browser profiles, the local developer API, Nexus account control, and process watcher automation. See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the feature decisions.
+Windows-only features from the original project are not in version 0.3.0. These include Win32 window placement, FPS file patches, CefSharp browser profiles, the local developer API, Nexus account control, and process watcher automation. See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the feature decisions.
 
 ## License
 

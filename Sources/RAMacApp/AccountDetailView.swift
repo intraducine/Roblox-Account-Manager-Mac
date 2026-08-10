@@ -4,13 +4,15 @@ import SwiftUI
 struct AccountDetailView: View {
     @ObservedObject var store: AccountStore
     let account: ManagedAccount
+    let showsLaunchDock: Bool
     @State private var draft: ManagedAccount
     @State private var placeID: String
     @State private var server: String
 
-    init(store: AccountStore, account: ManagedAccount) {
+    init(store: AccountStore, account: ManagedAccount, showsLaunchDock: Bool = true) {
         self.store = store
         self.account = account
+        self.showsLaunchDock = showsLaunchDock
         _draft = State(initialValue: account)
         _placeID = State(initialValue: account.savedPlaceID)
         _server = State(initialValue: account.savedServer)
@@ -28,9 +30,11 @@ struct AccountDetailView: View {
                 .padding(.bottom, 28)
                 .frame(maxWidth: 900, alignment: .leading)
             }
-            launchDock
-                .padding(.horizontal, 28)
-                .padding(.bottom, 24)
+            if showsLaunchDock {
+                launchDock
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 24)
+            }
         }
         .foregroundStyle(RAMPalette.ink)
     }

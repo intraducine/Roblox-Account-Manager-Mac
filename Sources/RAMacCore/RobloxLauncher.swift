@@ -97,6 +97,13 @@ public struct ParallelRobloxInstance: Equatable, Sendable {
     public let applicationURL: URL
 }
 
+public protocol ParallelRobloxLaunching: Sendable {
+    func launch(_ url: URL, for accountID: UUID) async throws -> ParallelRobloxInstance
+    func runningAccountIDs(from accountIDs: [UUID]) async -> Set<UUID>
+    func stop(accountID: UUID) async -> Bool
+    func removeStaleCopies() async
+}
+
 private struct CommandFailure: LocalizedError {
     let output: String
     var errorDescription: String? { output.isEmpty ? "The system command failed." : output }
@@ -328,3 +335,5 @@ public actor ParallelRobloxLauncher {
         }
     }
 }
+
+extension ParallelRobloxLauncher: ParallelRobloxLaunching {}
