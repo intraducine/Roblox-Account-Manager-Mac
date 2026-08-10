@@ -9,6 +9,7 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
     case robloxNotInstalled
     case untrustedRobloxInstallation
     case accountAlreadyRunning
+    case officialParallelUnavailable
     case copyFailed(String)
     case signingFailed(String)
     case openFailed
@@ -27,12 +28,42 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
             return "The Roblox app in Applications does not have a valid Roblox Corporation signature. Reinstall Roblox before using parallel launch."
         case .accountAlreadyRunning:
             return "This account already has a Roblox instance open. Stop it before launching it again."
+        case .officialParallelUnavailable:
+            return "The official Roblox app did not allow another client. Stop the running client or choose Modified Parallel Fallback."
         case .copyFailed(let detail):
             return "The managed Roblox copy could not be prepared. \(detail)"
         case .signingFailed(let detail):
             return "The managed Roblox copy could not be signed. \(detail)"
         case .openFailed:
             return "macOS could not open the isolated Roblox instance."
+        }
+    }
+}
+
+public enum RobloxLaunchMode: String, Codable, CaseIterable, Hashable, Sendable {
+    case official
+    case modifiedParallel
+
+    public var title: String {
+        switch self {
+        case .official: return "Official Roblox"
+        case .modifiedParallel: return "Modified Parallel Fallback"
+        }
+    }
+
+    public var shortTitle: String {
+        switch self {
+        case .official: return "Official"
+        case .modifiedParallel: return "Parallel Fallback"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .official:
+            return "Uses /Applications/Roblox.app without copying, editing, or signing it."
+        case .modifiedParallel:
+            return "Uses signed managed copies to work around Roblox's one-client limit."
         }
     }
 }
@@ -98,7 +129,7 @@ public struct ParallelRobloxInstance: Equatable, Sendable {
 }
 
 public protocol ParallelRobloxLaunching: Sendable {
-    func launch(_ url: URL, for accountID: UUID) async throws -> ParallelRobloxInstance
+    func launch(_ url: URL, for accountID: UUID, mode: RobloxLaunchMode) async throws -> ParallelRobloxInstance
     func runningAccountIDs(from accountIDs: [UUID]) async -> Set<UUID>
     func stop(accountID: UUID) async -> Bool
     func removeStaleCopies() async
@@ -130,6 +161,7 @@ public actor ParallelRobloxLauncher {
 
     private let fileManager: FileManager
     private let instancesRoot: URL
+    private var officialLaunchInProgress = false
 
     public init(
         fileManager: FileManager = .default,
@@ -167,30 +199,62 @@ public actor ParallelRobloxLauncher {
         return try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
     }
 
-    public func launch(_ url: URL, for accountID: UUID) async throws -> ParallelRobloxInstance {
+    public func launch(
+        _ url: URL,
+        for accountID: UUID,
+        mode: RobloxLaunchMode
+    ) async throws -> ParallelRobloxInstance {
         guard fileManager.fileExists(atPath: Self.officialApplicationURL.path) else {
             throw RobloxLaunchError.robloxNotInstalled
         }
         if await isRunning(accountID: accountID) { throw RobloxLaunchError.accountAlreadyRunning }
 
+        if mode == .official {
+            while officialLaunchInProgress {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            officialLaunchInProgress = true
+        }
+        defer {
+            if mode == .official { officialLaunchInProgress = false }
+        }
+
         try verifyOfficialApplication()
-        let copyURL = try prepareCopy(for: accountID)
+        let applicationURL: URL
+        switch mode {
+        case .official:
+            applicationURL = Self.officialApplicationURL
+        case .modifiedParallel:
+            applicationURL = try prepareCopy(for: accountID)
+            // Older Roblox builds used this named semaphore. Current builds may not create it.
+            _ = sem_unlink("/RobloxPlayerUniq")
+        }
 
-        // Older Roblox builds used this named semaphore. Current builds may not create it.
-        _ = sem_unlink("/RobloxPlayerUniq")
-
-        let processIdentifier = try await open(url, with: copyURL)
+        let openedProcessIdentifier = try await open(url, with: applicationURL)
+        let processIdentifier: Int32
+        if mode == .official {
+            processIdentifier = try await resolveOfficialProcessIdentifier(
+                openedProcessIdentifier,
+                excluding: accountID
+            )
+        } else {
+            processIdentifier = openedProcessIdentifier
+        }
+        try fileManager.createDirectory(
+            at: accountRootURL(for: accountID),
+            withIntermediateDirectories: true
+        )
         try writeProcessRecord(
             ParallelProcessRecord(
                 processIdentifier: processIdentifier,
-                applicationPath: copyURL.standardizedFileURL.path
+                applicationPath: applicationURL.standardizedFileURL.path
             ),
             for: accountID
         )
         return ParallelRobloxInstance(
             accountID: accountID,
             processIdentifier: processIdentifier,
-            applicationURL: copyURL
+            applicationURL: applicationURL
         )
     }
 
@@ -203,6 +267,14 @@ public actor ParallelRobloxLauncher {
     }
 
     public func stop(accountID: UUID) async -> Bool {
+        if readProcessRecord(for: accountID)?.applicationPath
+            == Self.officialApplicationURL.standardizedFileURL.path {
+            let stopped = await stopOfficialApplications()
+            if stopped {
+                try? fileManager.removeItem(at: processRecordURL(for: accountID))
+            }
+            return stopped
+        }
         guard let application = await runningApplication(for: accountID) else { return true }
         _ = await MainActor.run { application.terminate() }
 
@@ -214,6 +286,42 @@ public actor ParallelRobloxLauncher {
             _ = await MainActor.run { remaining.forceTerminate() }
         }
         return await waitUntilStopped(accountID: accountID, attempts: 10)
+    }
+
+    private func stopOfficialApplications() async -> Bool {
+        let paths = Set([
+            Self.officialApplicationURL.standardizedFileURL.path,
+            Self.officialApplicationURL
+                .appendingPathComponent("Contents/MacOS/RobloxMenuBar.app", isDirectory: true)
+                .standardizedFileURL.path
+        ])
+
+        for _ in 0..<4 {
+            let applications = await MainActor.run {
+                NSWorkspace.shared.runningApplications.filter { application in
+                    guard let path = application.bundleURL?.standardizedFileURL.path else { return false }
+                    return paths.contains(path)
+                }
+            }
+            if applications.isEmpty { return true }
+            await MainActor.run {
+                for application in applications { _ = application.terminate() }
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            await MainActor.run {
+                for application in applications where !application.isTerminated {
+                    _ = application.forceTerminate()
+                }
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+
+        return await MainActor.run {
+            !NSWorkspace.shared.runningApplications.contains { application in
+                guard let path = application.bundleURL?.standardizedFileURL.path else { return false }
+                return paths.contains(path)
+            }
+        }
     }
 
     public func removeStaleCopies() async {
@@ -241,7 +349,13 @@ public actor ParallelRobloxLauncher {
 
     private func runningApplication(for accountID: UUID) async -> NSRunningApplication? {
         guard let record = readProcessRecord(for: accountID) else { return nil }
-        let expectedPath = copyURL(for: accountID).standardizedFileURL.path
+        let officialPath = Self.officialApplicationURL.standardizedFileURL.path
+        let managedPath = copyURL(for: accountID).standardizedFileURL.path
+        guard record.applicationPath == officialPath || record.applicationPath == managedPath else {
+            try? fileManager.removeItem(at: processRecordURL(for: accountID))
+            return nil
+        }
+        let expectedPath = record.applicationPath
         let application = await MainActor.run { () -> NSRunningApplication? in
             guard let application = NSRunningApplication(processIdentifier: record.processIdentifier),
                   !application.isTerminated,
@@ -252,6 +366,62 @@ public actor ParallelRobloxLauncher {
             try? fileManager.removeItem(at: processRecordURL(for: accountID))
         }
         return application
+    }
+
+    private func recordedProcessIdentifiers(excluding accountID: UUID) async -> Set<Int32> {
+        guard let directories = try? fileManager.contentsOfDirectory(
+            at: instancesRoot,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        var result = Set<Int32>()
+        for directory in directories {
+            guard let otherID = UUID(uuidString: directory.lastPathComponent),
+                  otherID != accountID,
+                  let application = await runningApplication(for: otherID) else { continue }
+            result.insert(application.processIdentifier)
+        }
+        return result
+    }
+
+    private func resolveOfficialProcessIdentifier(
+        _ openedProcessIdentifier: Int32,
+        excluding accountID: UUID
+    ) async throws -> Int32 {
+        let officialPath = Self.officialApplicationURL.standardizedFileURL.path
+        let recorded = await recordedProcessIdentifiers(excluding: accountID)
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        var stableProcessIdentifier: Int32?
+        var stableSamples = 0
+
+        for _ in 0..<35 {
+            let candidates = await MainActor.run {
+                NSWorkspace.shared.runningApplications.filter { application in
+                    !application.isTerminated
+                        && application.bundleURL?.standardizedFileURL.path == officialPath
+                }
+            }
+            let candidate = candidates.first(where: {
+                $0.processIdentifier == openedProcessIdentifier && !recorded.contains($0.processIdentifier)
+            }) ?? candidates
+                .filter({ !recorded.contains($0.processIdentifier) })
+                .max(by: { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) })
+
+            if let candidate {
+                if stableProcessIdentifier == candidate.processIdentifier {
+                    stableSamples += 1
+                } else {
+                    stableProcessIdentifier = candidate.processIdentifier
+                    stableSamples = 1
+                }
+                if stableSamples >= 10 { return candidate.processIdentifier }
+            } else {
+                stableProcessIdentifier = nil
+                stableSamples = 0
+            }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        throw RobloxLaunchError.officialParallelUnavailable
     }
 
     private func waitUntilStopped(accountID: UUID, attempts: Int) async -> Bool {

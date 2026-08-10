@@ -23,6 +23,12 @@ struct LicenseNoticeView: View {
                     )
                 }
 
+                Section("Launch Modes") {
+                    Text("Official Roblox is the default. It uses /Applications/Roblox.app without copying, editing, or signing it.")
+                    Text("Modified Parallel Fallback can run more than one account. It changes and signs managed copies. Roblox says modified clients are not allowed.")
+                        .foregroundStyle(.secondary)
+                }
+
                 Section {
                     Text("Roblox is a trademark of Roblox Corporation. This project is not made by or approved by Roblox Corporation.")
                         .font(.caption)
@@ -38,6 +44,6 @@ struct LicenseNoticeView: View {
                 }
             }
         }
-        .frame(width: 560, height: 380)
+        .frame(width: 560, height: 620)
     }
 }

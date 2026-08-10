@@ -136,7 +136,13 @@ final class RobloxLauncherTests: XCTestCase {
 
         let instances = try await withThrowingTaskGroup(of: ParallelRobloxInstance.self) { group in
             for accountID in accountIDs {
-                group.addTask { try await launcher.launch(invalidTicketURL, for: accountID) }
+                group.addTask {
+                    try await launcher.launch(
+                        invalidTicketURL,
+                        for: accountID,
+                        mode: .modifiedParallel
+                    )
+                }
             }
             var launched: [ParallelRobloxInstance] = []
             for try await instance in group { launched.append(instance) }

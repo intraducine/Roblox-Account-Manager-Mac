@@ -22,6 +22,12 @@ The installed client is `/Applications/Roblox.app`, bundle ID `com.roblox.Roblox
 
 These facts support account-specific protocol launches. They do not support a promise of concurrent Roblox instances. Version 0.1.0 follows the platform declaration.
 
+Version 0.6.0 makes the exact installed app the default. It verifies the original Roblox Corporation signature and opens the protocol URL through AppKit. It does not copy, write, or sign the Roblox bundle in this mode. The app waits for Roblox's short launch process to hand off to the stable game process before it saves the process ID.
+
+A live test on 2026-08-10 launched two saved accounts toward place `1818` in official mode. One official client joined the game. The second official process did not stay open. The manager kept the first client marked as running and Stop All closed it. Before and after the test, the official `Info.plist` SHA-256 was `014e35df0f205938e50ebb10ebd9f7513906c183be305cca282bc1182cc33def`, the `RobloxPlayer` SHA-256 was `023659acbe36dec3b41503da5db5c37e70b995fbee1e2bf13f80893a0d3207cd`, and strict code-signature verification passed with Team ID `2CFABCH843`.
+
+The same build required an explicit warning before enabling Modified Parallel Fallback. Two saved accounts then joined place `1818` in two managed processes. Stop All closed both. The app was returned to Official mode after the test.
+
 ## API behavior checked
 
 An unauthenticated request to `https://users.roblox.com/v1/users/authenticated` returned HTTP 401 with an authentication-token error. The app uses this endpoint to reject an expired or incorrect imported session before Keychain storage.

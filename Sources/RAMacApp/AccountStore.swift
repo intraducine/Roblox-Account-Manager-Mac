@@ -44,26 +44,50 @@ final class AccountStore: ObservableObject {
     @Published private(set) var isBatchLaunching = false
     @Published private(set) var isStoppingAll = false
     @Published private(set) var batchStatus = "Select accounts from the shelf"
+    @Published private(set) var launchMode: RobloxLaunchMode
 
     private let repository: AccountRepository
     private let vault: any SecretVault
     private let api: any RobloxAPIProviding
     private let builder: RobloxLaunchURLBuilder
     private let launcher: any ParallelRobloxLaunching
+    private let preferences: UserDefaults
+
+    private static let launchModeKey = "RobloxLaunchMode"
 
     init(
         repository: AccountRepository = AccountRepository(),
         vault: any SecretVault = KeychainVault(),
         api: any RobloxAPIProviding = RobloxAPIClient(),
         builder: RobloxLaunchURLBuilder = RobloxLaunchURLBuilder(),
-        launcher: (any ParallelRobloxLaunching)? = nil
+        launcher: (any ParallelRobloxLaunching)? = nil,
+        preferences: UserDefaults = .standard,
+        launchMode: RobloxLaunchMode? = nil
     ) {
         self.repository = repository
         self.vault = vault
         self.api = api
         self.builder = builder
         self.launcher = launcher ?? ParallelRobloxLauncher()
+        self.preferences = preferences
+        self.launchMode = launchMode
+            ?? preferences.string(forKey: Self.launchModeKey).flatMap(RobloxLaunchMode.init(rawValue:))
+            ?? .official
         load()
+    }
+
+    func setLaunchMode(_ mode: RobloxLaunchMode) {
+        guard !isWorking, !isBatchLaunching else { return }
+        guard runningAccountIDs.isEmpty else {
+            notice = Notice(
+                title: "Stop Roblox before changing mode",
+                message: "Use Stop All, then select (mode.title)."
+            )
+            return
+        }
+        launchMode = mode
+        preferences.set(mode.rawValue, forKey: Self.launchModeKey)
+        launchStatus = mode == .official ? "Official Roblox selected" : "Modified fallback selected"
     }
 
     var selectedAccount: ManagedAccount? {
@@ -336,16 +360,23 @@ final class AccountStore: ObservableObject {
             launchStatus = "Requesting a launch ticket"
             let ticket = try await api.authenticationTicket(cookie: cookie)
             let url = try builder.makeURL(ticket: ticket, placeID: placeID, target: target)
-            launchStatus = "Preparing an isolated Roblox copy"
-            _ = try await launcher.launch(url, for: account.id)
+            launchStatus = launchMode == .official ? "Opening official Roblox" : "Preparing a modified Roblox copy"
+            _ = try await launcher.launch(url, for: account.id, mode: launchMode)
             await refreshRunningInstances()
+            guard isRunning(account) else {
+                throw launchMode == .official
+                    ? RobloxLaunchError.officialParallelUnavailable
+                    : RobloxLaunchError.openFailed
+            }
 
             var updated = account
             updated.lastUsed = Date()
             updated.savedPlaceID = placeText.trimmingCharacters(in: .whitespacesAndNewlines)
             updated.savedServer = serverInput
             update(updated)
-            launchStatus = "Running @\(account.username) in parallel"
+            launchStatus = launchMode == .official
+                ? "Running @\(account.username) with official Roblox"
+                : "Running @\(account.username) with parallel fallback"
         } catch {
             launchStatus = "Launch failed"
             notice = Notice(title: "Roblox did not launch", message: error.localizedDescription)
@@ -372,6 +403,7 @@ final class AccountStore: ObservableObject {
         let api = self.api
         let builder = self.builder
         let launcher = self.launcher
+        let launchMode = self.launchMode
         let total = selectedAccounts.count
 
         isWorking = true
@@ -409,7 +441,7 @@ final class AccountStore: ObservableObject {
 
                         let ticket = try await api.authenticationTicket(cookie: cookie)
                         let url = try builder.makeURL(ticket: ticket, placeID: placeID, target: target)
-                        _ = try await launcher.launch(url, for: account.id)
+                        _ = try await launcher.launch(url, for: account.id, mode: launchMode)
                         return BatchOutcome(accountID: account.id, username: account.username, errorMessage: nil)
                     } catch {
                         return BatchOutcome(
@@ -427,17 +459,32 @@ final class AccountStore: ObservableObject {
                     batchStates[outcome.accountID] = .failed(message)
                 } else {
                     batchStates[outcome.accountID] = nil
-                    if let index = accounts.firstIndex(where: { $0.id == outcome.accountID }) {
-                        accounts[index].lastUsed = Date()
-                        accounts[index].savedPlaceID = String(placeID)
-                        accounts[index].savedServer = serverInput
-                    }
                 }
                 batchStatus = "Started \(outcomes.filter { $0.errorMessage == nil }.count) of \(total)"
             }
         }
 
         await refreshRunningInstances()
+        outcomes = outcomes.map { outcome in
+            guard outcome.errorMessage == nil,
+                  !runningAccountIDs.contains(outcome.accountID) else { return outcome }
+            let message = launchMode == .official
+                ? RobloxLaunchError.officialParallelUnavailable.localizedDescription
+                : "Roblox closed before the manager could confirm that it was running."
+            batchStates[outcome.accountID] = .failed(message)
+            return BatchOutcome(
+                accountID: outcome.accountID,
+                username: outcome.username,
+                errorMessage: message
+            )
+        }
+        for outcome in outcomes where outcome.errorMessage == nil {
+            if let index = accounts.firstIndex(where: { $0.id == outcome.accountID }) {
+                accounts[index].lastUsed = Date()
+                accounts[index].savedPlaceID = String(placeID)
+                accounts[index].savedServer = serverInput
+            }
+        }
         do {
             try repository.save(accounts)
         } catch {
@@ -449,7 +496,9 @@ final class AccountStore: ObservableObject {
             batchSelectedIDs.removeAll()
             batchStates.removeAll()
             batchStatus = "Started all \(total) accounts"
-            launchStatus = "Running \(total) accounts in parallel"
+            launchStatus = launchMode == .official
+                ? "Running \(total) accounts with official Roblox"
+                : "Running \(total) accounts with parallel fallback"
         } else {
             batchSelectedIDs = Set(failures.map(\.accountID))
             batchStates = batchStates.filter { batchSelectedIDs.contains($0.key) }

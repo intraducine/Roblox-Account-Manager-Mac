@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var pendingRemoval: ManagedAccount?
     @State private var batchPlaceID = ""
     @State private var batchServer = ""
+    @State private var showsFallbackWarning = false
 
     var body: some View {
         NavigationSplitView {
@@ -37,6 +38,28 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Menu {
+                    Button {
+                        store.setLaunchMode(.official)
+                    } label: {
+                        Label("Official Roblox", systemImage: store.launchMode == .official ? "checkmark" : "app")
+                    }
+
+                    Divider()
+
+                    Button {
+                        showsFallbackWarning = true
+                    } label: {
+                        Label(
+                            "Modified Parallel Fallback",
+                            systemImage: store.launchMode == .modifiedParallel ? "checkmark" : "exclamationmark.triangle"
+                        )
+                    }
+                } label: {
+                    Label(store.launchMode.shortTitle, systemImage: store.launchMode == .official ? "checkmark.shield" : "exclamationmark.triangle")
+                }
+                .help(store.launchMode.detail)
+
                 Button {
                     showsAddAccount = true
                 } label: {
@@ -74,6 +97,17 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) { pendingRemoval = nil }
         } message: {
             Text("This removes the account metadata and its Keychain session from this Mac.")
+        }
+        .confirmationDialog(
+            "Use the modified parallel fallback?",
+            isPresented: $showsFallbackWarning
+        ) {
+            Button("Use Modified Fallback", role: .destructive) {
+                store.setLaunchMode(.modifiedParallel)
+            }
+            Button("Keep Official Roblox", role: .cancel) {}
+        } message: {
+            Text("This mode copies Roblox, changes the copy's bundle settings, and signs it again. Roblox says modified clients are not allowed. The app will never select this mode for you.")
         }
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
             Task { await store.refreshRunningInstances() }

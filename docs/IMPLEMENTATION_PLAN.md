@@ -64,7 +64,17 @@ The app uses standard macOS structure and controls. It follows the system appear
 - Keep the optional Roblox menu-bar helper out of managed copies.
 - Use one stable client identity for login-item and notification decisions.
 
-### Phase 6: suitable follow-up work
+### Phase 6: complete in version 0.6.0
+
+- Make the exact Roblox app in `/Applications` the default launch path.
+- Verify Roblox Corporation's signature before every official or fallback launch.
+- Do not copy, edit, or sign Roblox in official mode.
+- Track the replacement game process after Roblox hands off from its launch process.
+- Keep the modified-copy method behind a clear user warning.
+- Never switch from official mode to the fallback automatically.
+- State the modified-client account risk in the app and README.
+
+### Suitable follow-up work
 
 - Signed and notarized release builds.
 - Export and import for non-secret account metadata.

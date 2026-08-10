@@ -5,6 +5,35 @@ import XCTest
 
 @MainActor
 final class AccountStoreBatchTests: XCTestCase {
+    func testLaunchModeDefaultsToOfficialAndPersistsExplicitFallback() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-mode-tests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suiteName = "RAMacAppModeTests-\(UUID().uuidString)"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+        let launcher = BatchMockLauncher(failingAccountID: nil)
+
+        let initial = AccountStore(
+            repository: AccountRepository(dataDirectory: directory),
+            vault: MemoryVault(),
+            api: BatchMockAPI(),
+            launcher: launcher,
+            preferences: preferences
+        )
+        XCTAssertEqual(initial.launchMode, .official)
+
+        initial.setLaunchMode(.modifiedParallel)
+        let reloaded = AccountStore(
+            repository: AccountRepository(dataDirectory: directory),
+            vault: MemoryVault(),
+            api: BatchMockAPI(),
+            launcher: launcher,
+            preferences: preferences
+        )
+        XCTAssertEqual(reloaded.launchMode, .modifiedParallel)
+    }
+
     func testGroupSelectionTogglesEveryEligibleAccount() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -27,9 +56,11 @@ final class AccountStoreBatchTests: XCTestCase {
 
         let maximumConcurrentRequests = await fixture.api.maximumConcurrentTicketRequests()
         let attemptedAccountIDs = await fixture.launcher.attemptedAccountIDs()
+        let attemptedModes = await fixture.launcher.attemptedModes()
         let runningAccountIDs = await fixture.launcher.runningAccountIDs(from: fixture.accounts.map(\.id))
         XCTAssertEqual(maximumConcurrentRequests, 3)
         XCTAssertEqual(attemptedAccountIDs, Set(fixture.accounts.map(\.id)))
+        XCTAssertEqual(attemptedModes, [.modifiedParallel])
         XCTAssertEqual(runningAccountIDs, Set([fixture.accounts[0].id, fixture.accounts[2].id]))
         XCTAssertEqual(fixture.store.batchSelectedIDs, Set([fixture.accounts[1].id]))
         XCTAssertEqual(fixture.store.batchStatus, "2 started, 1 failed")
@@ -52,7 +83,7 @@ final class AccountStoreBatchTests: XCTestCase {
         fixture.store.toggleBatchGroup("Wave")
         await fixture.store.launchBatch(placeText: "12345", serverText: "")
         XCTAssertEqual(fixture.store.runningAccountIDs, Set(fixture.accounts.map(\.id)))
-        XCTAssertEqual(fixture.store.launchStatus, "Running 3 accounts in parallel")
+        XCTAssertEqual(fixture.store.launchStatus, "Running 3 accounts with parallel fallback")
 
         await fixture.store.stopAll()
 
@@ -82,7 +113,15 @@ final class AccountStoreBatchTests: XCTestCase {
         let api = BatchMockAPI()
         let failingID = failingIndex.map { accounts[$0].id }
         let launcher = BatchMockLauncher(failingAccountID: failingID)
-        let store = AccountStore(repository: repository, vault: vault, api: api, launcher: launcher)
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: "RAMacAppTests-\(UUID().uuidString)"))
+        let store = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: api,
+            launcher: launcher,
+            preferences: preferences,
+            launchMode: .modifiedParallel
+        )
         return Fixture(
             directory: directory,
             repository: repository,
@@ -156,14 +195,20 @@ private actor BatchMockAPI: RobloxAPIProviding {
 private actor BatchMockLauncher: ParallelRobloxLaunching {
     private let failingAccountID: UUID?
     private var attempted = Set<UUID>()
+    private var modes = Set<RobloxLaunchMode>()
     private var running = Set<UUID>()
 
     init(failingAccountID: UUID?) {
         self.failingAccountID = failingAccountID
     }
 
-    func launch(_ url: URL, for accountID: UUID) async throws -> ParallelRobloxInstance {
+    func launch(
+        _ url: URL,
+        for accountID: UUID,
+        mode: RobloxLaunchMode
+    ) async throws -> ParallelRobloxInstance {
         attempted.insert(accountID)
+        modes.insert(mode)
         if accountID == failingAccountID { throw RobloxLaunchError.openFailed }
         running.insert(accountID)
         return ParallelRobloxInstance(
@@ -188,5 +233,9 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
 
     func attemptedAccountIDs() -> Set<UUID> {
         attempted
+    }
+
+    func attemptedModes() -> Set<RobloxLaunchMode> {
+        modes
     }
 }

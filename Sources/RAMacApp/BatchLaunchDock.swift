@@ -12,6 +12,8 @@ struct BatchLaunchBar: View {
                     .fontWeight(.semibold)
                 Text("\(selectionCount) account\(selectionCount == 1 ? "" : "s")")
                     .foregroundStyle(.secondary)
+                Text("· \(store.launchMode.shortTitle)")
+                    .foregroundStyle(store.launchMode == .official ? .secondary : Color.orange)
                 Spacer()
                 Text(store.batchStatus)
                     .font(.caption)
