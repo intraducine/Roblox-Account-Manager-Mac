@@ -6,7 +6,7 @@ This project is independent and is not made by or approved by Roblox Corporation
 
 ## Current release
 
-Version `0.4.0` includes the complete parallel and batch-account Mac workflow:
+Version `0.4.1` includes the complete parallel and batch-account Mac workflow:
 
 - Add an account through a private embedded Roblox sign-in page.
 - Import a `.ROBLOSECURITY` session as an advanced option.
@@ -22,6 +22,7 @@ Version `0.4.0` includes the complete parallel and batch-account Mac workflow:
 - Show which accounts are running and stop one account without closing the others.
 - Keep an automatic metadata backup.
 - Use a standard native macOS interface that follows the system appearance.
+- Send the JSON media type required by Roblox when requesting launch tickets.
 
 ## Requirements
 
@@ -69,7 +70,7 @@ The installed Roblox app declares `LSMultipleInstancesProhibited`. This port wor
 
 Use accounts that belong to you. Some Roblox experiences can prohibit alternate accounts or farming even when Roblox itself allows both accounts to sign in. This app does not hide automation, inject code, or change the Roblox executable.
 
-Windows-only features from the original project are not in version 0.4.0. These include Win32 window placement, FPS file patches, CefSharp browser profiles, the local developer API, Nexus account control, and process watcher automation. See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the feature decisions.
+Windows-only features from the original project are not in version 0.4.1. These include Win32 window placement, FPS file patches, CefSharp browser profiles, the local developer API, Nexus account control, and process watcher automation. See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the feature decisions.
 
 ## License
 

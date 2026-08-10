@@ -102,7 +102,7 @@ public struct RobloxAPIClient: Sendable {
         let endpoint = URL(string: "https://auth.roblox.com/v1/authentication-ticket/")!
         var challenge = URLRequest(url: endpoint)
         challenge.httpMethod = "POST"
-        challenge.httpBody = Data()
+        applyJSONBody(to: &challenge)
         applyHeaders(cookie: cookie, to: &challenge)
 
         let (challengeData, challengeResponse) = try await session.data(for: challenge)
@@ -120,7 +120,7 @@ public struct RobloxAPIClient: Sendable {
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.httpBody = Data()
+        applyJSONBody(to: &request)
         request.setValue(csrf, forHTTPHeaderField: "x-csrf-token")
         applyHeaders(cookie: cookie, to: &request)
         let (data, response) = try await session.data(for: request)
@@ -160,9 +160,15 @@ public struct RobloxAPIClient: Sendable {
 
     private func applyHeaders(cookie: String, to request: inout URLRequest) {
         request.setValue(".ROBLOSECURITY=\(cookie)", forHTTPHeaderField: "Cookie")
+        request.setValue("https://www.roblox.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.roblox.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Roblox Account Manager for Mac/0.4", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox Account Manager for Mac/0.4.1", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+    }
+
+    private func applyJSONBody(to request: inout URLRequest) {
+        request.httpBody = Data("{}".utf8)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     }
 
     private func httpResponse(_ response: URLResponse) throws -> HTTPURLResponse {

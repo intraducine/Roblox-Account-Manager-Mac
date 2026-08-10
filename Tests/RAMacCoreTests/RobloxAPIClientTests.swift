@@ -34,6 +34,11 @@ final class RobloxAPIClientTests: XCTestCase {
         var call = 0
         let client = makeClient { request in
             call += 1
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Origin"), "https://www.roblox.com")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Referer"), "https://www.roblox.com/")
+            XCTAssertEqual(Self.bodyData(from: request), Data("{}".utf8))
             if call == 1 {
                 return Self.response(
                     request: request,
@@ -104,6 +109,23 @@ final class RobloxAPIClientTests: XCTestCase {
             )!,
             Data(body.utf8)
         )
+    }
+
+    private static func bodyData(from request: URLRequest) -> Data? {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+
+        var body = Data()
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 1_024)
+        defer { buffer.deallocate() }
+        while stream.hasBytesAvailable {
+            let count = stream.read(buffer, maxLength: 1_024)
+            guard count > 0 else { break }
+            body.append(buffer, count: count)
+        }
+        return body
     }
 }
 

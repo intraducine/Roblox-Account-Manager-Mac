@@ -28,6 +28,8 @@ An unauthenticated request to `https://users.roblox.com/v1/users/authenticated` 
 
 The automated test suite uses isolated mock URL sessions. It checks the authenticated-user request, the two-step CSRF ticket exchange, header isolation, launch URL encoding, private-link parsing, metadata round-tripping, and backup creation. No real account secret is part of the tests.
 
+Live testing on 2026-08-10 found that Roblox rejects the authentication-ticket POST with HTTP 415 when the request has no media type. Version 0.4.1 sends `{}` as `application/json` for both the CSRF challenge and ticket request. An end-to-end test then launched two saved accounts into place `1818` at the same time. macOS reported two running `Roblox Parallel` apps with distinct account-specific bundle IDs, and both Roblox windows loaded the experience.
+
 ## Port boundary
 
 Version 0.1.0 ports the account, storage, organization, and launch path. It does not copy Windows process injection, mutex control, registry access, Chromium download logic, Win32 window movement, local web control, or executor features. Those parts need separate Mac designs and separate safety review.
