@@ -37,6 +37,7 @@ Version 1.0 must:
 - Produce an optional ZIP artifact with a SHA-256 checksum.
 - Explain that a downloaded build is not notarized.
 - Recommend building from source for the best local trust boundary.
+- Provide an in-app update check for later final releases while the GitHub project and release assets are public.
 
 Version 1.0 must not:
 
@@ -46,6 +47,30 @@ Version 1.0 must not:
 - Require iCloud, CloudKit, App Groups, or another paid capability.
 
 WebKit, Keychain, local files, and normal HTTPS requests do not require paid Apple services for this unsandboxed Mac app.
+
+### In-app updater contract
+
+Version 1.0.3 and later must:
+
+- Start only after the user chooses **Check for Updates**.
+- Read the latest final release from `intraducine/Roblox-Account-Manager-Mac` on GitHub.
+- Ignore drafts and prereleases.
+- Compare numeric version components and never install the same or an older version.
+- Require exact ZIP and `.sha256` asset names for that version.
+- Limit response and download sizes.
+- Accept only HTTPS GitHub release addresses and GitHub-controlled redirect hosts.
+- Verify both GitHub's SHA-256 asset digest and the checksum file.
+- Extract into a new private temporary folder.
+- Require bundle identifier `com.intraducine.RobloxAccountManager`, the expected release version, and both `arm64` and `x86_64` code.
+- Run strict nested code-signature validation.
+- Require the current and candidate apps to satisfy each other's designated requirements.
+- Stage the verified app beside the installed app before replacement.
+- Keep one hidden previous-version backup and restore it after a failed replacement.
+- Replace the app only after the user selects **Install and Restart**.
+- Preserve Application Support data and Keychain items.
+- Store no GitHub token or account credential.
+
+The updater must explain when the app location is not writable and provide the GitHub Releases page as a manual fallback. Version 1.0.2 and older need one manual installation of version 1.0.3 before this flow exists.
 
 ## 3. Version 1.0 scope
 

@@ -2,6 +2,8 @@ import SwiftUI
 
 struct LicenseNoticeView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
+    @ObservedObject var updater: SoftwareUpdateController
 
     var body: some View {
         NavigationStack {
@@ -33,6 +35,14 @@ struct LicenseNoticeView: View {
                     LabeledContent("Version", value: releaseVersion)
                     Text("This app is based on Roblox Account Manager by ic3w0lf22 and its contributors. Roblox Corporation does not make or approve it. Roblox is a trademark of Roblox Corporation.")
                     Text("GNU GPL version 3 lets you inspect, share, and change the source code. The software has no warranty.")
+                }
+
+                Section("Software Updates") {
+                    Text("Check the public GitHub release page from inside the app. A new release is downloaded, checked, installed, and opened only after you approve it.")
+                    Button("Check for Updates") {
+                        dismiss()
+                        openWindow(id: "software-update")
+                    }
                 }
             }
             .formStyle(.grouped)

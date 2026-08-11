@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct RAMacApp: App {
     @StateObject private var store = AccountStore()
+    @StateObject private var updater = SoftwareUpdateController()
 
     init() {
         NSWindow.allowsAutomaticWindowTabbing = false
@@ -11,7 +12,7 @@ struct RAMacApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView(store: store)
+            ContentView(store: store, updater: updater)
                 .frame(minWidth: 900, minHeight: 600)
                 .background(WindowTabbingDisabler())
                 .dismissTextInputOnOutsideClick()
@@ -42,6 +43,11 @@ struct RAMacApp: App {
         }
         .defaultSize(width: 760, height: 700)
 
+        Window("Software Update", id: "software-update") {
+            SoftwareUpdateView(controller: updater)
+        }
+        .defaultSize(width: 620, height: 480)
+
         WindowGroup(for: AccountWebsiteRequest.self) { $request in
             if let request {
                 AccountWebsiteWindow(store: store, request: request)
@@ -61,6 +67,9 @@ private struct V1ViewCommands: Commands {
                 .keyboardShortcut("f", modifiers: [.command, .shift])
             Button("Launch Sets") { openWindow(id: "launch-sets") }
             Button("Diagnostics and Backup") { openWindow(id: "diagnostics") }
+        }
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") { openWindow(id: "software-update") }
         }
     }
 }

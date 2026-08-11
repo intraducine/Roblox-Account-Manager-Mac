@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.3 - 2026-08-11
+
+- Added **Check for Updates** to the app menu and About window.
+- Added a native update window with checking, available, downloading, ready, installing, current, and error states.
+- Downloads only final releases from the public project on GitHub.
+- Requires the exact versioned app ZIP and checksum assets.
+- Verifies GitHub's SHA-256 file digest and the published checksum file.
+- Rejects an app with the wrong identifier, version, processor support, signature, or signing identity.
+- Keeps a hidden previous-version backup and restores it if replacement fails.
+- Requires the user to select **Install and Restart** before any app replacement.
+- Added updater unit tests and current user and developer documentation.
+
 ## 1.0.2 - 2026-08-11
 
 - Fixed macOS Keychain error `-25293` when adding an account after an app update.

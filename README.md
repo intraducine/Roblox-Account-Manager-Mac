@@ -60,7 +60,7 @@ To create the optional ZIP file and SHA-256 checksum:
 
 ```sh
 ./scripts/package-release.sh
-(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-1.0.2.zip.sha256")
+(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-1.0.3.zip.sha256")
 ```
 
 A downloaded build is not notarized. macOS can show a warning when you open it. Building from source gives you the clearest local trust boundary. This project does not use an automatic updater or paid Apple services.
@@ -76,6 +76,16 @@ The app stores all saved Roblox sessions inside one Keychain item. Version 1.0.2
 The managed Roblox website window keeps top-level browsing on `roblox.com`. Secure frames used inside Roblox pages can load without an external-link warning, and they do not receive the Roblox session cookie. A real link to another site asks before it opens in the default browser and names the destination.
 
 You can give one account an alias, notes, and several groups. These fields do not change the Roblox account.
+
+## Update the app
+
+Version 1.0.3 adds the in-app updater. Choose **Roblox Account Manager > Check for Updates** or open **About > Check for Updates**.
+
+The app checks only final releases from this project's public GitHub page. When a newer version exists, it downloads the release ZIP and checksum, checks GitHub's file fingerprint, and confirms that the downloaded app has the same signing identity as the installed app. It also checks the app name, version, bundle identifier, and Intel and Apple silicon support before showing **Install and Restart**.
+
+The updater never stores a GitHub login or token. It does not install a draft or prerelease. The current app must be in a location that your macOS account can change, such as an app that you copied to `/Applications`. A hidden copy of the previous version stays beside the app as a recovery backup.
+
+Version 1.0.2 and older do not have the updater. Install version 1.0.3 once with the release ZIP. Later public releases can use the in-app button.
 
 ## Launch accounts
 

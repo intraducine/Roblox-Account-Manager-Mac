@@ -1,8 +1,14 @@
-# Version 1.0.2 live test report
+# Version 1.0.3 live test report
 
 Date: August 10-11, 2026
 
 This report uses saved account labels only. It does not contain usernames, cookies, private links, launch tickets, or personal account IDs.
+
+## Version 1.0.3 updater
+
+- The native Software Update window checked the public GitHub project without a login or token.
+- Unit tests cover numeric version ordering, exact release filenames, prerelease rejection, standard SHA-256 output, and strict checksum filename parsing.
+- The final updater package test is recorded below after the version 1.0.3 release assets are published.
 
 ## Version 1.0.2 Keychain update
 

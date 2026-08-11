@@ -5,6 +5,7 @@ import SwiftUI
 struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var store: AccountStore
+    @ObservedObject var updater: SoftwareUpdateController
     @State private var showsAddAccount = false
     @State private var showsLicense = false
     @State private var pendingRemoval: ManagedAccount?
@@ -78,7 +79,7 @@ struct ContentView: View {
             AddAccountView(store: store)
         }
         .sheet(isPresented: $showsLicense) {
-            LicenseNoticeView()
+            LicenseNoticeView(updater: updater)
         }
         .alert(item: $store.notice) { notice in
             Alert(title: Text(notice.title), message: Text(notice.message), dismissButton: .default(Text("OK")))
