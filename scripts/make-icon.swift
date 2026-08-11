@@ -11,6 +11,14 @@ guard CommandLine.arguments.count == 2 else {
 let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 let iconset = output.appendingPathComponent("AppIcon.iconset", isDirectory: true)
 let manager = FileManager.default
+let projectDirectory = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+let sourceURL = projectDirectory.appendingPathComponent("Assets/AppIconSource.png")
+guard let sourceImage = NSImage(contentsOf: sourceURL) else {
+    fputs("Could not load app icon source at \(sourceURL.path)\n", stderr)
+    exit(1)
+}
 try? manager.removeItem(at: iconset)
 try manager.createDirectory(at: iconset, withIntermediateDirectories: true)
 
@@ -26,8 +34,6 @@ let files: [(String, Int)] = [
     ("icon_512x512.png", 512),
     ("icon_512x512@2x.png", 1024)
 ]
-
-func point(_ value: CGFloat, scale: CGFloat) -> CGFloat { value * scale }
 
 func drawIcon(size: Int, to url: URL) throws {
     guard let bitmap = NSBitmapImageRep(
@@ -45,42 +51,14 @@ func drawIcon(size: Int, to url: URL) throws {
 
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-    let scale = CGFloat(size) / 1024
     let canvas = NSRect(x: 0, y: 0, width: size, height: size)
-    NSColor(red: 0.075, green: 0.094, blue: 0.078, alpha: 1).setFill()
-    NSBezierPath(roundedRect: canvas.insetBy(dx: point(28, scale: scale), dy: point(28, scale: scale)), xRadius: point(190, scale: scale), yRadius: point(190, scale: scale)).fill()
-
-    let plateColors = [
-        NSColor(red: 0.812, green: 0.760, blue: 0.538, alpha: 1),
-        NSColor(red: 0.946, green: 0.936, blue: 0.891, alpha: 1),
-        NSColor(red: 0.42, green: 0.49, blue: 0.40, alpha: 1)
-    ]
-    let offsets: [(CGFloat, CGFloat)] = [(0, 180), (70, 0), (0, -180)]
-
-    for (index, offset) in offsets.enumerated() {
-        let x = point(178 + offset.0, scale: scale)
-        let y = point(398 + offset.1, scale: scale)
-        let width = point(670, scale: scale)
-        let height = point(155, scale: scale)
-        let cut = point(62, scale: scale)
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: x + point(30, scale: scale), y: y))
-        path.line(to: NSPoint(x: x + width - cut, y: y))
-        path.line(to: NSPoint(x: x + width, y: y + cut))
-        path.line(to: NSPoint(x: x + width, y: y + height - point(30, scale: scale)))
-        path.curve(to: NSPoint(x: x + width - point(30, scale: scale), y: y + height), controlPoint1: NSPoint(x: x + width, y: y + height), controlPoint2: NSPoint(x: x + width, y: y + height))
-        path.line(to: NSPoint(x: x + point(30, scale: scale), y: y + height))
-        path.curve(to: NSPoint(x: x, y: y + height - point(30, scale: scale)), controlPoint1: NSPoint(x: x, y: y + height), controlPoint2: NSPoint(x: x, y: y + height))
-        path.line(to: NSPoint(x: x, y: y + point(30, scale: scale)))
-        path.curve(to: NSPoint(x: x + point(30, scale: scale), y: y), controlPoint1: NSPoint(x: x, y: y), controlPoint2: NSPoint(x: x, y: y))
-        path.close()
-        plateColors[index].setFill()
-        path.fill()
-
-        NSColor(red: 0.075, green: 0.094, blue: 0.078, alpha: 1).setFill()
-        NSBezierPath(ovalIn: NSRect(x: x + point(46, scale: scale), y: y + point(46, scale: scale), width: point(62, scale: scale), height: point(62, scale: scale))).fill()
-        NSBezierPath(roundedRect: NSRect(x: x + point(148, scale: scale), y: y + point(58, scale: scale), width: point(360, scale: scale), height: point(38, scale: scale)), xRadius: point(19, scale: scale), yRadius: point(19, scale: scale)).fill()
-    }
+    NSGraphicsContext.current?.imageInterpolation = .high
+    sourceImage.draw(
+        in: canvas,
+        from: NSRect(origin: .zero, size: sourceImage.size),
+        operation: .copy,
+        fraction: 1
+    )
 
     NSGraphicsContext.restoreGraphicsState()
     guard let png = bitmap.representation(using: .png, properties: [:]) else {
