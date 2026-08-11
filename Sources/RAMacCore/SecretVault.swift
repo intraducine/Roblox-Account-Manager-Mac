@@ -14,20 +14,31 @@ public enum SecretVaultError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .unexpectedStatus(let status):
-            return "Keychain returned error \(status)."
+            switch status {
+            case errSecAuthFailed:
+                return "macOS blocked access to the saved Roblox sign-ins. Close every other copy of this app, open the installed app again, and retry."
+            case errSecInteractionNotAllowed:
+                return "macOS could not ask for Keychain access. Unlock your Mac, open the installed app, and retry."
+            case errSecUserCanceled:
+                return "Keychain access was canceled. Retry and approve the macOS request if it appears."
+            default:
+                let detail = SecCopyErrorMessageString(status, nil) as String? ?? "Unknown Keychain error"
+                return "macOS Keychain could not save the Roblox sign-in. \(detail) (\(status))"
+            }
         case .invalidData:
-            return "The saved session is not valid text."
+            return "The saved Roblox sign-in could not be read. Sign in to this account again."
         }
     }
 }
 
 public final class KeychainVault: SecretVault, @unchecked Sendable {
     private struct SessionContainer: Codable {
-        var version = 1
+        var version = 2
         var sessions: [String: String]
     }
 
-    private static let containerAccount = "sessions-v1"
+    private static let containerAccount = "sessions-v2"
+    private static let legacyContainerAccount = "sessions-v1"
     private let service: String
     private let lock = NSLock()
     private var cachedSessions: [String: String]?
@@ -51,7 +62,13 @@ public final class KeychainVault: SecretVault, @unchecked Sendable {
         let account = accountID.uuidString
         if let secret = sessions[account] { return secret }
 
-        guard let legacySecret = try readItemLocked(account: account) else { return nil }
+        let legacySecret: String?
+        do {
+            legacySecret = try readItemLocked(account: account)
+        } catch where Self.isLegacyAccessFailure(error) {
+            return nil
+        }
+        guard let legacySecret else { return nil }
         sessions[account] = legacySecret
         try saveSessionsLocked(sessions)
         try deleteItemLocked(account: account)
@@ -69,21 +86,45 @@ public final class KeychainVault: SecretVault, @unchecked Sendable {
         } else {
             try saveSessionsLocked(sessions)
         }
-        try deleteItemLocked(account: accountID.uuidString)
+        do {
+            try deleteItemLocked(account: accountID.uuidString)
+        } catch where Self.isLegacyAccessFailure(error) {
+            // An older ad hoc build can own this obsolete item. The current
+            // session is already removed from the active container.
+        }
     }
 
     private func loadSessionsLocked() throws -> [String: String] {
         if let cachedSessions { return cachedSessions }
-        guard let data = try readDataLocked(account: Self.containerAccount) else {
+        if let data = try readDataLocked(account: Self.containerAccount) {
+            guard let container = try? JSONDecoder().decode(SessionContainer.self, from: data),
+                  container.version == 2 else {
+                throw SecretVaultError.invalidData
+            }
+            cachedSessions = container.sessions
+            return container.sessions
+        }
+
+        do {
+            guard let legacyData = try readDataLocked(account: Self.legacyContainerAccount) else {
+                cachedSessions = [:]
+                return [:]
+            }
+            guard let legacy = try? JSONDecoder().decode(SessionContainer.self, from: legacyData),
+                  legacy.version == 1 else {
+                throw SecretVaultError.invalidData
+            }
+            try saveSessionsLocked(legacy.sessions)
+            try? deleteItemLocked(account: Self.legacyContainerAccount)
+            return legacy.sessions
+        } catch where Self.isLegacyAccessFailure(error) {
+            // Ad hoc signatures change after a rebuild. macOS can reject the
+            // old item before it can show an approval prompt. Start a fresh,
+            // versioned container so adding an account still works. Existing
+            // account metadata remains and can be signed in again once.
             cachedSessions = [:]
             return [:]
         }
-        guard let container = try? JSONDecoder().decode(SessionContainer.self, from: data),
-              container.version == 1 else {
-            throw SecretVaultError.invalidData
-        }
-        cachedSessions = container.sessions
-        return container.sessions
     }
 
     private func saveSessionsLocked(_ sessions: [String: String]) throws {
@@ -145,5 +186,13 @@ public final class KeychainVault: SecretVault, @unchecked Sendable {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
+    }
+
+    private static func isLegacyAccessFailure(_ error: Error) -> Bool {
+        guard let vaultError = error as? SecretVaultError else { return false }
+        guard case .unexpectedStatus(let status) = vaultError else { return false }
+        return status == errSecAuthFailed
+            || status == errSecInteractionNotAllowed
+            || status == errSecUserCanceled
     }
 }

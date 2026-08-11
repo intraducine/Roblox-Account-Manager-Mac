@@ -1,4 +1,4 @@
-# Roblox Account Manager for Mac 1.0 implementation specification
+# Roblox Account Manager for Mac 1.0 implementation and maintenance specification
 
 ## 1. Product goal
 
@@ -8,7 +8,7 @@ Version 1.0 must make this outcome reliable:
 
 The app must never claim that an account can join when Roblox has not provided enough information. It must not bypass Roblox privacy or private-server access rules.
 
-This file defines the version 1.0 release contract. The live test report states which checks used real Roblox clients and which cases still need controlled test accounts.
+This file defines the version 1.0 release contract and the maintenance rules used by version 1.0.2. It is a developer reference, not a user guide. The README contains current user instructions. The live test report states which checks used real Roblox clients and which cases still need controlled test accounts.
 
 This specification assumes:
 
@@ -30,7 +30,8 @@ A free Apple account is sufficient for local development. It is not sufficient f
 Version 1.0 must:
 
 - Build a universal Intel and Apple silicon app.
-- Use an ad hoc signature when no paid signing identity exists.
+- Use an installed stable Apple signing identity when one is available.
+- Use an ad hoc signature only when no signing identity exists. State that ad hoc updates can lose Keychain access.
 - Verify the final app with `codesign --verify`.
 - Provide a source tag and reproducible build instructions.
 - Produce an optional ZIP artifact with a SHA-256 checksum.
@@ -143,9 +144,9 @@ When the window closes:
 
 ### Keychain layout
 
-Store every account session in one versioned generic-password item. The item contains a dictionary keyed by the local account UUID. Serialize access inside the process and cache the decoded dictionary after the first successful read.
+Store every account session in one versioned generic-password item. Version 1.0.2 uses account name `sessions-v2`. The item contains a dictionary keyed by the local account UUID. Serialize access inside the process and cache the decoded dictionary after the first successful read.
 
-Older releases stored one item per account. If the shared item does not contain an account, read that older item once and add its session to the shared item. Delete the old item only after the shared item update succeeds. Do not weaken the Keychain access list. A rebuilt ad hoc app can require one macOS approval for the shared item. It must not require one approval for every current account.
+Older releases stored one item per account and later used a shared `sessions-v1` item. Try to read and migrate `sessions-v1` only when macOS permits access. Save the complete dictionary in `sessions-v2` before deleting the old shared item. If macOS returns an access or interaction error, leave the old item unchanged, use an empty `sessions-v2` container, and let each affected account sign in once. Account metadata must remain intact. Do not weaken the Keychain access list. Raw Security framework status codes must not be the only user-facing explanation.
 
 ### Restricted-player fallback
 
@@ -761,7 +762,7 @@ These phases record the build order. They are not current user instructions.
 - Record completed live checks and open controlled-account cases.
 - Build both architectures.
 - Create the universal app.
-- Apply ad hoc signing.
+- Apply a stable installed Apple signing identity when available. Fall back to ad hoc signing only when necessary.
 - Verify the signature.
 - Create the source tag, ZIP, and checksum.
 - Update README with the free-account distribution limit.
@@ -792,6 +793,7 @@ Version 1.0 is complete only when:
 - The release documentation does not claim notarization.
 - The complete automated suite passes.
 - The live report clearly separates completed checks from cases that still need controlled test accounts.
+- A release signed with the same stable identity can read the current Keychain item after its code-directory hash changes.
 
 ### Primary success measure
 
@@ -823,6 +825,7 @@ Every screen must provide:
 - One clear primary action
 - A visible account identity when an action uses one account
 - Plain-language loading and error states
+- Plain definitions for Place ID, Job ID, Launch Set, friend visibility, and multi-account selection
 - Full keyboard access
 - VoiceOver labels
 - Non-color status indicators

@@ -184,6 +184,7 @@ struct AccountDetailView: View {
                 TextField("Place ID", text: gamePlaceID)
                     .frame(width: 170)
                     .disabled(store.isRunning(account))
+                    .help("The Place ID is the number after /games/ in a Roblox game link")
                 ExperienceChooserButton(store: store, placeID: gamePlaceID)
                     .disabled(store.isRunning(account))
                 ServerSelectionControl(

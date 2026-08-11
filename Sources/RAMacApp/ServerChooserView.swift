@@ -127,7 +127,7 @@ private struct ServerChooserView: View {
                     } label: {
                         ChoiceRow(
                             title: "Enter a Job ID",
-                            detail: "Use a server code that you already have."
+                            detail: "Advanced: use the temporary code for one running server."
                         )
                     }
                 }
@@ -392,7 +392,7 @@ private struct PlayerServerSearchView: View {
     var body: some View {
         Form {
             Section {
-                Text("Roblox must show this player's current game and server. If one of your saved accounts is their friend, use Find Players for the source-first launch.")
+                Text("This search works only when Roblox makes the player's current game and server public. If the player is friends with one of your saved accounts, use Find Players instead. It can check what that account is allowed to see.")
                     .foregroundStyle(.secondary)
             }
 
@@ -592,7 +592,7 @@ private struct ManualJobEntryView: View {
             }
         }
         .formStyle(.grouped)
-        .navigationTitle("Manual Job ID")
+        .navigationTitle("Enter a Job ID")
     }
 
     private var cleanJobID: String {
@@ -635,7 +635,7 @@ private extension RobloxServerSelection {
         case .privateLink:
             return "Server: Private link"
         case .manualJob:
-            return "Server: Manual Job ID"
+            return "Server: Entered Job ID"
         }
     }
 

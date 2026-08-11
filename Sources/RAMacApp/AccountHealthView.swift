@@ -64,17 +64,17 @@ private struct AccountReauthenticationView: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Sign in as @\(account.username). The app keeps the alias, groups, notes, favorites, and Launch Sets.")
+                Text("Sign in as @\(account.username). Only the saved Roblox sign-in will change. The account name, groups, notes, favorite games, and Launch Sets will stay the same.")
                     .foregroundStyle(.secondary)
                 ZStack {
                     RobloxLoginWebView(model: browser)
                     if browser.isLoading { ProgressView().controlSize(.large) }
                 }
                 HStack {
-                    Text(browser.hasSession ? "Roblox sign-in ready" : "Sign in above to continue")
+                    Text(browser.hasSession ? "Ready to save" : "Sign in above to continue")
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Save New Sign-In") {
+                    Button("Save and Continue") {
                         Task {
                             guard let cookie = await browser.sessionCookie() else { return }
                             if await store.replaceSession(cookie, for: account) { dismiss() }

@@ -26,6 +26,9 @@ The app uses standard macOS structure and controls. It follows the system appear
 - A Place ID selects the experience or place.
 - The server chooser can let Roblox choose, browse public servers, or use a player target that Roblox reports.
 - Advanced options accept an existing Job ID or a supported private server link.
+- Saved Roblox sessions use the `sessions-v2` Keychain item.
+- Release builds use an installed stable Apple signing identity when one is available. This keeps Keychain access after app updates.
+- If macOS blocks the older ad hoc Keychain item, the app keeps all non-secret account details and lets each affected account sign in once.
 
 ## Development history
 
@@ -121,12 +124,20 @@ The phases below record how the product was built. They are not current usage in
 - Keep manual Job ID entry under Advanced.
 - Detect newer private-server share links and explain the current account-selection limit.
 
+### Phase 10: complete in version 1.0.2
+
+- Fix Keychain error `-25293` after an ad hoc app update.
+- Move sessions to a new versioned Keychain item without weakening its access rules.
+- Migrate the older shared item when macOS permits access.
+- Use a stable installed Apple signing identity automatically for release builds.
+- Replace raw Keychain codes with direct recovery instructions.
+- Define Place ID, Job ID, Launch Set, account selection, and friend visibility in plain language.
+- Update the README, changelog, implementation specification, research notes, and live test report.
+
 ### Suitable follow-up work
 
-- Signed and notarized release builds.
-- Export and import for non-secret account metadata.
+- Developer ID signing and notarized release builds.
 - Better avatar caching and offline handling.
-- Session health checks that run only when the user asks.
 
 ### Not planned without further research
 

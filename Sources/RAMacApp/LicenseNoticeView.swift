@@ -6,19 +6,27 @@ struct LicenseNoticeView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("What This App Does") {
-                    Text("Save several Roblox accounts and keep them open at the same time.")
-                    Text("Open Roblox from Applications for one normal account. Use this manager for accounts that must stay open together.")
+                Section("Start Here") {
+                    Text("1. Select Add Account and sign in on Roblox.")
+                    Text("2. Use the checkboxes in the account list to select every account that you want to open.")
+                    Text("3. Choose a recent game or enter its Place ID, choose a server, and select Launch Accounts.")
+                    Text("Open Roblox.app directly when you only need one account. Use this manager when you want a saved account or several Roblox windows at once.")
+                }
+
+                Section("Words Used in the App") {
+                    Text("A Place ID is the number after /games/ in a Roblox game link. It tells the app which game to open.")
+                    Text("A Launch Set is a saved shortcut for a group of accounts, one game, and one server choice.")
+                    Text("A Job ID is a temporary code for one running server. Most users do not need to enter one.")
                 }
 
                 Section("Accounts and Privacy") {
-                    Text("The app saves each Roblox sign-in in macOS Keychain, the secure password storage built into your Mac. It never stores your Roblox password.")
-                    Text("Account names, groups, notes, and launch choices stay on this Mac. At launch, the app sends the saved sign-in only to Roblox.")
+                    Text("The app saves each Roblox sign-in in Keychain, the private password storage built into macOS. It never sees or saves your Roblox password.")
+                    Text("Account names, groups, notes, and launch choices stay on this Mac. When you launch, the app sends the saved sign-in only to Roblox.")
                 }
 
                 Section("How Accounts Run Together") {
-                    Text("Each account opens in its own unchanged copy of the Roblox app on your Mac. This lets you launch another account without closing the first one.")
-                    Text("An advanced fallback changes the Roblox copy. Roblox may treat it as modified, so the app warns you before you can use it.")
+                    Text("Each account opens in its own copy of Roblox. The recommended method does not change any Roblox file and keeps Roblox Corporation's original signature.")
+                    Text("The advanced fallback changes the copied app and gives it a new signature. Roblox can detect this, so the app warns you before it can be used.")
                 }
 
                 Section("Project and License") {

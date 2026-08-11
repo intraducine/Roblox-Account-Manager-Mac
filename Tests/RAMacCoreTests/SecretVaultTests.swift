@@ -26,7 +26,7 @@ final class SecretVaultTests: XCTestCase {
             try vault.save("session-\(index)", for: accountID)
         }
 
-        XCTAssertEqual(try keychainAccounts(service: service), ["sessions-v1"])
+        XCTAssertEqual(try keychainAccounts(service: service), ["sessions-v2"])
         for (index, accountID) in accountIDs.enumerated() {
             XCTAssertEqual(try vault.read(for: accountID), "session-\(index)")
         }
@@ -35,7 +35,30 @@ final class SecretVaultTests: XCTestCase {
         XCTAssertNil(try vault.read(for: accountIDs[1]))
         XCTAssertEqual(try vault.read(for: accountIDs[0]), "session-0")
         XCTAssertEqual(try vault.read(for: accountIDs[2]), "session-2")
-        XCTAssertEqual(try keychainAccounts(service: service), ["sessions-v1"])
+        XCTAssertEqual(try keychainAccounts(service: service), ["sessions-v2"])
+    }
+
+    func testLegacyContainerMigratesIntoCurrentContainer() throws {
+        let service = "com.intraducine.RobloxAccountManager.tests.\(UUID().uuidString)"
+        let accountID = UUID()
+        defer { deleteAll(service: service) }
+        let legacy = try JSONSerialization.data(withJSONObject: [
+            "version": 1,
+            "sessions": [accountID.uuidString: "legacy-container-session"]
+        ])
+        let addStatus = SecItemAdd([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: "sessions-v1",
+            kSecValueData as String: legacy,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+        ] as CFDictionary, nil)
+        XCTAssertEqual(addStatus, errSecSuccess)
+
+        let vault = KeychainVault(service: service)
+
+        XCTAssertEqual(try vault.read(for: accountID), "legacy-container-session")
+        XCTAssertEqual(try keychainAccounts(service: service), ["sessions-v2"])
     }
 
     func testLegacyPerAccountItemMigratesIntoTheContainer() throws {
@@ -53,7 +76,7 @@ final class SecretVaultTests: XCTestCase {
         XCTAssertEqual(addStatus, errSecSuccess)
 
         XCTAssertEqual(try vault.read(for: accountID), "legacy-session")
-        XCTAssertEqual(try keychainAccounts(service: service), ["sessions-v1"])
+        XCTAssertEqual(try keychainAccounts(service: service), ["sessions-v2"])
     }
 
     private func keychainAccounts(service: String) throws -> [String] {

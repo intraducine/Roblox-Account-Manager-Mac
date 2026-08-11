@@ -29,7 +29,19 @@ cp "$project_dir/dist/AppIcon.icns" "$contents_dir/Resources/AppIcon.icns"
 
 chmod 755 "$contents_dir/MacOS/RobloxAccountManager"
 /usr/bin/strip -S "$contents_dir/MacOS/RobloxAccountManager"
-signing_identity=${RAM_SIGNING_IDENTITY:--}
+signing_identity=${RAM_SIGNING_IDENTITY:-}
+if [[ -z "$signing_identity" ]]; then
+    signing_identity=$(
+        /usr/bin/security find-identity -v -p codesigning 2>/dev/null \
+            | /usr/bin/awk '/^[[:space:]]*[0-9]+\)/ { print $2; exit }'
+    )
+fi
+if [[ -z "$signing_identity" ]]; then
+    signing_identity=-
+    print "No code-signing identity was found. Using an ad hoc signature."
+else
+    print "Using a stable installed code-signing identity."
+fi
 
 codesign --force --deep --timestamp=none --sign "$signing_identity" "$app_dir"
 plutil -lint "$contents_dir/Info.plist"

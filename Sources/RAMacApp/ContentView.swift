@@ -251,11 +251,11 @@ struct ContentView: View {
         VStack(spacing: 9) {
             HStack(spacing: 10) {
                 Text(store.batchSelectedIDs.isEmpty
-                     ? "Batch selection"
-                     : "\(store.batchSelectedIDs.count) selected")
+                     ? "Select accounts"
+                     : "\(store.batchSelectedIDs.count) selected to launch")
                     .fontWeight(.medium)
                 Spacer()
-                Menu("Select Group") {
+                Menu("Select a Group") {
                     ForEach(store.groupNames, id: \.self) { group in
                         Button(store.isBatchGroupSelected(group) ? "Clear \(group)" : "Select \(group)") {
                             store.toggleBatchGroup(group)
@@ -320,7 +320,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
             Text("No Accounts")
                 .font(.title2.weight(.semibold))
-            Text("Add a Roblox account to launch and manage it from this Mac.")
+            Text("Add the Roblox accounts that you want to run together. You will sign in on Roblox, and this app will not save your password.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Button("Add Account") { showsAddAccount = true }

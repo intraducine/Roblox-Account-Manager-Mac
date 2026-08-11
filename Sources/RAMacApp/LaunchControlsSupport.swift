@@ -30,7 +30,7 @@ struct LaunchClientNotice: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(isModified ? "Advanced fallback is active" : "Recommended launch method")
+                Text(isModified ? "Modified-copy fallback is active" : "Unchanged Roblox copies")
                     .fontWeight(.semibold)
                 Text(summary)
                     .font(.caption)
@@ -44,7 +44,7 @@ struct LaunchClientNotice: View {
                     .disabled(store.isWorking || store.isBatchLaunching || !store.runningAccountIDs.isEmpty)
             }
 
-            Button("How Launching Works") { showsDetails = true }
+            Button("How Multiple Apps Work") { showsDetails = true }
                 .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
                     details
                 }
@@ -58,30 +58,30 @@ struct LaunchClientNotice: View {
 
     private var summary: String {
         if isModified {
-            return "This option changes the Roblox copy. Roblox may treat it as a modified client."
+            return "The manager changed each copied app so macOS can start it separately. Roblox may treat it as a modified client."
         }
-        return "Each account opens in a separate, unchanged copy of your installed Roblox app."
+        return "Recommended. Each account opens in its own copy, but every Roblox file and the Roblox signature stay unchanged."
     }
 
     private var details: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("How Accounts Run Together")
+            Text("How This App Opens Several Roblox Accounts")
                 .font(.headline)
 
-            Text("Every account you launch here opens in its own Roblox app copy. This lets you keep several accounts open at the same time.")
+            Text("The manager makes a separate app copy for each saved account. This lets a second Roblox account open without closing the first one.")
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Recommended method")
+                Text("Unchanged copies (recommended)")
                     .fontWeight(.semibold)
-                Text("The manager copies the Roblox app already installed on your Mac without changing its files. macOS still verifies the copy as the official Roblox app. The manager uses this method unless you choose the advanced fallback.")
+                Text("The manager copies the Roblox app already installed on your Mac. It does not edit any file inside the copy. The copy keeps Roblox Corporation's original signature, and the manager checks it before every launch.")
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Advanced fallback")
+                Text("Modified copies (advanced fallback)")
                     .fontWeight(.semibold)
-                Text("Use this only if the recommended method stops working. It changes how macOS identifies each copy. Roblox may treat the changed copy as a modified client, which can put an account at risk.")
+                Text("Use this only if unchanged copies stop working. This method changes the copied app and gives it a new signature. Roblox can detect that change and may restrict an account that uses it.")
                     .fixedSize(horizontal: false, vertical: true)
             }
 

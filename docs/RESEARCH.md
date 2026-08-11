@@ -16,7 +16,9 @@ The upstream application is a Windows Forms program that targets .NET Framework 
 4. Read `rbx-authentication-ticket`.
 5. Build a `roblox-player` launch URL with a Roblox PlaceLauncher URL.
 
-The Windows account file uses Windows Data Protection API or password-based libsodium encryption. A Mac cannot use the machine-bound Windows Data Protection API. The port stores all sessions in one versioned generic-password item in macOS Keychain. The shared item avoids one approval prompt per account after an ad hoc rebuild. It keeps only non-secret metadata in JSON. Older per-account items migrate into the shared item when the app reads them.
+The Windows account file uses Windows Data Protection API or password-based libsodium encryption. A Mac cannot use the machine-bound Windows Data Protection API. The port stores all sessions in one versioned generic-password item in macOS Keychain and keeps only non-secret metadata in JSON. Older per-account items migrate when the app can read them.
+
+Version 1.0.2 fixed a separate app-update problem. The first shared item was created by an ad hoc app signature, so a later build could receive Keychain error `-25293` before it could add another account. The fix uses a new `sessions-v2` item and signs release builds with an installed Apple identity when one is available. If the old shared item is readable, the app moves its sessions. If macOS blocks it, the app leaves the item unchanged, keeps all account metadata, and allows each account to sign in once. A live test saved a real account, then changed the app code-directory hash while keeping the same Apple designated requirement. The updated app still read and validated the new session.
 
 ## Historical Mac findings
 

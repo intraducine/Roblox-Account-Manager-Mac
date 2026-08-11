@@ -96,7 +96,7 @@ struct JoinablePlayersView: View {
 
     private var controls: some View {
         HStack(spacing: 12) {
-            Picker("Source", selection: $sourceKey) {
+            Picker("Check friends for", selection: $sourceKey) {
                 Text("All Accounts").tag("all")
                 Text("Selected Accounts").tag("selected")
                 ForEach(store.groupNames, id: \.self) { Text($0).tag("group:\($0)") }
@@ -137,7 +137,7 @@ struct JoinablePlayersView: View {
                     Text(playerIdentity(player)).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            TableColumn("Found Through") { player in
+            TableColumn("Visible To") { player in
                 Text(sourceNames(for: player).joined(separator: ", "))
                     .lineLimit(2)
             }
@@ -166,7 +166,7 @@ struct JoinablePlayersView: View {
                     }
 
                     LabeledContent("Experience", value: player.presence.locationName ?? "Roblox experience")
-                    LabeledContent("Found through", value: sourceNames(for: player).joined(separator: ", "))
+                    LabeledContent("Visible to these accounts", value: sourceNames(for: player).joined(separator: ", "))
                     LabeledContent("Server", value: serverText(player.verification))
                     LabeledContent("Open spaces", value: openSpacesText(player.verification))
                     if let explanation = verificationExplanation(player.verification) {
@@ -177,7 +177,7 @@ struct JoinablePlayersView: View {
                     }
 
                     Divider()
-                    Text("Managed Accounts").font(.headline)
+                    Text("Accounts to Launch").font(.headline)
                     AccountJoinMatrixView(
                         store: store,
                         selectedAccountIDs: $selectedAccountIDs,
@@ -208,7 +208,7 @@ struct JoinablePlayersView: View {
             .controlSize(.large)
             .disabled(selectedAccountIDs.isEmpty || !hasSelectedSource(for: player))
             if !selectedAccountIDs.isEmpty, !hasSelectedSource(for: player) {
-                Text("Select at least one account listed under Found through. That account starts first.")
+                Text("Select at least one account listed under Visible to these accounts. Roblox gave that account the friend's server, so it starts first.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -224,15 +224,15 @@ struct JoinablePlayersView: View {
                 .buttonStyle(.borderedProminent)
             Button("Try Selected Accounts") { pendingUnconfirmedPlayer = player }
                 .disabled(selectedAccountIDs.isEmpty)
-            Button("Open Profile as Source Account") { openProfile(player) }
+            Button("Open Profile with a Friend Account") { openProfile(player) }
         case .paused:
             Button("Check Again") { Task { await store.continueVerification(for: player) } }
                 .buttonStyle(.borderedProminent)
             Button("Try Selected Accounts") { pendingUnconfirmedPlayer = player }
                 .disabled(selectedAccountIDs.isEmpty)
-            Button("Open Profile as Source Account") { openProfile(player) }
+            Button("Open Profile with a Friend Account") { openProfile(player) }
         case .restrictedOrUnavailable, .noServerSupplied, .verificationFailed:
-            Button("Open Player Profile as Source") { openProfile(player) }
+            Button("Open Profile with a Friend Account") { openProfile(player) }
                 .buttonStyle(.borderedProminent)
         }
         Text("Expected does not guarantee entry. Roblox can still reject a launch because of access, capacity, age, region, or a server change.")
@@ -330,7 +330,7 @@ struct JoinablePlayersView: View {
         }
         if let failure = store.discoveryFailures.first { return failure.message }
         return store.discoveryUpdatedAt == nil
-            ? "Choose a source and select Refresh."
+            ? "Choose which saved accounts to check, then select Refresh."
             : "Roblox did not return any friends in a visible experience."
     }
 
@@ -393,7 +393,7 @@ struct JoinablePlayersView: View {
     private func verificationExplanation(_ verification: PublicServerVerification) -> String? {
         switch verification {
         case .friendTarget:
-            return "One selected friend account starts first. The manager then gives the same reported Job ID to the other selected accounts. Roblox checks access and space for each account. This does not search public server pages."
+            return "Roblox told one saved account which server this friend is using. The manager starts that account first, then tries the other selected accounts in the same server. Roblox decides whether each account can enter."
         case .verifiedPublic:
             return "The reported Job ID appears in Roblox's public server list."
         case .unconfirmed(let pagesSearched):

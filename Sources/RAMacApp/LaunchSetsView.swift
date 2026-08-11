@@ -45,7 +45,10 @@ struct LaunchSetsView: View {
             } else {
                 VStack(spacing: 10) {
                     Image(systemName: "square.stack.3d.up").font(.system(size: 30)).foregroundStyle(.secondary)
-                    Text("Choose a Launch Set or create one.").foregroundStyle(.secondary)
+                    Text("A Launch Set is a saved shortcut for accounts, a game, and a server choice. Choose one or create a new one.")
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: 420)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -100,6 +103,10 @@ private struct LaunchSetEditor: View {
 
     var body: some View {
         Form {
+            Section {
+                Text("Save the accounts, game, and server choice that you often use together. Running a Launch Set starts every available account in it.")
+                    .foregroundStyle(.secondary)
+            }
             Section("Launch Set") {
                 TextField("Name", text: $draft.name)
                 TextField("Experience name (optional)", text: Binding(
@@ -121,11 +128,11 @@ private struct LaunchSetEditor: View {
                 }
             }
             Section("Server") {
-                Picker("Strategy", selection: $strategyKind) {
-                    Text("Roblox chooses").tag("automatic")
-                    Text("Browse before launch").tag("browse")
-                    Text("Join a player").tag("player")
-                    Text("Private server link").tag("private")
+                Picker("Server choice", selection: $strategyKind) {
+                    Text("Let Roblox choose").tag("automatic")
+                    Text("Browse public servers when run").tag("browse")
+                    Text("Choose a player when run").tag("player")
+                    Text("Use a private server link").tag("private")
                 }
                 if strategyKind == "private" {
                     SecureField("Private server link", text: $privateLink)

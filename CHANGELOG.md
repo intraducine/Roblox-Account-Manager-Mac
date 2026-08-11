@@ -1,12 +1,29 @@
 # Changelog
 
+## 1.0.2 - 2026-08-11
+
+- Fixed macOS Keychain error `-25293` when adding an account after an app update.
+- Moved saved Roblox sessions to the `sessions-v2` Keychain item.
+- Migrates the older shared item when macOS still allows access to it.
+- Keeps account names, groups, notes, games, and Launch Sets when macOS blocks the old item.
+- Uses an installed Apple code-signing identity automatically so future builds keep one stable Keychain identity.
+- Replaced raw Keychain status codes with recovery instructions.
+- Rewrote account setup, multiple-launch, friend, server, Launch Set, About, and help text for new users.
+- Updated every current guide and developer document for the new storage and signing behavior.
+
+## 1.0.1 - 2026-08-11
+
+- Saved the current Roblox game name and icon for recent and favorite games.
+- Filled in missing names and icons for existing recent games.
+- Limited saved icon addresses to secure Roblox CDN links.
+
 ## 1.0.0 - 2026-08-11
 
 - First stable release of Roblox Account Manager for Mac.
 - Added saved accounts, groups, Launch Sets, recent games, favorites, diagnostics, and non-secret backups.
 - Added parallel launches through separate unchanged copies of the installed Roblox app.
 - Added friend discovery through saved account sessions without public-server scans.
-- Added source-first friend joining for several selected accounts.
+- Added friend joining for several selected accounts. An account that can see the friend starts first.
 - Added managed Roblox website Play and Join actions that launch the correct saved account.
 - Blocked a second launch when the same managed account is already running.
 - Removed stale manual Job ID choices when the user changes the place or starts a different launch flow.

@@ -104,7 +104,7 @@ public struct RobloxExperienceMetadataClient: ExperienceMetadataProviding, Senda
     private func load<Response: Decodable>(_ url: URL) async throws -> Response {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Roblox Account Manager for Mac/1.0.1", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox Account Manager for Mac/1.0.2", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw RobloxAPIError.invalidResponse }

@@ -1,8 +1,18 @@
-# Version 1.0 live test report
+# Version 1.0.2 live test report
 
 Date: August 10-11, 2026
 
 This report uses saved account labels only. It does not contain usernames, cookies, private links, launch tickets, or personal account IDs.
+
+## Version 1.0.2 Keychain update
+
+- Version 1.0.1 reproduced macOS Keychain error `-25293` when Add Account tried to update the shared `sessions-v1` item from an app with a different ad hoc signature.
+- Version 1.0.2 created the new `sessions-v2` item without deleting or weakening access to the old item.
+- A real Roblox account was added through the normal browser sign-in flow. The app closed the sheet, added the account to the sidebar, and showed the account as ready. Error `-25293` did not return.
+- The release build used an installed Apple code-signing identity. Its designated requirement stayed the same in a temporary update build whose code-directory hash was different.
+- The temporary update build read the new saved session and confirmed the account as ready. This tested the same app-update boundary that caused the original failure.
+- The final packaged version replaced the installed app, opened the saved account, and confirmed it as ready again.
+- The installed version 1.0.0 app was preserved as a local backup before version 1.0.2 was installed.
 
 ## Passed
 
@@ -21,7 +31,7 @@ This report uses saved account labels only. It does not contain usernames, cooki
 - A macOS 27 crash report showed that TCC terminated two managed Roblox clients because the responsible manager bundle lacked a microphone usage description. The prepared Roblox copies already contained Roblox's original description and passed byte and signature checks. The manager bundle now declares microphone, camera, and local-network use for the Roblox clients it starts.
 - After the privacy-metadata fix, the installed manager started all three saved accounts together with the current friend server target. All three unchanged Roblox copies stayed running past the previous crash point for more than one minute. No new TCC crash report appeared. **Stop All** then closed the three managed clients and left the separate normal Roblox client running.
 - The friend account that supplied the result started first. The other two accounts started about ten seconds later with the same Place ID and Job ID. The launch records confirmed one shared target across all three accounts. The friend launch code and its tests make no public-server requests.
-- Existing per-account Keychain items migrated to one shared session item. The migration required approval for each old item once. A later rebuilt app requested approval only once for the shared item, not once per account.
+- Existing per-account Keychain items migrated to the first shared session item during the version 1.0 work. Version 1.0.2 replaces that item because an ad hoc app update could lose access to it.
 - Diagnostics passed for the Roblox installation, signature, local storage, disk space, account data, Keychain entries, prepared copies, process records, friends service, and public server service.
 - The opt-in exact-copy integration test started two unchanged Roblox processes, verified their copies and signatures, stopped both, and left no managed processes.
 

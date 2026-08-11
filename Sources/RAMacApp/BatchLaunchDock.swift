@@ -10,7 +10,7 @@ struct BatchLaunchBar: View {
     var body: some View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
-                Label("Batch Launch", systemImage: "person.2.fill")
+                Label("Launch Together", systemImage: "person.2.fill")
                     .fontWeight(.semibold)
                 Text("\(selectionCount) account\(selectionCount == 1 ? "" : "s")")
                     .foregroundStyle(.secondary)
@@ -26,8 +26,9 @@ struct BatchLaunchBar: View {
             )
 
             HStack(spacing: 10) {
-                TextField("Shared place ID", text: gamePlaceID)
+                TextField("Place ID for all", text: gamePlaceID)
                     .frame(width: 180)
+                    .help("The Place ID is the number after /games/ in a Roblox game link")
                 ExperienceChooserButton(store: store, placeID: gamePlaceID)
                 ServerSelectionControl(
                     store: store,
@@ -64,6 +65,8 @@ struct BatchLaunchBar: View {
             if case .failed = $0 { return true }
             return false
         }
-        return hasFailures ? "Retry \(selectionCount)" : "Launch \(selectionCount)"
+        return hasFailures
+            ? "Retry \(selectionCount) Account\(selectionCount == 1 ? "" : "s")"
+            : "Launch \(selectionCount) Account\(selectionCount == 1 ? "" : "s")"
     }
 }

@@ -2,8 +2,8 @@ import SwiftUI
 
 struct AddAccountView: View {
     enum Method: String, CaseIterable, Identifiable {
-        case browser = "Browser Sign-In"
-        case cookie = "Advanced Import"
+        case browser = "Sign In on Roblox"
+        case cookie = "Paste Session Value"
         var id: String { rawValue }
     }
 
@@ -55,7 +55,7 @@ struct AddAccountView: View {
 
     private var browserSignIn: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Sign in to Roblox below. This window does not keep browsing history. After Roblox signs you in, the app saves the sign-in securely in macOS Keychain. The app does not store your Roblox password.")
+            Text("Use the Roblox page below to sign in. When the page is ready, select Save This Account. The app saves the Roblox sign-in in Keychain, the private password storage built into macOS. It never sees or saves your password.")
                 .foregroundStyle(.secondary)
 
             ZStack {
@@ -73,12 +73,12 @@ struct AddAccountView: View {
 
             HStack {
                 Label(
-                    browser.hasSession ? "Roblox sign-in ready" : "Sign in above to continue",
+                    browser.hasSession ? "Ready to save" : "Sign in above to continue",
                     systemImage: browser.hasSession ? "checkmark.circle.fill" : "person.crop.circle"
                 )
                 .foregroundStyle(browser.hasSession ? .green : .secondary)
                 Spacer()
-                Button(store.isWorking ? "Adding" : "Add Signed-In Account") {
+                Button(store.isWorking ? "Saving" : "Save This Account") {
                     Task {
                         guard let sessionCookie = await browser.sessionCookie() else { return }
                         if await store.importSession(sessionCookie) { dismiss() }
@@ -93,16 +93,16 @@ struct AddAccountView: View {
 
     private var cookieImport: some View {
         Form {
-            Section("Advanced Account Import") {
+            Section("Advanced: Paste a Roblox Session") {
                 SecureField(".ROBLOSECURITY value", text: $cookie)
-                Text("Use this only if you know how to copy the .ROBLOSECURITY value from an account you own. This value gives access to the account. Protect it like a password.")
+                Text("Most people should use Sign In on Roblox. Use this option only if you already know how to copy the .ROBLOSECURITY value from an account you own. This value can access the account. Protect it like a password.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             HStack {
                 Spacer()
-                Button(store.isWorking ? "Checking" : "Check and Add") {
+                Button(store.isWorking ? "Checking" : "Check and Save Account") {
                     Task {
                         if await store.importSession(cookie) { dismiss() }
                     }

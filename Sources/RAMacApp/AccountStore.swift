@@ -398,7 +398,7 @@ final class AccountStore: ObservableObject {
         }
         if !accountIDs.isEmpty {
             notice = Notice(
-                title: accountIDs.count == 1 ? "This account is not ready" : "No source account is ready",
+                title: accountIDs.count == 1 ? "This account is not ready" : "No selected account is ready",
                 message: "Check the account status or use Sign In Again before opening Roblox websites."
             )
         }
@@ -492,7 +492,7 @@ final class AccountStore: ObservableObject {
         guard let placeID = player.presence.placeID,
               let jobID = player.presence.jobID,
               !jobID.isEmpty else {
-            notice = Notice(title: "No server was supplied", message: "Open the player's profile with a source account instead.")
+            notice = Notice(title: "No server was supplied", message: "Open the player's profile with a saved account that can see this friend.")
             return
         }
         let updatedVerification = await playerDiscovery.refreshVerification(for: player)
@@ -500,7 +500,7 @@ final class AccountStore: ObservableObject {
         guard case .verifiedPublic(let server) = updatedVerification else {
             notice = Notice(
                 title: "The server is not confirmed as public",
-                message: "Continue checking or open the player's profile with a source account."
+                message: "Continue checking or open the player's profile with a saved account that can see this friend."
             )
             return
         }
@@ -564,7 +564,7 @@ final class AccountStore: ObservableObject {
         guard let source = selected.first(where: { player.candidate.sourceAccountIDs.contains($0.id) }) else {
             notice = Notice(
                 title: "Select a friend account",
-                message: "Select at least one account listed under Found through. That account must start first."
+                message: "Select at least one account listed under Visible to these accounts. Roblox gave that account the friend's server, so it must start first."
             )
             return
         }
@@ -577,7 +577,7 @@ final class AccountStore: ObservableObject {
             rememberSelection: false
         )
         guard runningAccountIDs.contains(source.id) else {
-            batchStatus = "The source account did not start"
+            batchStatus = "The first friend account did not start"
             return
         }
 
@@ -591,7 +591,7 @@ final class AccountStore: ObservableObject {
         }
 
         batchSelectedIDs = remainingIDs
-        batchStatus = "Source started. Starting \(remainingIDs.count) more"
+        batchStatus = "First account started. Starting \(remainingIDs.count) more"
         await launchBatch(
             placeText: String(placeID),
             server: .manualJob(jobID),
