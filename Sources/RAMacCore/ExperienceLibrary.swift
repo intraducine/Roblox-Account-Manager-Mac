@@ -25,7 +25,13 @@ public struct ExperienceRecord: Codable, Identifiable, Equatable, Sendable {
         self.isFavorite = isFavorite
     }
 
-    public var thumbnailURL: URL? { thumbnailURLString.flatMap(URL.init(string:)) }
+    public var thumbnailURL: URL? {
+        guard let url = thumbnailURLString.flatMap(URL.init(string:)),
+              url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased(),
+              host == "rbxcdn.com" || host.hasSuffix(".rbxcdn.com") else { return nil }
+        return url
+    }
 }
 
 public final class ExperienceLibraryRepository: @unchecked Sendable {

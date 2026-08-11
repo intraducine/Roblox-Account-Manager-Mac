@@ -128,6 +128,31 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(refreshedRequestCount, 2)
     }
 
+    func testRecentExperienceStoresResolvedGameNameAndIcon() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-experience-metadata-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let experienceRepository = ExperienceLibraryRepository(dataDirectory: directory)
+        try experienceRepository.save([ExperienceRecord(placeID: 1818, launchCount: 1)])
+        let store = AccountStore(
+            repository: repository,
+            vault: MemoryVault(),
+            api: BatchMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil),
+            experienceRepository: experienceRepository,
+            experienceMetadataProvider: ExperienceMetadataMock()
+        )
+
+        await store.refreshExperienceMetadata()
+
+        XCTAssertEqual(store.experiences.first?.experienceName, "Classic: Crossroads")
+        XCTAssertEqual(store.experiences.first?.thumbnailURLString, "https://tr.rbxcdn.com/crossroads.png")
+        let saved = try experienceRepository.load()
+        XCTAssertEqual(saved.first?.experienceName, "Classic: Crossroads")
+        XCTAssertEqual(saved.first?.thumbnailURLString, "https://tr.rbxcdn.com/crossroads.png")
+    }
+
     func testJoinablePlayerServerUsesPublicPresence() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -521,6 +546,17 @@ private actor WebSessionMockAPI: RobloxAPIProviding {
     func avatarURL(userID: Int64) async -> URL? { nil }
     func authenticationTicket(cookie rawCookie: String) async throws -> String { "ticket" }
     func privateServerAccessCode(placeID: Int64, linkCode: String, cookie rawCookie: String) async throws -> String { "access" }
+}
+
+private struct ExperienceMetadataMock: ExperienceMetadataProviding {
+    func metadata(placeID: Int64) async throws -> ExperienceMetadata {
+        ExperienceMetadata(
+            placeID: placeID,
+            universeID: 13058,
+            name: "Classic: Crossroads",
+            thumbnailURLString: "https://tr.rbxcdn.com/crossroads.png"
+        )
+    }
 }
 
 private actor PrivateAccessMockAPI: RobloxAPIProviding {

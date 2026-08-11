@@ -38,6 +38,7 @@ private struct ExperienceChooserView: View {
                 } else {
                     List(filteredExperiences) { experience in
                         HStack(spacing: 12) {
+                            experienceIcon(experience)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(experience.experienceName ?? "Place \(experience.placeID)").fontWeight(.medium)
                                 Text("Place ID \(experience.placeID) · launched \(experience.launchCount) time\(experience.launchCount == 1 ? "" : "s")")
@@ -54,6 +55,7 @@ private struct ExperienceChooserView: View {
                     }
                 }
             }
+            .task { await store.refreshExperienceMetadata() }
             .searchable(text: $search, prompt: "Search games or Place IDs")
             .navigationTitle("Recent and Favorite Games")
             .toolbar {
@@ -63,6 +65,25 @@ private struct ExperienceChooserView: View {
             }
         }
         .frame(width: 620, height: 500)
+    }
+
+    @ViewBuilder
+    private func experienceIcon(_ experience: ExperienceRecord) -> some View {
+        AsyncImage(url: experience.thumbnailURL) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable().scaledToFill()
+            case .empty where store.experienceMetadataLoadingIDs.contains(experience.placeID):
+                ProgressView().controlSize(.small)
+            default:
+                Image(systemName: "gamecontroller")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 52, height: 52)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityHidden(true)
     }
 
     private var filteredExperiences: [ExperienceRecord] {

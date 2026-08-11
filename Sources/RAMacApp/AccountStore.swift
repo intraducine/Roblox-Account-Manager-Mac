@@ -64,6 +64,7 @@ final class AccountStore: ObservableObject {
     @Published private(set) var accountHealth: [UUID: AccountHealth] = [:]
     @Published private(set) var launchSets: [LaunchSet] = []
     @Published private(set) var experiences: [ExperienceRecord] = []
+    @Published private(set) var experienceMetadataLoadingIDs = Set<Int64>()
     @Published private(set) var privateServers: [SavedPrivateServer] = []
     @Published private(set) var activeLaunchTargets: [UUID: ActiveLaunchTargetRecord] = [:]
 
@@ -77,6 +78,7 @@ final class AccountStore: ObservableObject {
     private let healthChecker: any AccountHealthChecking
     private let launchSetRepository: LaunchSetRepository
     private let experienceRepository: ExperienceLibraryRepository
+    private let experienceMetadataProvider: any ExperienceMetadataProviding
     private let privateServerRepository: PrivateServerRepository
     private let activeLaunchRepository: ActiveLaunchTargetRepository
     private let archiveService = MetadataArchiveService()
@@ -96,6 +98,7 @@ final class AccountStore: ObservableObject {
         healthChecker: (any AccountHealthChecking)? = nil,
         launchSetRepository: LaunchSetRepository? = nil,
         experienceRepository: ExperienceLibraryRepository? = nil,
+        experienceMetadataProvider: (any ExperienceMetadataProviding)? = nil,
         privateServerRepository: PrivateServerRepository? = nil,
         activeLaunchRepository: ActiveLaunchTargetRepository? = nil
     ) {
@@ -111,6 +114,7 @@ final class AccountStore: ObservableObject {
         self.healthChecker = healthChecker ?? AccountHealthService(vault: vault, api: api)
         self.launchSetRepository = launchSetRepository ?? LaunchSetRepository(dataDirectory: repository.dataDirectory)
         self.experienceRepository = experienceRepository ?? ExperienceLibraryRepository(dataDirectory: repository.dataDirectory)
+        self.experienceMetadataProvider = experienceMetadataProvider ?? RobloxExperienceMetadataClient()
         self.privateServerRepository = privateServerRepository ?? PrivateServerRepository(dataDirectory: repository.dataDirectory)
         self.activeLaunchRepository = activeLaunchRepository ?? ActiveLaunchTargetRepository(dataDirectory: repository.dataDirectory)
         self.launchMode = launchMode == .modifiedParallel ? .modifiedParallel : .unmodifiedParallel
@@ -824,6 +828,42 @@ final class AccountStore: ObservableObject {
         catch { notice = Notice(title: "Favorite was not saved", message: error.localizedDescription) }
     }
 
+    func refreshExperienceMetadata(placeIDs: Set<Int64>? = nil, force: Bool = false) async {
+        let candidates = experiences.filter { experience in
+            (placeIDs == nil || placeIDs?.contains(experience.placeID) == true)
+                && !experienceMetadataLoadingIDs.contains(experience.placeID)
+                && (force || experience.experienceName == nil || experience.thumbnailURLString == nil)
+        }
+        guard !candidates.isEmpty else { return }
+
+        let candidateIDs = Set(candidates.map(\.placeID))
+        experienceMetadataLoadingIDs.formUnion(candidateIDs)
+        defer { experienceMetadataLoadingIDs.subtract(candidateIDs) }
+
+        let provider = experienceMetadataProvider
+        var resolved: [ExperienceMetadata] = []
+        for experience in candidates {
+            if let metadata = try? await provider.metadata(placeID: experience.placeID) {
+                resolved.append(metadata)
+            }
+        }
+
+        var changed = false
+        for metadata in resolved {
+            guard let index = experiences.firstIndex(where: { $0.placeID == metadata.placeID }) else { continue }
+            if experiences[index].experienceName != metadata.name {
+                experiences[index].experienceName = metadata.name
+                changed = true
+            }
+            if let thumbnail = metadata.thumbnailURLString,
+               experiences[index].thumbnailURLString != thumbnail {
+                experiences[index].thumbnailURLString = thumbnail
+                changed = true
+            }
+        }
+        if changed { try? experienceRepository.save(experiences) }
+    }
+
     func exportMetadata(includePrivateLinks: Bool = false) throws -> Data {
         try archiveService.exportData(
             accounts: accounts,
@@ -1481,6 +1521,7 @@ final class AccountStore: ObservableObject {
     private func recordExperienceLaunch(placeID: Int64) {
         experiences = experienceLibrary.recordingLaunch(placeID: placeID, in: experiences)
         try? experienceRepository.save(experiences)
+        Task { await refreshExperienceMetadata(placeIDs: [placeID], force: true) }
     }
 
     private func migrateExistingPrivateServers() {
