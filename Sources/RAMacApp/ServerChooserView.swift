@@ -89,13 +89,15 @@ private struct ServerChooserView: View {
                     }
 
                     NavigationLink {
-                        PrivateServerEntryView(placeIDIsValid: numericPlaceID != nil) { choose($0) }
+                        PrivateServerLibraryView(store: store) { server in
+                            store.markPrivateServerUsed(server)
+                            placeID = String(server.placeID)
+                            choose(.privateLink(server.link))
+                        }
                     } label: {
                         ChoiceRow(
-                            title: "Use a private server link",
-                            detail: numericPlaceID == nil
-                                ? "Enter a Place ID before using a link."
-                                : "Paste a link for a private server you can access."
+                            title: "Private servers",
+                            detail: "Choose a saved link or add another."
                         )
                     }
                 }
@@ -455,45 +457,108 @@ private struct PlayerServerSearchView: View {
     }
 }
 
-private struct PrivateServerEntryView: View {
-    let placeIDIsValid: Bool
-    let onChoose: (RobloxServerSelection) -> Void
+private struct PrivateServerLibraryView: View {
+    @ObservedObject var store: AccountStore
+    let onChoose: (SavedPrivateServer) -> Void
+    @State private var name = ""
     @State private var link = ""
+    @State private var pendingRemoval: SavedPrivateServer?
 
     var body: some View {
         Form {
             Section {
-                Text("Paste a complete private server link. Every selected account must have permission to join it.")
+                Text("Choose a saved server or add a link. Roblox still checks each account's permission when it joins.")
                     .foregroundStyle(.secondary)
             }
-            Section("Private server link") {
-                TextField("https://www.roblox.com/games/…", text: $link)
+            Section("Saved private servers") {
+                if store.privateServers.isEmpty {
+                    Text("No private servers are saved yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(store.privateServers) { server in
+                        HStack(spacing: 12) {
+                            Button {
+                                onChoose(server)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(server.name)
+                                        .fontWeight(.medium)
+                                    Text("Place ID \(server.placeID)")
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            Button(role: .destructive) {
+                                pendingRemoval = server
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Remove \(server.name)")
+                            .accessibilityLabel("Remove \(server.name)")
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+            }
+            Section("Add a private server") {
+                TextField("Name", text: $name, prompt: Text("For example, Friends server"))
+                SecureField("Private server link", text: $link)
                 if RobloxLaunchURLBuilder.privateShareCode(from: cleanLink) != nil {
                     Text("Roblox's newer share links cannot select a saved account through this manager yet.")
                         .foregroundStyle(.red)
                 } else if !cleanLink.isEmpty,
-                          RobloxLaunchURLBuilder.privateLinkCode(from: cleanLink) == nil {
-                    Text("This link does not contain a private server code.")
+                          parsedPlaceID == nil {
+                    Text("Paste the complete roblox.com link. It must include /games/, a Place ID, and a private server code.")
                         .foregroundStyle(.red)
+                } else if let parsedPlaceID {
+                    Text("This link is for Place ID \(parsedPlaceID).")
+                        .foregroundStyle(.secondary)
                 }
-                Button("Use Private Server") {
-                    onChoose(.privateLink(cleanLink))
+                Button("Save and Use Private Server") {
+                    if let server = store.savePrivateServer(name: cleanName, link: cleanLink) {
+                        onChoose(server)
+                    }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!placeIDIsValid || RobloxLaunchURLBuilder.privateLinkCode(from: cleanLink) == nil)
-            }
-            if !placeIDIsValid {
-                Section("Place ID required") {
-                    Text("Close this window and enter a Place ID before using a private server link.")
-                }
+                .disabled(cleanName.isEmpty || parsedPlaceID == nil)
             }
         }
         .formStyle(.grouped)
-        .navigationTitle("Private Server")
+        .navigationTitle("Private Servers")
+        .confirmationDialog(
+            "Remove \(pendingRemoval?.name ?? "this private server")?",
+            isPresented: Binding(
+                get: { pendingRemoval != nil },
+                set: { if !$0 { pendingRemoval = nil } }
+            )
+        ) {
+            if let pendingRemoval {
+                Button("Remove Private Server", role: .destructive) {
+                    store.removePrivateServer(pendingRemoval)
+                    self.pendingRemoval = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingRemoval = nil }
+        } message: {
+            Text("This removes the saved link from this Mac. It does not change the server on Roblox.")
+        }
+    }
+
+    private var cleanName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var cleanLink: String {
         link.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var parsedPlaceID: Int64? {
+        RobloxLaunchURLBuilder.privateServerPlaceID(from: cleanLink)
     }
 }
 

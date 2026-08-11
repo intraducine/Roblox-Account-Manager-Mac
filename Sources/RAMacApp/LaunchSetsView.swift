@@ -129,6 +129,16 @@ private struct LaunchSetEditor: View {
                 }
                 if strategyKind == "private" {
                     SecureField("Private server link", text: $privateLink)
+                    if !store.privateServers.isEmpty {
+                        Menu("Choose Saved Private Server") {
+                            ForEach(store.privateServers) { server in
+                                Button(server.name) {
+                                    privateLink = server.link
+                                    placeText = String(server.placeID)
+                                }
+                            }
+                        }
+                    }
                     Text("Private links stay on this Mac and are excluded from normal backups.")
                         .font(.caption).foregroundStyle(.secondary)
                 }

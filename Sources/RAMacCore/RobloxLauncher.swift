@@ -127,6 +127,17 @@ public struct RobloxLaunchURLBuilder: Sendable {
         return value
     }
 
+    public static func privateServerPlaceID(from input: String) -> Int64? {
+        guard privateLinkCode(from: input) != nil,
+              let components = URLComponents(string: input) else { return nil }
+        let path = components.path.split(separator: "/", omittingEmptySubsequences: true)
+        guard path.count >= 2,
+              path[0].caseInsensitiveCompare("games") == .orderedSame,
+              let placeID = Int64(path[1]),
+              placeID > 0 else { return nil }
+        return placeID
+    }
+
     public static func privateShareCode(from input: String) -> String? {
         guard let components = URLComponents(string: input),
               isRobloxHost(components.host),

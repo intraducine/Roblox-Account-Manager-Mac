@@ -15,6 +15,7 @@ This project is independent. Roblox Corporation does not make or approve it. Use
 - Save common account and game choices as **Launch Sets** so you can reuse them later.
 - Keep a list of recently played games and mark games as favorites.
 - Let Roblox choose a server, choose a public server with enough open spaces, or use a supported private-server link.
+- Save private-server links with names and browse them again without pasting them each time.
 - Find friends whose current game is visible to at least one saved account.
 - Join a visible friend with several accounts. The friend account starts first, then the app sends the other selected accounts to the same server.
 - Open Roblox Home, Profile, Settings, or Security as one saved account without signing the other accounts out.
@@ -78,7 +79,9 @@ To launch:
 3. Let Roblox choose a server, browse public servers, find a player, or enter a supported private server link.
 4. Select **Launch Selected Accounts**.
 
-A Place ID is the number after `/games/` in a Roblox experience link. A Job ID identifies one current server. Job IDs stop working when that server closes, so the app never saves them as a future launch choice. Choosing or typing a different Place ID returns the server choice to **Let Roblox choose**. A private-server link can remain saved for its account.
+A Place ID is the number after `/games/` in a Roblox experience link. A Job ID identifies one current server. Job IDs stop working when that server closes, so the app never saves them as a future launch choice. Choosing or typing a different Place ID returns the server choice to **Let Roblox choose**.
+
+Open **Choose Server > Private Servers** to save a private-server link with a clear name. The app reads the Place ID from the link. Select the saved name later to reuse both the link and its Place ID. Links that were already saved to accounts or Launch Sets appear in this list after the app loads them.
 
 The bottom **Advanced fallback** changes copied app settings and applies a different signature. Roblox can detect that change. Use it only for recovery tests. Normal managed launches use unchanged copies.
 
@@ -119,7 +122,7 @@ Use this window when you want to browse as one saved account, start a game from 
 
 ## Launch Sets and experiences
 
-A Launch Set stores account IDs, group names, a Place ID, and one server method. It does not save a discovered public Job ID because public servers can close. Private server links stay local and are excluded from normal backups.
+A Launch Set stores account IDs, group names, a Place ID, and one server method. It does not save a discovered public Job ID because public servers can close. When a Launch Set uses a private server, you can choose a link from the saved private-server list. Private server links stay local and are excluded from normal backups.
 
 The experience chooser records recent Place IDs and launch counts. You can mark an entry as a favorite. A numeric Place ID stays the source of truth, so a name lookup is not required to launch.
 
@@ -145,7 +148,7 @@ The optional modified fallback does not meet the unchanged-copy rule. Roblox sta
 
 - Account metadata: `~/Library/Application Support/Roblox Account Manager/Accounts.json`
 - Group names: `~/Library/Application Support/Roblox Account Manager/Groups.json`
-- Launch Sets, experiences, and active target records: the same local data folder
+- Launch Sets, experiences, saved private servers, and active target records: the same local data folder
 - Managed copies: `~/Library/Application Support/Roblox Account Manager/Instances`
 - Sessions: one encrypted macOS Keychain item
 

@@ -405,6 +405,71 @@ final class AccountStoreBatchTests: XCTestCase {
         }
     }
 
+    func testPrivateServerLibrarySavesUpdatesReloadsAndRemovesLinks() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-private-library-tests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let link = "https://www.roblox.com/games/1818/Example?privateServerLinkCode=secret-code"
+        let store = AccountStore(
+            repository: repository,
+            vault: MemoryVault(),
+            api: BatchMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil)
+        )
+
+        let first = try XCTUnwrap(store.savePrivateServer(name: "Friends", link: link))
+        let updated = try XCTUnwrap(store.savePrivateServer(name: "Weekend group", link: link))
+
+        XCTAssertEqual(first.id, updated.id)
+        XCTAssertEqual(store.privateServers.count, 1)
+        XCTAssertEqual(store.privateServers.first?.name, "Weekend group")
+        XCTAssertEqual(store.privateServers.first?.placeID, 1818)
+        let exported = try store.exportMetadata()
+        XCTAssertFalse(String(decoding: exported, as: UTF8.self).contains("secret-code"))
+
+        let reloaded = AccountStore(
+            repository: repository,
+            vault: MemoryVault(),
+            api: BatchMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil)
+        )
+        XCTAssertEqual(reloaded.privateServers, store.privateServers)
+
+        reloaded.removePrivateServer(updated)
+        XCTAssertTrue(reloaded.privateServers.isEmpty)
+        XCTAssertTrue(try PrivateServerRepository(dataDirectory: directory).load().isEmpty)
+    }
+
+    func testExistingAccountPrivateLinkMigratesIntoLibrary() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-private-migration-tests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let link = "https://www.roblox.com/games/999/Example?privateServerLinkCode=old-code"
+        try repository.save([
+            ManagedAccount(
+                userID: 99,
+                username: "builder",
+                displayName: "Builder",
+                savedPlaceID: "999",
+                savedServer: link
+            )
+        ])
+
+        let store = AccountStore(
+            repository: repository,
+            vault: MemoryVault(),
+            api: BatchMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil)
+        )
+
+        XCTAssertEqual(store.privateServers.count, 1)
+        XCTAssertEqual(store.privateServers.first?.placeID, 999)
+        XCTAssertEqual(store.privateServers.first?.link, link)
+        XCTAssertEqual(try PrivateServerRepository(dataDirectory: directory).load(), store.privateServers)
+    }
+
     private func makeFixture(failingIndex: Int? = nil) throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-batch-tests-\(UUID().uuidString)", isDirectory: true)

@@ -64,6 +64,7 @@ final class AccountStore: ObservableObject {
     @Published private(set) var accountHealth: [UUID: AccountHealth] = [:]
     @Published private(set) var launchSets: [LaunchSet] = []
     @Published private(set) var experiences: [ExperienceRecord] = []
+    @Published private(set) var privateServers: [SavedPrivateServer] = []
     @Published private(set) var activeLaunchTargets: [UUID: ActiveLaunchTargetRecord] = [:]
 
     private let repository: AccountRepository
@@ -76,6 +77,7 @@ final class AccountStore: ObservableObject {
     private let healthChecker: any AccountHealthChecking
     private let launchSetRepository: LaunchSetRepository
     private let experienceRepository: ExperienceLibraryRepository
+    private let privateServerRepository: PrivateServerRepository
     private let activeLaunchRepository: ActiveLaunchTargetRepository
     private let archiveService = MetadataArchiveService()
     private let experienceLibrary = ExperienceLibrary()
@@ -94,6 +96,7 @@ final class AccountStore: ObservableObject {
         healthChecker: (any AccountHealthChecking)? = nil,
         launchSetRepository: LaunchSetRepository? = nil,
         experienceRepository: ExperienceLibraryRepository? = nil,
+        privateServerRepository: PrivateServerRepository? = nil,
         activeLaunchRepository: ActiveLaunchTargetRepository? = nil
     ) {
         self.repository = repository
@@ -108,6 +111,7 @@ final class AccountStore: ObservableObject {
         self.healthChecker = healthChecker ?? AccountHealthService(vault: vault, api: api)
         self.launchSetRepository = launchSetRepository ?? LaunchSetRepository(dataDirectory: repository.dataDirectory)
         self.experienceRepository = experienceRepository ?? ExperienceLibraryRepository(dataDirectory: repository.dataDirectory)
+        self.privateServerRepository = privateServerRepository ?? PrivateServerRepository(dataDirectory: repository.dataDirectory)
         self.activeLaunchRepository = activeLaunchRepository ?? ActiveLaunchTargetRepository(dataDirectory: repository.dataDirectory)
         self.launchMode = launchMode == .modifiedParallel ? .modifiedParallel : .unmodifiedParallel
         load()
@@ -236,6 +240,13 @@ final class AccountStore: ObservableObject {
             )
             launchSets = (try? launchSetRepository.load()) ?? []
             experiences = (try? experienceRepository.load()) ?? []
+            do {
+                privateServers = sortedPrivateServers(try privateServerRepository.load())
+                migrateExistingPrivateServers()
+            } catch {
+                privateServers = []
+                notice = Notice(title: "Private servers could not load", message: error.localizedDescription)
+            }
             activeLaunchTargets = Dictionary(
                 uniqueKeysWithValues: ((try? activeLaunchRepository.load()) ?? []).map { ($0.accountID, $0) }
             )
@@ -708,6 +719,73 @@ final class AccountStore: ObservableObject {
         launchSets.removeAll { $0.id == launchSet.id }
         do { try launchSetRepository.save(launchSets) }
         catch { notice = Notice(title: "Launch Set was not removed", message: error.localizedDescription) }
+    }
+
+    @discardableResult
+    func savePrivateServer(name rawName: String, link rawLink: String) -> SavedPrivateServer? {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let link = rawLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            notice = Notice(title: "Name required", message: "Give this private server a name that you will recognize later.")
+            return nil
+        }
+        guard let placeID = RobloxLaunchURLBuilder.privateServerPlaceID(from: link),
+              let linkCode = RobloxLaunchURLBuilder.privateLinkCode(from: link) else {
+            notice = Notice(title: "Private server was not saved", message: "Paste a complete Roblox private server link.")
+            return nil
+        }
+
+        let previous = privateServers
+        let now = Date()
+        let saved: SavedPrivateServer
+        if let index = privateServers.firstIndex(where: {
+            $0.placeID == placeID
+                && RobloxLaunchURLBuilder.privateLinkCode(from: $0.link) == linkCode
+        }) {
+            privateServers[index].name = name
+            privateServers[index].link = link
+            privateServers[index].lastUsedAt = now
+            saved = privateServers[index]
+        } else {
+            saved = SavedPrivateServer(
+                name: name,
+                placeID: placeID,
+                link: link,
+                lastUsedAt: now
+            )
+            privateServers.append(saved)
+        }
+        privateServers = sortedPrivateServers(privateServers)
+        do {
+            try privateServerRepository.save(privateServers)
+            return saved
+        } catch {
+            privateServers = previous
+            notice = Notice(title: "Private server was not saved", message: error.localizedDescription)
+            return nil
+        }
+    }
+
+    func markPrivateServerUsed(_ server: SavedPrivateServer) {
+        guard let index = privateServers.firstIndex(where: { $0.id == server.id }) else { return }
+        let previous = privateServers
+        privateServers[index].lastUsedAt = Date()
+        privateServers = sortedPrivateServers(privateServers)
+        do { try privateServerRepository.save(privateServers) }
+        catch {
+            privateServers = previous
+            notice = Notice(title: "Private server history was not saved", message: error.localizedDescription)
+        }
+    }
+
+    func removePrivateServer(_ server: SavedPrivateServer) {
+        let previous = privateServers
+        privateServers.removeAll { $0.id == server.id }
+        do { try privateServerRepository.save(privateServers) }
+        catch {
+            privateServers = previous
+            notice = Notice(title: "Private server was not removed", message: error.localizedDescription)
+        }
     }
 
     func runLaunchSet(_ launchSet: LaunchSet) async {
@@ -1403,6 +1481,63 @@ final class AccountStore: ObservableObject {
     private func recordExperienceLaunch(placeID: Int64) {
         experiences = experienceLibrary.recordingLaunch(placeID: placeID, in: experiences)
         try? experienceRepository.save(experiences)
+    }
+
+    private func migrateExistingPrivateServers() {
+        var known = Set(privateServers.compactMap { privateServerKey(placeID: $0.placeID, link: $0.link) })
+        var migrated = privateServers
+
+        for account in accounts {
+            let link = account.savedServer.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let placeID = RobloxLaunchURLBuilder.privateServerPlaceID(from: link),
+                  let key = privateServerKey(placeID: placeID, link: link),
+                  known.insert(key).inserted else { continue }
+            migrated.append(SavedPrivateServer(
+                name: "Private server for \(account.title)",
+                placeID: placeID,
+                link: link
+            ))
+        }
+
+        for launchSet in launchSets {
+            guard case .privateServerLink(let rawLink) = launchSet.serverStrategy else { continue }
+            let link = rawLink.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let placeID = RobloxLaunchURLBuilder.privateServerPlaceID(from: link),
+                  let key = privateServerKey(placeID: placeID, link: link),
+                  known.insert(key).inserted else { continue }
+            migrated.append(SavedPrivateServer(
+                name: "\(launchSet.name) private server",
+                placeID: placeID,
+                link: link
+            ))
+        }
+
+        guard migrated.count != privateServers.count else { return }
+        privateServers = sortedPrivateServers(migrated)
+        do { try privateServerRepository.save(privateServers) }
+        catch { notice = Notice(title: "Private server list could not be prepared", message: error.localizedDescription) }
+    }
+
+    private func privateServerKey(placeID: Int64, link: String) -> String? {
+        guard let code = RobloxLaunchURLBuilder.privateLinkCode(from: link) else { return nil }
+        return "\(placeID)|\(code)"
+    }
+
+    private func sortedPrivateServers(_ servers: [SavedPrivateServer]) -> [SavedPrivateServer] {
+        servers.sorted { first, second in
+            switch (first.lastUsedAt, second.lastUsedAt) {
+            case let (left?, right?) where left != right:
+                return left > right
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            default:
+                let nameOrder = first.name.localizedCaseInsensitiveCompare(second.name)
+                if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
+                return first.createdAt < second.createdAt
+            }
+        }
     }
 
     private func batchFailureMessage(_ failures: [BatchOutcome]) -> String {
