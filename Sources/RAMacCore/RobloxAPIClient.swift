@@ -280,12 +280,12 @@ public struct RobloxAPIClient: Sendable {
         request.setValue(".ROBLOSECURITY=\(cookie)", forHTTPHeaderField: "Cookie")
         request.setValue("https://www.roblox.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.roblox.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Roblox Account Manager for Mac/2.0.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox Account Manager for Mac/1.0.0", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 
     private func applyPublicHeaders(to request: inout URLRequest) {
-        request.setValue("Roblox Account Manager for Mac/2.0.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox Account Manager for Mac/1.0.0", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 

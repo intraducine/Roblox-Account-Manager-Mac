@@ -1,4 +1,4 @@
-# Version 2.0 live test report
+# Version 1.0 live test report
 
 Date: August 10-11, 2026
 

@@ -281,7 +281,7 @@ public struct RobloxSocialAPIClient: RobloxSocialProviding, Sendable {
     }
 
     private func applyPublicHeaders(to request: inout URLRequest) {
-        request.setValue("Roblox Account Manager for Mac/2.0.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox Account Manager for Mac/1.0.0", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 

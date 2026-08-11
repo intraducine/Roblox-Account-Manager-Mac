@@ -49,7 +49,7 @@ To create the optional ZIP file and SHA-256 checksum:
 
 ```sh
 ./scripts/package-release.sh
-shasum -a 256 -c "dist/Roblox-Account-Manager-for-Mac-2.0.0.zip.sha256"
+(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-1.0.0.zip.sha256")
 ```
 
 A downloaded build is not notarized. macOS can show a warning when you open it. Building from source gives you the clearest local trust boundary. This project does not use an automatic updater or paid Apple services.
@@ -156,7 +156,7 @@ Removing an account deletes its session from the shared Keychain item and remove
 
 ## Development notes
 
-[docs/V2_LIVE_TEST_REPORT.md](docs/V2_LIVE_TEST_REPORT.md) records the live checks completed for this release and the cases that still need controlled test accounts. [docs/V2_IMPLEMENTATION_SPEC.md](docs/V2_IMPLEMENTATION_SPEC.md) defines the release behavior. [docs/RESEARCH.md](docs/RESEARCH.md) records old experiments and current technical decisions. [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) is development history. These files do not replace this current guide.
+[docs/V1_LIVE_TEST_REPORT.md](docs/V1_LIVE_TEST_REPORT.md) records the live checks completed for this release and the cases that still need controlled test accounts. [docs/V1_IMPLEMENTATION_SPEC.md](docs/V1_IMPLEMENTATION_SPEC.md) defines the release behavior. [docs/RESEARCH.md](docs/RESEARCH.md) records old experiments and current technical decisions. [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) is development history. These files do not replace this current guide.
 
 Windows-only features from the original project remain outside this release. These include Win32 window placement, Windows registry work, a local control API, process injection, and gameplay automation.
 

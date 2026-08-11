@@ -1,7 +1,10 @@
 # Changelog
 
-## 2.0.0 - 2026-08-11
+## 1.0.0 - 2026-08-11
 
+- First stable release of Roblox Account Manager for Mac.
+- Added saved accounts, groups, Launch Sets, recent games, favorites, diagnostics, and non-secret backups.
+- Added parallel launches through separate unchanged copies of the installed Roblox app.
 - Added friend discovery through saved account sessions without public-server scans.
 - Added source-first friend joining for several selected accounts.
 - Added managed Roblox website Play and Join actions that launch the correct saved account.
@@ -11,9 +14,12 @@
 - Moved saved sessions into one encrypted Keychain item to reduce approval prompts after rebuilds.
 - Added required macOS privacy descriptions for Roblox clients started by the manager.
 - Improved running-process cleanup, Stop All behavior, launch guidance, and tests.
+- Added named private-server links that can be browsed and reused.
+- Added outside-click focus dismissal for text fields in windows and sheets.
+- Added the handwritten RAM for Mac app icon.
 - Updated the app and docs for the Intraducine release identity.
 
-## 1.0.0 - 2026-08-10
+## 0.5.0 - 2026-08-10
 
-- First complete native macOS release.
-- Added saved accounts, parallel unchanged Roblox copies, Launch Sets, groups, diagnostics, backup, and the SwiftUI interface.
+- Preview release of the native SwiftUI app.
+- Included saved accounts, parallel unchanged Roblox copies, Launch Sets, groups, diagnostics, backup, and the first complete interface.
