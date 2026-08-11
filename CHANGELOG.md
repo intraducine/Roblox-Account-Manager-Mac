@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 - 2026-08-11
+## 0.5.0 - 2026-08-11
 
 - Added friend discovery through saved account sessions without public-server scans.
 - Added source-first friend joining for several selected accounts.
@@ -13,7 +13,7 @@
 - Improved running-process cleanup, Stop All behavior, launch guidance, and tests.
 - Updated the app and docs for the Intraducine release identity.
 
-## 1.0.0 - 2026-08-10
+## 0.4.0 - 2026-08-10
 
 - First complete native macOS release.
 - Added saved accounts, parallel unchanged Roblox copies, Launch Sets, groups, diagnostics, backup, and the SwiftUI interface.

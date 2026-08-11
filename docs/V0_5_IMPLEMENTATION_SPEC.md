@@ -1,20 +1,20 @@
-# Roblox Account Manager for Mac 2.0 implementation specification
+# Roblox Account Manager for Mac 0.5 preview implementation specification
 
 ## 1. Product goal
 
-Version 2.0 must make this outcome reliable:
+Version 0.5 must make this outcome reliable:
 
 > A user can find a player visible to any saved Roblox account, identify the server, select other saved accounts, and launch every account that is expected to have access.
 
 The app must never claim that an account can join when Roblox has not provided enough information. It must not bypass Roblox privacy or private-server access rules.
 
-This file defines the version 2.0 release contract. The live test report states which checks used real Roblox clients and which cases still need controlled test accounts.
+This file defines the version 0.5 preview contract. The live test report states which checks used real Roblox clients and which cases still need controlled test accounts.
 
 This specification assumes:
 
 - The user owns or has permission to use every saved account.
 - "Joinable players" means the union of online friends visible to the saved accounts.
-- Followers and users followed are outside the version 2.0 scope.
+- Followers and users followed are outside the version 0.5 scope.
 - The user has only a free Apple developer account.
 - The app remains a native SwiftUI macOS application.
 - The normal Roblox client copies remain unchanged.
@@ -27,7 +27,7 @@ A free Apple account is sufficient for local development. It is not sufficient f
 
 ### Required release approach
 
-Version 2.0 must:
+Version 0.5 must:
 
 - Build a universal Intel and Apple silicon app.
 - Use an ad hoc signature when no paid signing identity exists.
@@ -37,7 +37,7 @@ Version 2.0 must:
 - Explain that a downloaded build is not notarized.
 - Recommend building from source for the best local trust boundary.
 
-Version 2.0 must not:
+Version 0.5 must not:
 
 - Depend on Personal Team provisioning.
 - Claim that the app is notarized.
@@ -46,7 +46,7 @@ Version 2.0 must not:
 
 WebKit, Keychain, local files, and normal HTTPS requests do not require paid Apple services for this unsandboxed Mac app.
 
-## 3. Version 2.0 scope
+## 3. Version 0.5 scope
 
 ### Required features
 
@@ -768,7 +768,7 @@ These phases record the build order. They are not current user instructions.
 
 ## 21. Acceptance criteria
 
-Version 2.0 is complete only when:
+Version 0.5 is complete only when:
 
 - The app combines duplicate friends from several managed accounts.
 - Every discovered player shows which managed accounts can see them.

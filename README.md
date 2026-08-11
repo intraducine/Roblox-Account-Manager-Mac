@@ -4,7 +4,7 @@ A native SwiftUI app for running several Roblox accounts on one Mac. It saves ea
 
 This project is independent. Roblox Corporation does not make or approve it. Use only accounts that you own or have permission to use.
 
-## Version 2.0 features
+## Version 0.5 preview features
 
 - Launch several saved accounts together.
 - Stop one managed Roblox client or use **Stop All**.
@@ -42,7 +42,7 @@ To create the optional ZIP file and SHA-256 checksum:
 
 ```sh
 ./scripts/package-release.sh
-shasum -a 256 -c "dist/Roblox-Account-Manager-for-Mac-2.0.0.zip.sha256"
+(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-0.5.0.zip.sha256")
 ```
 
 A downloaded build is not notarized. macOS can show a warning when you open it. Building from source gives you the clearest local trust boundary. This project does not use an automatic updater or paid Apple services.
@@ -147,7 +147,7 @@ Removing an account deletes its session from the shared Keychain item and remove
 
 ## Development notes
 
-[docs/V2_LIVE_TEST_REPORT.md](docs/V2_LIVE_TEST_REPORT.md) records the live checks completed for this release and the cases that still need controlled test accounts. [docs/V2_IMPLEMENTATION_SPEC.md](docs/V2_IMPLEMENTATION_SPEC.md) defines the release behavior. [docs/RESEARCH.md](docs/RESEARCH.md) records old experiments and current technical decisions. [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) is development history. These files do not replace this current guide.
+[docs/V0_5_LIVE_TEST_REPORT.md](docs/V0_5_LIVE_TEST_REPORT.md) records the live checks completed for this preview and the cases that still need controlled test accounts. [docs/V0_5_IMPLEMENTATION_SPEC.md](docs/V0_5_IMPLEMENTATION_SPEC.md) defines the preview behavior. [docs/RESEARCH.md](docs/RESEARCH.md) records old experiments and technical decisions. [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) is development history. These files do not replace this guide.
 
 Windows-only features from the original project remain outside this release. These include Win32 window placement, Windows registry work, a local control API, process injection, and gameplay automation.
 
