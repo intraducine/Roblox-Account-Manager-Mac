@@ -14,6 +14,7 @@ struct RAMacApp: App {
             ContentView(store: store)
                 .frame(minWidth: 900, minHeight: 600)
                 .background(WindowTabbingDisabler())
+                .dismissTextInputOnOutsideClick()
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
@@ -25,22 +26,26 @@ struct RAMacApp: App {
 
         Window("Joinable Players", id: "joinable-players") {
             JoinablePlayersView(store: store)
+                .dismissTextInputOnOutsideClick()
         }
         .defaultSize(width: 1160, height: 720)
 
         Window("Launch Sets", id: "launch-sets") {
             LaunchSetsView(store: store)
+                .dismissTextInputOnOutsideClick()
         }
         .defaultSize(width: 980, height: 680)
 
         Window("Diagnostics and Backup", id: "diagnostics") {
             DiagnosticsView(store: store)
+                .dismissTextInputOnOutsideClick()
         }
         .defaultSize(width: 760, height: 700)
 
         WindowGroup(for: AccountWebsiteRequest.self) { $request in
             if let request {
                 AccountWebsiteWindow(store: store, request: request)
+                    .dismissTextInputOnOutsideClick()
             }
         }
         .defaultSize(width: 1050, height: 760)
