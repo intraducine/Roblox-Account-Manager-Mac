@@ -128,7 +128,7 @@ public struct RobloxAPIClient: Sendable {
         var queryItems = [
             URLQueryItem(name: "sortOrder", value: "Asc"),
             URLQueryItem(name: "limit", value: "100"),
-            URLQueryItem(name: "excludeFullGames", value: "true")
+            URLQueryItem(name: "excludeFullGames", value: "false")
         ]
         if let cursor, !cursor.isEmpty {
             queryItems.append(URLQueryItem(name: "cursor", value: cursor))
@@ -260,12 +260,12 @@ public struct RobloxAPIClient: Sendable {
         request.setValue(".ROBLOSECURITY=\(cookie)", forHTTPHeaderField: "Cookie")
         request.setValue("https://www.roblox.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.roblox.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Roblox Account Manager for Mac/0.5", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox Account Manager for Mac/1.0", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 
     private func applyPublicHeaders(to request: inout URLRequest) {
-        request.setValue("Roblox Account Manager for Mac/0.9", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox Account Manager for Mac/1.0", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 

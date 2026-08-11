@@ -28,6 +28,7 @@ struct BatchLaunchBar: View {
             HStack(spacing: 10) {
                 TextField("Shared place ID", text: $placeID)
                     .frame(width: 180)
+                ExperienceChooserButton(store: store, placeID: $placeID)
                 ServerSelectionControl(
                     store: store,
                     placeID: $placeID,

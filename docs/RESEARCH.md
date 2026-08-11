@@ -32,6 +32,22 @@ The same build required an explicit warning before enabling Modified Parallel Fa
 
 ## API behavior checked
 
+### Version 1.0 presence decision
+
+The V1 design does not depend on relationship-specific presence. Roblox documents public connection data and presence features, but this project did not prove one authenticated endpoint across the full public, friend-only, hidden, public-server, and private-server test matrix.
+
+V1 therefore uses the conservative branch in the implementation specification:
+
+- It merges friends from the selected valid source accounts.
+- It requests public presence in limited batches without an account cookie.
+- It labels every automatic result **Publicly visible**.
+- It verifies a supplied Job ID against public server pages before it presents a confident batch join.
+- It calls a limited search **Not confirmed**, not private.
+- It sends friend-only and restricted cases to an isolated selected-account Roblox website.
+- It does not guess hidden activity or use an undocumented presence bypass.
+
+This boundary can change only after a controlled test records all required visibility and access cases. No usernames, sessions, private links, or launch tickets belong in that record.
+
 An unauthenticated request to `https://users.roblox.com/v1/users/authenticated` returned HTTP 401 with an authentication-token error. The app uses this endpoint to reject an expired or incorrect imported session before Keychain storage.
 
 The automated test suite uses isolated mock URL sessions. It checks the authenticated-user request, the two-step CSRF ticket exchange, header isolation, launch URL encoding, private-link parsing, metadata round-tripping, and backup creation. No real account secret is part of the tests.

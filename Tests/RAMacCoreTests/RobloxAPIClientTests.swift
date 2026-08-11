@@ -91,7 +91,7 @@ final class RobloxAPIClientTests: XCTestCase {
             XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
             let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
             XCTAssertEqual(components?.queryItems?.first(where: { $0.name == "limit" })?.value, "100")
-            XCTAssertEqual(components?.queryItems?.first(where: { $0.name == "excludeFullGames" })?.value, "true")
+            XCTAssertEqual(components?.queryItems?.first(where: { $0.name == "excludeFullGames" })?.value, "false")
             return Self.response(
                 request: request,
                 status: 200,

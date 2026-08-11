@@ -2,6 +2,7 @@ import RAMacCore
 import SwiftUI
 
 struct AccountDetailView: View {
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject var store: AccountStore
     let account: ManagedAccount
     let showsLaunchBar: Bool
@@ -40,6 +41,19 @@ struct AccountDetailView: View {
                         TextField("Alias", text: $draft.alias, prompt: Text("Name shown in the sidebar"))
                             .labelsHidden()
                             .frame(maxWidth: 360)
+                    }
+                }
+
+                Section("Account Status") {
+                    AccountHealthRow(store: store, account: account)
+                }
+
+                Section("Roblox Website") {
+                    HStack {
+                        Button("Home") { openWebsite(.home) }
+                        Button("My Profile") { openWebsite(.profile) }
+                        Button("Settings") { openWebsite(.settings) }
+                        Button("Security") { openWebsite(.security) }
                     }
                 }
 
@@ -114,12 +128,9 @@ struct AccountDetailView: View {
             AsyncImage(url: account.avatarURL) { image in
                 image.resizable().scaledToFill()
             } placeholder: {
-                ZStack {
-                    Color(nsColor: .controlBackgroundColor)
-                    Image(systemName: "person.crop.square.fill")
-                        .font(.system(size: 30))
-                        .foregroundStyle(.secondary)
-                }
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 52))
+                    .foregroundStyle(.secondary)
             }
             .frame(width: 68, height: 68)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -170,6 +181,8 @@ struct AccountDetailView: View {
                 TextField("Place ID", text: $placeID)
                     .frame(width: 170)
                     .disabled(store.isRunning(account))
+                ExperienceChooserButton(store: store, placeID: $placeID)
+                    .disabled(store.isRunning(account))
                 ServerSelectionControl(
                     store: store,
                     placeID: $placeID,
@@ -204,6 +217,13 @@ struct AccountDetailView: View {
             draft.groups = ManagedAccount.normalizedGroups(draft.groups + [group])
         } else {
             draft.groups.removeAll { $0.caseInsensitiveCompare(group) == .orderedSame }
+        }
+    }
+
+    private func openWebsite(_ destination: AccountWebsiteDestination) {
+        Task {
+            guard await store.prepareWebsiteSession(accountID: account.id) else { return }
+            openWindow(value: AccountWebsiteRequest(accountID: account.id, destination: destination))
         }
     }
 }

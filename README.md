@@ -1,109 +1,147 @@
 # Roblox Account Manager for Mac
 
-A native macOS port of [Roblox Account Manager](https://github.com/ic3w0lf22/Roblox-Account-Manager). It saves Roblox sign-ins in macOS Keychain and launches the installed Roblox client with the selected account.
+A native SwiftUI app for running several Roblox accounts on one Mac. It saves each Roblox session in macOS Keychain and launches a separate unchanged copy of the installed Roblox app for each managed account.
 
-This project is independent and is not made by or approved by Roblox Corporation.
+This project is independent. Roblox Corporation does not make or approve it. Use only accounts that you own or have permission to use.
 
-## What the app does
+## Version 1.0 features
 
-Version `0.9.0` is made for running several Roblox accounts at the same time:
+- Launch several saved accounts together.
+- Stop one managed Roblox client or use **Stop All**.
+- Find friends whose current experience is publicly visible.
+- Verify that a reported Job ID is in Roblox's public server list before a normal batch join.
+- Check open server spaces before launch. The app never removes selected accounts without telling you.
+- Open Roblox Home, Profile, Settings, or Security in an isolated window for one selected account.
+- Check account sign-in health and sign in again without losing aliases, groups, notes, favorites, or Launch Sets.
+- Save Launch Sets for common account and experience choices.
+- Reuse recent and favorite experiences from the Place ID chooser.
+- Export and import account metadata without Roblox sessions.
+- Run local checks for Roblox, unchanged copies, storage, Keychain entries, process records, and Roblox services.
 
-- Add an account through a temporary Roblox sign-in page inside the app.
-- Store each Roblox sign-in in macOS Keychain. The account list does not contain sign-in secrets.
-- Search accounts and organize them with aliases, groups, and notes. One account can be in several groups.
-- Save a game and an optional server choice for each account.
-- Let Roblox choose a public server, browse public servers by available space, or join a player whose server Roblox makes public.
-- Use private server links and manual Job IDs from the same server chooser.
-- Select accounts with checkboxes, Shift-click one profile at a time, or a complete group. Shift-click again to deselect that profile.
-- Run each account in a separate copy that exactly matches `/Applications/Roblox.app`.
-- Show which accounts are running. Stop one account or stop all managed clients.
-- Keep the advanced fallback behind a clear risk warning. The app does not enable it by itself.
-- Import a `.ROBLOSECURITY` session only through the advanced account option.
-- Keep an automatic backup of account names, groups, notes, and launch choices.
-- Use a standard native macOS interface that follows the system appearance.
+The app does not store passwords. It does not solve captchas, inject code, automate gameplay, reveal hidden presence, or bypass private-server access.
 
 ## Requirements
 
 - macOS 13 or newer.
-- Roblox installed in `/Applications`.
+- Roblox installed at `/Applications/Roblox.app`.
 - Xcode 15 or newer to build from source.
 
-## Build and run
+## Build from source
 
 ```sh
+git clone <repository-url>
+cd roblox-account-maneger-mac
 swift test
 ./scripts/build-app.sh
 open "dist/Roblox Account Manager.app"
 ```
 
-The packaging script builds a universal Intel and Apple silicon release binary, makes the app icon, and creates the `.app` bundle. It uses an installed Apple code-signing identity when one is available and otherwise falls back to an ad hoc local signature. Apple notarization is not part of this repository.
+The build script creates one universal app for Apple silicon and Intel Macs. It uses an ad hoc local signature by default. To use a specific signing identity, set `RAM_SIGNING_IDENTITY` to its certificate hash or name before running the script.
 
-## How launches work
+To create the optional ZIP file and SHA-256 checksum:
 
-Every manager launch starts a separate copy of Roblox. This is true even when you launch only one account. You can then launch another account without closing the first one.
+```sh
+./scripts/package-release.sh
+shasum -a 256 -c "dist/Roblox-Account-Manager-for-Mac-1.0.0.zip.sha256"
+```
 
-The copy is unchanged. It has the same files and Roblox signature as the installed app at `/Applications/Roblox.app`. The manager checks this before each launch. It does not edit the installed app.
+A downloaded build is not notarized. macOS can show a warning when you open it. Building from source gives you the clearest local trust boundary. This project does not use an automatic updater or paid Apple services.
 
-If you only want to use Roblox without the account manager, open `/Applications/Roblox.app` in Finder. That action is separate from this app.
+## Add accounts
 
-### Choose a game and server
+Use **Add Account** and sign in on Roblox's temporary page. The page uses a non-persistent browser store. After sign-in, the app checks the Roblox user ID and saves only the `.ROBLOSECURITY` session in macOS Keychain.
 
-- **Place ID:** This number identifies a Roblox experience or a place inside an experience. It is the number after `/games/` in a Roblox game link.
-- **Roblox chooses:** This is the default. Roblox selects an available public server.
-- **Browse public servers:** Choose a running server by its player count and open spaces. For a batch, the app puts servers with enough room first.
-- **Join a player:** Enter a Roblox username. The app uses the public presence that Roblox provides. It cannot find hidden, private, or offline players.
-- **Private server link:** Paste a supported link for a private server that every selected account can access.
-- **Manual Job ID:** Open Advanced when you already have the unique code for one running public server.
+Treat `.ROBLOSECURITY` like a password. Never send it to another person.
 
-Enter a Place ID before browsing public servers, using a private server link, or entering a Job ID. Join a Player fills the current Place ID from Roblox automatically.
+You can give one account an alias, notes, and several groups. These fields do not change the Roblox account.
 
-Public server lists are cached for one minute because Roblox limits how often they can refresh. The app does not send a saved account sign-in when it browses servers, looks up a username, or checks public player presence.
+## Launch accounts
 
-For each launch, the manager:
+Every managed launch uses a separate copy of `/Applications/Roblox.app`. This includes the first account. You can start another account later without closing the first one.
 
-1. Sends the selected saved session only to Roblox.
-2. Gets a short-lived launch ticket from Roblox.
-3. Checks the installed Roblox app and the separate copy.
-4. Starts that copy and gives the ticket only to that process.
+The normal copy stays unchanged. Every file must match the installed Roblox app. It keeps Roblox Corporation's original signature. The manager stops the launch if the copy or signature check fails. It never edits `/Applications/Roblox.app`.
 
-The app keeps one separate Roblox copy for each account. Each copy must match the installed app exactly and keep Roblox's original signature. The app sends the launch request to the correct Roblox process. The session and launch ticket do not appear in the process list or app logs.
+To launch:
 
-### Advanced fallback
+1. Select accounts from the account list or select a group.
+2. Enter a Place ID or choose a recent or favorite experience.
+3. Let Roblox choose a server, browse public servers, find a player, or enter a supported private server link.
+4. Select **Launch Selected Accounts**.
 
-Use this only if normal managed launches stop working. You must open the advanced explanation and accept a warning before you can enable it. The app never enables it by itself.
+A Place ID is the number after `/games/` in a Roblox experience link. A Job ID identifies one current server. Job IDs stop working when that server closes.
 
-This fallback changes settings inside each copied app and gives the copy a different digital signature. It is not an unchanged Roblox client. Roblox can detect the different signature. Using this option can put an account at risk. Return to the unchanged launch method when you finish testing it.
+The bottom **Advanced fallback** changes copied app settings and applies a different signature. Roblox can detect that change. Use it only for recovery tests. Normal V1 launches use unchanged copies.
 
-The app never writes a session cookie or launch ticket to a log.
+## Find Players
 
-## Security notes
+Open **Find Players** in the toolbar or choose **View > Joinable Players**.
 
-- Treat `.ROBLOSECURITY` as a password. Never send it to another person.
-- The browser sign-in uses a non-persistent WebKit data store. The accepted session moves to Keychain.
-- Network requests use an isolated URL session and do not share cookies between accounts.
-- Unmodified and fallback copies are kept in `~/Library/Application Support/Roblox Account Manager/Instances`.
-- The manifest for an unmodified copy stays beside `Roblox.app`, never inside it.
-- The app never edits or re-signs `/Applications/Roblox.app`.
-- Removing an account deletes its Keychain item and its local metadata.
-- Metadata is stored at `~/Library/Application Support/Roblox Account Manager/Accounts.json`.
-- Empty group names are stored at `~/Library/Application Support/Roblox Account Manager/Groups.json`.
+The window checks the friends of all valid source accounts, merges duplicate players, and shows which source accounts found each player. V1 automatic discovery uses only presence that Roblox makes public. It labels these results **Publicly visible**. It does not claim to find friend-only or hidden activity.
 
-## Parallel-launch limits
+For each public result, the app searches Roblox's public server pages for the reported Job ID:
 
-The installed Roblox app declares `LSMultipleInstancesProhibited`. This tells the normal macOS app launcher to allow only one copy. Live testing on August 10, 2026 confirmed that a second client does not stay open when it starts through that system. [Apple documents this property as a multiple-instance restriction](https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/LaunchServicesKeys.html). Apple also provides [process-targeted Apple Events](https://developer.apple.com/documentation/foundation/nsappleeventdescriptor), which let the manager send a launch request to one exact process.
+- **Public** means the Job ID was found. You can select managed accounts and join them.
+- **Not confirmed** means the first search limit ended. You can continue checking or make a warned attempt.
+- **Restricted or unavailable** means the complete public search did not find the server. Open the player's profile as a source account and use Roblox's own Join button if it appears.
+- **No server supplied** means Roblox showed an experience but did not give the app a server target.
 
-The standard managed launch starts the checked copy without the normal macOS app launcher. It does not bypass Roblox security checks, inject code, patch memory, edit the copied app, or replace its signature. Each copy must match `/Applications/Roblox.app` and pass strict signature checks. If a check fails, the manager deletes that copy and stops the launch.
+Before a verified batch join, the app refreshes capacity and checks each selected account. If only two spaces remain for four selected accounts, it offers **Launch First 2**, **Change Selection**, and **Cancel**. Roblox can still reject a launch if access, capacity, age, region, or the server changes.
 
-The modified fallback changes managed copies. [Roblox states that modified versions of its app are not allowed and that continued use can lead to account restrictions](https://en.help.roblox.com/hc/en-us/articles/24275616578708-Anti-cheat-Messages). Treat this option as detectable and risky. The manager shows this warning before it lets you enable the fallback. Roblox can also change its checks at any time and stop the fallback from working.
+Roblox controls online visibility and join access. See [Roblox Online Status and Visibility](https://en.help.roblox.com/hc/en-us/articles/39144167691284-Online-Status-and-Visibility).
 
-The normal managed copies use Roblox's original signature and permission identity. Roblox can still request microphone, local-network, notification, or login-item access. Those requests come from Roblox, and this app does not approve them. An exact bundle cannot remove Roblox's menu-bar helper or client settings without becoming modified.
+## Selected-account Roblox website
 
-Fallback mode uses a stable shared identity. Its first launch can show microphone or local-network decisions. Later launches reuse the same signed copies and identity. The fallback copies omit the optional menu-bar helper. If no Apple code-signing identity is installed, the app uses ad hoc signing and macOS can ask again after a Roblox update.
+Right-click an account or use its detail view to open Roblox Home, Profile, Settings, or Security. Each website window:
 
-Use accounts that belong to you. Some Roblox experiences can prohibit alternate accounts or farming even when Roblox itself allows both accounts to sign in. Roblox can see normal process, session, network, device, and account behavior. An unchanged bundle is not an invisibility promise or a policy exception. The app does not inject code or hide its launches. Normal managed copies keep the complete Roblox bundle unchanged. Fallback mode does not patch Roblox's machine code, but re-signing changes signature data in the copied executable. Do not treat the fallback as an unmodified client.
+- Shows the active alias and Roblox username at all times.
+- Uses a separate non-persistent WebKit data store.
+- Receives only that account's saved session.
+- Clears web data when it closes.
+- Saves a changed session only after Roblox confirms the same user ID.
+- Opens non-Roblox links in the normal browser only after confirmation.
 
-Windows-only features from the original project are not in version 0.9.0. These include Win32 window placement, FPS file patches, CefSharp browser profiles, the local developer API, Nexus account control, and process watcher automation. See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the feature decisions.
+This is the safe fallback for friend-only or restricted player joins. The user completes the join through Roblox's normal website controls.
+
+## Launch Sets and experiences
+
+A Launch Set stores account IDs, group names, a Place ID, and one server method. It does not save a discovered public Job ID because public servers can close. Private server links stay local and are excluded from normal backups.
+
+The experience chooser records recent Place IDs and launch counts. You can mark an entry as a favorite. A numeric Place ID stays the source of truth, so a name lookup is not required to launch.
+
+## Backup and diagnostics
+
+Open **Tools > Diagnostics and Backup**.
+
+Normal backups can include account IDs, usernames, aliases, groups, notes, favorites, recent experiences, and Launch Sets. They exclude sessions, launch tickets, access codes, active process IDs, raw network responses, and private server links. Import matches accounts by Roblox user ID and never replaces a Keychain session.
+
+The redacted diagnostic report contains only plain check results. It does not include cookies, tickets, private links, private access codes, or complete launch URLs.
+
+## Roblox and macOS limits
+
+Roblox declares that its normal macOS app should have only one instance. The manager starts separate exact copies directly and sends each launch request to the correct process. It does not use process injection or change the normal copied bundle.
+
+Roblox can still see normal device, process, network, session, and account behavior. An unchanged copy does not make the manager invisible and does not override the rules of an experience.
+
+Roblox can request microphone, local-network, notification, or login-item permission. These requests come from Roblox. This app cannot remove those requests while keeping the Roblox bundle unchanged.
+
+The optional modified fallback does not meet the unchanged-copy rule. Roblox states that modified clients can lead to account restrictions. See [Roblox anti-cheat messages](https://en.help.roblox.com/hc/en-us/articles/24275616578708-Anti-cheat-Messages).
+
+## Data locations
+
+- Account metadata: `~/Library/Application Support/Roblox Account Manager/Accounts.json`
+- Group names: `~/Library/Application Support/Roblox Account Manager/Groups.json`
+- Launch Sets, experiences, and active target records: the same local data folder
+- Managed copies: `~/Library/Application Support/Roblox Account Manager/Instances`
+- Sessions: macOS Keychain only
+
+Removing an account deletes its Keychain item and local account metadata.
+
+## Development notes
+
+[docs/V1_LIVE_TEST_REPORT.md](docs/V1_LIVE_TEST_REPORT.md) records the live checks completed for this release and the cases that still need controlled test accounts. [docs/RESEARCH.md](docs/RESEARCH.md) records old experiments and the V1 presence decision. [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) is development history. These files do not replace this current guide.
+
+Windows-only features from the original project remain outside V1. These include Win32 window placement, Windows registry work, a local control API, process injection, and gameplay automation.
 
 ## License
 
-This port is licensed under GNU GPL version 3 to match the original project. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+This port uses GNU GPL version 3 to match the original project. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

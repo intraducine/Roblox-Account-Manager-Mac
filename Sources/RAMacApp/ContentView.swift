@@ -3,6 +3,7 @@ import RAMacCore
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject var store: AccountStore
     @State private var showsAddAccount = false
     @State private var showsLicense = false
@@ -45,6 +46,20 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    openWindow(id: "joinable-players")
+                } label: {
+                    Label("Find Players", systemImage: "person.2.wave.2")
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+
+                Menu {
+                    Button("Launch Sets") { openWindow(id: "launch-sets") }
+                    Button("Diagnostics and Backup") { openWindow(id: "diagnostics") }
+                } label: {
+                    Label("Tools", systemImage: "wrench.and.screwdriver")
+                }
+
                 Button {
                     showsAddAccount = true
                 } label: {
@@ -155,6 +170,12 @@ struct ContentView: View {
                         }
                     )
                     .contextMenu {
+                        Menu("Open Roblox Website") {
+                            Button("Home") { openWebsite(account, .home) }
+                            Button("My Profile") { openWebsite(account, .profile) }
+                            Button("Settings") { openWebsite(account, .settings) }
+                            Button("Security") { openWebsite(account, .security) }
+                        }
                         Menu("Groups") {
                             ForEach(store.groupNames, id: \.self) { group in
                                 Button {
@@ -285,6 +306,13 @@ struct ContentView: View {
         showsNewGroup = true
     }
 
+    private func openWebsite(_ account: ManagedAccount, _ destination: AccountWebsiteDestination) {
+        Task {
+            guard await store.prepareWebsiteSession(accountID: account.id) else { return }
+            openWindow(value: AccountWebsiteRequest(accountID: account.id, destination: destination))
+        }
+    }
+
     private var emptyState: some View {
         VStack(spacing: 14) {
             Image(systemName: "person.2")
@@ -332,12 +360,9 @@ private struct AccountRow: View {
             AsyncImage(url: account.avatarURL) { image in
                 image.resizable().scaledToFill()
             } placeholder: {
-                ZStack {
-                    Color(nsColor: .controlBackgroundColor)
-                    Image(systemName: "person.crop.square.fill")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                }
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.secondary)
             }
             .frame(width: 34, height: 34)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))

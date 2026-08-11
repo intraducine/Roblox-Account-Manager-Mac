@@ -139,6 +139,94 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(result.presence.gameId, "11111111-2222-3333-4444-555555555555")
     }
 
+    func testWebCookieRotationSavesOnlyTheSameRobloxUser() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-web-session-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let account = ManagedAccount(userID: 44, username: "same", displayName: "Same")
+        try repository.save([account])
+        let vault = MemoryVault()
+        try vault.save("old", for: account.id)
+        let api = WebSessionMockAPI(usersByCookie: [
+            "old": RobloxUser(id: 44, name: "same", displayName: "Same"),
+            "rotated": RobloxUser(id: 44, name: "same", displayName: "Same")
+        ])
+        let store = AccountStore(repository: repository, vault: vault, api: api, launcher: BatchMockLauncher(failingAccountID: nil))
+
+        await store.synchronizeWebSession(accountID: account.id, cookie: "rotated")
+
+        XCTAssertEqual(try vault.read(for: account.id), "rotated")
+        XCTAssertTrue(store.accountHealth[account.id]?.isReady == true)
+    }
+
+    func testWebCookieFromWrongAccountIsRejected() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-wrong-web-session-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let account = ManagedAccount(userID: 44, username: "expected", displayName: "Expected")
+        try repository.save([account])
+        let vault = MemoryVault()
+        try vault.save("old", for: account.id)
+        let api = WebSessionMockAPI(usersByCookie: ["wrong": RobloxUser(id: 99, name: "wrong", displayName: "Wrong")])
+        let store = AccountStore(repository: repository, vault: vault, api: api, launcher: BatchMockLauncher(failingAccountID: nil))
+
+        await store.synchronizeWebSession(accountID: account.id, cookie: "wrong")
+
+        XCTAssertEqual(try vault.read(for: account.id), "old")
+        XCTAssertEqual(store.accountHealth[account.id], .wrongAccount(actualUserID: 99))
+    }
+
+    func testWebLogoutChecksWhetherSavedSessionStillWorks() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-web-logout-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let account = ManagedAccount(userID: 44, username: "same", displayName: "Same")
+        try repository.save([account])
+        let vault = MemoryVault()
+        try vault.save("old", for: account.id)
+        let api = WebSessionMockAPI(usersByCookie: ["old": RobloxUser(id: 44, name: "same", displayName: "Same")])
+        let store = AccountStore(repository: repository, vault: vault, api: api, launcher: BatchMockLauncher(failingAccountID: nil))
+
+        await store.synchronizeWebSession(accountID: account.id, cookie: nil)
+
+        XCTAssertTrue(store.accountHealth[account.id]?.isReady == true)
+        XCTAssertEqual(try vault.read(for: account.id), "old")
+    }
+
+    func testPrivateServerAccessDenialsAppearBeforeAnyLaunch() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-private-preflight-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let accounts = [
+            ManagedAccount(userID: 1, username: "allowed", displayName: "Allowed", group: "Wave"),
+            ManagedAccount(userID: 2, username: "denied", displayName: "Denied", group: "Wave")
+        ]
+        try repository.save(accounts)
+        let vault = MemoryVault()
+        try vault.save("allow", for: accounts[0].id)
+        try vault.save("deny", for: accounts[1].id)
+        let launcher = BatchMockLauncher(failingAccountID: nil)
+        let api = PrivateAccessMockAPI()
+        let store = AccountStore(repository: repository, vault: vault, api: api, launcher: launcher)
+        store.toggleBatchGroup("Wave")
+
+        await store.launchBatch(
+            placeText: "1818",
+            server: .privateLink("https://www.roblox.com/games/1818?privateServerLinkCode=private-code")
+        )
+
+        let attemptedAccountIDs = await launcher.attemptedAccountIDs()
+        XCTAssertTrue(attemptedAccountIDs.isEmpty)
+        XCTAssertEqual(store.batchSelectedIDs, [accounts[0].id])
+        guard case .failed = store.batchStates[accounts[1].id] else {
+            return XCTFail("Denied account must be shown before launch")
+        }
+    }
+
     private func makeFixture(failingIndex: Int? = nil) throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-batch-tests-\(UUID().uuidString)", isDirectory: true)
@@ -175,6 +263,34 @@ final class AccountStoreBatchTests: XCTestCase {
             launcher: launcher,
             store: store
         )
+    }
+}
+
+private actor WebSessionMockAPI: RobloxAPIProviding {
+    let usersByCookie: [String: RobloxUser]
+    init(usersByCookie: [String: RobloxUser]) { self.usersByCookie = usersByCookie }
+    func authenticatedUser(cookie rawCookie: String) async throws -> RobloxUser {
+        guard let user = usersByCookie[RobloxAPIClient.normalizedCookie(from: rawCookie)] else {
+            throw RobloxAPIError.invalidSession
+        }
+        return user
+    }
+    func avatarURL(userID: Int64) async -> URL? { nil }
+    func authenticationTicket(cookie rawCookie: String) async throws -> String { "ticket" }
+    func privateServerAccessCode(placeID: Int64, linkCode: String, cookie rawCookie: String) async throws -> String { "access" }
+}
+
+private actor PrivateAccessMockAPI: RobloxAPIProviding {
+    func authenticatedUser(cookie rawCookie: String) async throws -> RobloxUser {
+        if rawCookie == "allow" { return RobloxUser(id: 1, name: "allowed", displayName: "Allowed") }
+        if rawCookie == "deny" { return RobloxUser(id: 2, name: "denied", displayName: "Denied") }
+        throw RobloxAPIError.invalidSession
+    }
+    func avatarURL(userID: Int64) async -> URL? { nil }
+    func authenticationTicket(cookie rawCookie: String) async throws -> String { "ticket" }
+    func privateServerAccessCode(placeID: Int64, linkCode: String, cookie rawCookie: String) async throws -> String {
+        if rawCookie == "deny" { throw RobloxAPIError.privateServerUnavailable }
+        return "access"
     }
 }
 
@@ -216,7 +332,10 @@ private actor BatchMockAPI: RobloxAPIProviding {
     private var publicServerRequests = 0
 
     func authenticatedUser(cookie rawCookie: String) async throws -> RobloxUser {
-        throw RobloxAPIError.invalidSession
+        guard let userID = Int64(rawCookie.replacingOccurrences(of: "cookie-", with: "")) else {
+            throw RobloxAPIError.invalidSession
+        }
+        return RobloxUser(id: userID, name: "account_\(userID)", displayName: "Account \(userID)")
     }
 
     func avatarURL(userID: Int64) async -> URL? { nil }

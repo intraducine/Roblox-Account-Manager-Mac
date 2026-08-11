@@ -32,6 +32,7 @@ private struct ServerChooserView: View {
     @Binding var placeID: String
     @Binding var selection: RobloxServerSelection
     let requiredSpaces: Int
+    @State private var checkingActiveAccountID: UUID?
 
     private var numericPlaceID: Int64? {
         guard let value = Int64(placeID.trimmingCharacters(in: .whitespacesAndNewlines)), value > 0 else {
@@ -99,6 +100,25 @@ private struct ServerChooserView: View {
                     }
                 }
 
+                if !runningPublicTargets.isEmpty {
+                    Section("Servers used by running accounts") {
+                        ForEach(runningPublicTargets) { record in
+                            Button {
+                                Task { await chooseRunningTarget(record) }
+                            } label: {
+                                ChoiceRow(
+                                    title: runningTargetTitle(record),
+                                    detail: checkingActiveAccountID == record.accountID
+                                        ? "Checking that the server is still public."
+                                        : "Reuse this verified server after a fresh capacity check."
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(checkingActiveAccountID != nil)
+                        }
+                    }
+                }
+
                 Section("Advanced") {
                     NavigationLink {
                         ManualJobEntryView(placeIDIsValid: numericPlaceID != nil) { choose($0) }
@@ -127,6 +147,36 @@ private struct ServerChooserView: View {
     private func choose(_ newSelection: RobloxServerSelection) {
         selection = newSelection
         dismiss()
+    }
+
+    private var runningPublicTargets: [ActiveLaunchTargetRecord] {
+        guard let numericPlaceID else { return [] }
+        return store.activeLaunchTargets.values.filter {
+            $0.placeID == numericPlaceID
+                && $0.targetKind == .verifiedPublicJob
+                && $0.jobID != nil
+        }.sorted { $0.launchedAt > $1.launchedAt }
+    }
+
+    private func runningTargetTitle(_ record: ActiveLaunchTargetRecord) -> String {
+        let accountName = store.accounts.first(where: { $0.id == record.accountID })?.title ?? "Running account"
+        return "Use \(accountName)'s server"
+    }
+
+    @MainActor
+    private func chooseRunningTarget(_ record: ActiveLaunchTargetRecord) async {
+        guard let jobID = record.jobID else { return }
+        checkingActiveAccountID = record.accountID
+        defer { checkingActiveAccountID = nil }
+        switch await store.verifyPublicServer(placeID: record.placeID, jobID: jobID) {
+        case .verifiedPublic(let server):
+            choose(.publicInstance(jobID: server.id, playing: server.playing, maxPlayers: server.maxPlayers))
+        default:
+            store.notice = .init(
+                title: "The running server is no longer available",
+                message: "Refresh public servers or let Roblox choose another server."
+            )
+        }
     }
 }
 
@@ -334,6 +384,7 @@ private struct PlayerServerSearchView: View {
     let onChoose: (RobloxServerSelection, Int64) -> Void
     @State private var username = ""
     @State private var result: JoinablePlayerServer?
+    @State private var verifiedServer: RobloxPublicServer?
     @State private var message: String?
     @State private var isSearching = false
 
@@ -355,14 +406,18 @@ private struct PlayerServerSearchView: View {
 
             if let result,
                let placeID = result.presence.placeId,
-               let jobID = result.presence.gameId,
-               !jobID.isEmpty {
-                Section("Joinable server") {
+               let server = verifiedServer {
+                Section("Verified public server") {
                     LabeledContent("Player", value: "@\(result.user.name)")
                     LabeledContent("Location", value: result.presence.lastLocation ?? "Roblox game")
+                    LabeledContent("Open spaces", value: String(server.openSpaces))
                     Button("Join @\(result.user.name)'s Server") {
                         onChoose(
-                            .player(username: result.user.name, userID: result.user.id, jobID: jobID),
+                            .publicInstance(
+                                jobID: server.id,
+                                playing: server.playing,
+                                maxPlayers: server.maxPlayers
+                            ),
                             placeID
                         )
                     }
@@ -387,6 +442,7 @@ private struct PlayerServerSearchView: View {
         guard !cleanUsername.isEmpty, !isSearching else { return }
         isSearching = true
         result = nil
+        verifiedServer = nil
         message = nil
         defer { isSearching = false }
         do {
@@ -394,11 +450,24 @@ private struct PlayerServerSearchView: View {
             if found.presence.placeId != nil,
                let gameID = found.presence.gameId,
                !gameID.isEmpty {
-                result = found
+                guard let placeID = found.presence.placeId else { return }
+                switch await store.verifyPublicServer(placeID: placeID, jobID: gameID) {
+                case .verifiedPublic(let server):
+                    result = found
+                    verifiedServer = server
+                case .unconfirmed:
+                    message = "Roblox supplied a server, but the public-server search limit ended before it was found. Use Find Players to continue checking or open the player's profile."
+                case .restrictedOrUnavailable:
+                    message = "Roblox supplied a server, but it was not in the complete public-server list. Use Find Players to open the player's profile with a source account."
+                case .verificationFailed(let detail):
+                    message = detail
+                case .noServerSupplied:
+                    message = "Roblox did not supply a server that this app can target."
+                }
             } else if found.presence.userPresenceType == 0 {
-                message = "@\(found.user.name) is not in Roblox."
+                message = "Roblox did not provide a current experience for @\(found.user.name). The player may be offline or may limit who can see their activity."
             } else {
-                message = "Roblox did not provide a joinable server. The player may have joins disabled or may be in a private server."
+                message = "Roblox shows that this player is in an experience, but it did not provide a server that this app can target."
             }
         } catch {
             message = error.localizedDescription
