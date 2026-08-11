@@ -1,6 +1,23 @@
 import RAMacCore
 import SwiftUI
 
+func placeIDBindingResettingServer(
+    placeID: Binding<String>,
+    serverSelection: Binding<RobloxServerSelection>
+) -> Binding<String> {
+    Binding(
+        get: { placeID.wrappedValue },
+        set: { newValue in
+            let current = placeID.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let next = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if current != next {
+                serverSelection.wrappedValue = .automatic
+            }
+            placeID.wrappedValue = newValue
+        }
+    )
+}
+
 struct LaunchClientNotice: View {
     @ObservedObject var store: AccountStore
     let onRequestModifiedFallback: () -> Void

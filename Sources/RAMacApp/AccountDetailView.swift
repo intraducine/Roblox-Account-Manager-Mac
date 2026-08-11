@@ -121,6 +121,9 @@ struct AccountDetailView: View {
         .onChange(of: account.groups) { groups in
             draft.groups = groups
         }
+        .onChange(of: account.savedServer) { savedServer in
+            serverSelection = .savedValue(savedServer)
+        }
     }
 
     private var identityHeader: some View {
@@ -178,10 +181,10 @@ struct AccountDetailView: View {
             )
 
             HStack(spacing: 10) {
-                TextField("Place ID", text: $placeID)
+                TextField("Place ID", text: gamePlaceID)
                     .frame(width: 170)
                     .disabled(store.isRunning(account))
-                ExperienceChooserButton(store: store, placeID: $placeID)
+                ExperienceChooserButton(store: store, placeID: gamePlaceID)
                     .disabled(store.isRunning(account))
                 ServerSelectionControl(
                     store: store,
@@ -210,6 +213,13 @@ struct AccountDetailView: View {
         }
         .padding(14)
         .background(.bar)
+    }
+
+    private var gamePlaceID: Binding<String> {
+        placeIDBindingResettingServer(
+            placeID: $placeID,
+            serverSelection: $serverSelection
+        )
     }
 
     private func setDraftMembership(_ group: String, isMember: Bool) {

@@ -2,224 +2,244 @@ import XCTest
 @testable import RAMacCore
 
 final class PlayerDiscoveryServiceTests: XCTestCase {
-    func testFriendUnionDeduplicatesAndKeepsEverySourceAccount() async throws {
-        let first = account(id: UUID(), userID: 1)
-        let second = account(id: UUID(), userID: 2)
-        let shared = RobloxSocialUser(id: 50, name: "shared", displayName: "Shared")
-        let social = MockSocial(
-            friends: [1: [shared], 2: [shared]],
-            presences: [presence(userID: 50, placeID: 100, jobID: jobID(1))]
-        )
-        let servers = MockServers(pages: ["first": .init(data: [server(id: jobID(1))])])
-        let result = await PlayerDiscoveryService(social: social, serverProvider: servers)
-            .discover(sourceAccounts: [first, second])
+    func testAuthenticatedFriendUnionKeepsEverySourceAccount() async throws {
+        let first = account(userID: 1)
+        let second = account(userID: 2)
+        let target = visibleFriend(userID: 50, placeID: 100, jobID: jobID(1))
+        let social = MockSocial(online: [1: [target], 2: [target]])
+
+        let result = await PlayerDiscoveryService(social: social).discover(sources: [
+            source(first), source(second)
+        ])
 
         XCTAssertEqual(result.players.count, 1)
         XCTAssertEqual(result.players[0].candidate.sourceAccountIDs, [first.id, second.id])
-        XCTAssertTrue(result.players[0].isPubliclyVisible)
-        XCTAssertTrue(result.players[0].verification.isVerifiedPublic)
+        XCTAssertEqual(result.players[0].verification, .friendTarget)
+        XCTAssertFalse(result.players[0].isPubliclyVisible)
+        XCTAssertFalse(result.usedPublicPresenceOnly)
     }
 
-    func testPresenceRequestsUseConfiguredBatches() async {
-        let friends = (1...5).map { RobloxSocialUser(id: Int64($0 + 100), name: "u\($0)", displayName: "U\($0)") }
-        let values = friends.map { presence(userID: $0.id, placeID: nil, jobID: nil, type: 0) }
-        let social = MockSocial(friends: [1: friends], presences: values)
-        let service = PlayerDiscoveryService(
-            social: social,
-            serverProvider: MockServers(pages: [:]),
-            configuration: .init(presenceBatchSize: 2, maximumConcurrentRequests: 2)
-        )
-        _ = await service.discover(sourceAccounts: [account(id: UUID(), userID: 1)])
-        let batches = await social.requestedPresenceBatches()
-        XCTAssertEqual(batches.count, 3)
-        XCTAssertEqual(batches.map(\.count).sorted(), [1, 2, 2])
-    }
-
-    func testServerFoundOnLaterPage() async {
-        let wanted = jobID(9)
-        let social = MockSocial(
-            friends: [1: [.init(id: 3, name: "target", displayName: "Target")]],
-            presences: [presence(userID: 3, placeID: 200, jobID: wanted)]
-        )
-        let servers = MockServers(pages: [
-            "first": .init(nextPageCursor: "second", data: [server(id: jobID(1))]),
-            "second": .init(data: [server(id: wanted, playing: 4, maxPlayers: 10)])
+    func testFriendDiscoveryDoesNotCallPublicFriendsOrPresence() async {
+        let social = MockSocial(online: [
+            1: [visibleFriend(userID: 50, placeID: 100, jobID: jobID(1))]
         ])
-        let result = await PlayerDiscoveryService(social: social, serverProvider: servers)
-            .discover(sourceAccounts: [account(id: UUID(), userID: 1)])
-        guard case .verifiedPublic(let found) = result.players.first?.verification else {
-            return XCTFail("Expected a verified server")
-        }
-        XCTAssertEqual(found.id, wanted)
-        let serverCalls = await servers.callCount()
-        XCTAssertEqual(serverCalls, 2)
+
+        _ = await PlayerDiscoveryService(social: social).discover(sources: [source(account(userID: 1))])
+
+        let counts = await social.requestCounts()
+        XCTAssertEqual(counts.online, 1)
+        XCTAssertEqual(counts.publicFriends, 0)
+        XCTAssertEqual(counts.presence, 0)
     }
 
-    func testSearchBudgetDoesNotCallServerPrivate() async {
-        let wanted = jobID(8)
+    func testSourceRequestsRunOneAtATime() async {
         let social = MockSocial(
-            friends: [1: [.init(id: 3, name: "target", displayName: "Target")]],
-            presences: [presence(userID: 3, placeID: 200, jobID: wanted)]
+            online: [
+                1: [visibleFriend(userID: 51, placeID: 100, jobID: jobID(1))],
+                2: [visibleFriend(userID: 52, placeID: 100, jobID: jobID(2))],
+                3: [visibleFriend(userID: 53, placeID: 100, jobID: jobID(3))]
+            ],
+            requestDelayNanoseconds: 20_000_000
         )
-        let servers = EndlessServers()
-        let result = await PlayerDiscoveryService(
-            social: social,
-            serverProvider: servers,
-            configuration: .init(maximumServerPages: 3)
-        ).discover(sourceAccounts: [account(id: UUID(), userID: 1)])
-        guard case .unconfirmed(let pages) = result.players.first?.verification else {
-            return XCTFail("Expected an unconfirmed server")
-        }
-        XCTAssertEqual(pages, 3)
-        let serverCalls = await servers.callCount()
-        XCTAssertEqual(serverCalls, 3)
+
+        _ = await PlayerDiscoveryService(social: social).discover(sources: [
+            source(account(userID: 1)), source(account(userID: 2)), source(account(userID: 3))
+        ])
+
+        let maximumConcurrentRequests = await social.maximumConcurrentOnlineRequests()
+        XCTAssertEqual(maximumConcurrentRequests, 1)
+    }
+
+    func testOfflineFriendsAreNotShown() async {
+        let social = MockSocial(online: [
+            1: [visibleFriend(userID: 50, placeID: nil, jobID: nil, type: 1)]
+        ])
+
+        let result = await PlayerDiscoveryService(social: social)
+            .discover(sources: [source(account(userID: 1))])
+
+        XCTAssertTrue(result.players.isEmpty)
+    }
+
+    func testMissingJobIDDoesNotInventATarget() async {
+        let social = MockSocial(online: [
+            1: [visibleFriend(userID: 50, placeID: 100, jobID: nil)]
+        ])
+
+        let result = await PlayerDiscoveryService(social: social)
+            .discover(sources: [source(account(userID: 1))])
+
+        XCTAssertEqual(result.players.first?.verification, .noServerSupplied)
     }
 
     func testPartialSourceFailureRetainsOtherAccountResults() async {
         let social = MockSocial(
-            friends: [1: [.init(id: 10, name: "ok", displayName: "OK")]],
-            presences: [presence(userID: 10, placeID: 100, jobID: jobID(4))],
-            failingFriendUserIDs: [2]
+            online: [1: [visibleFriend(userID: 50, placeID: 100, jobID: jobID(1))]],
+            failingOnlineUserIDs: [2]
         )
-        let servers = MockServers(pages: ["first": .init(data: [server(id: jobID(4))])])
-        let result = await PlayerDiscoveryService(social: social, serverProvider: servers)
-            .discover(sourceAccounts: [account(id: UUID(), userID: 1), account(id: UUID(), userID: 2)])
+        let result = await PlayerDiscoveryService(social: social).discover(sources: [
+            source(account(userID: 1)), source(account(userID: 2))
+        ])
+
         XCTAssertEqual(result.players.count, 1)
         XCTAssertEqual(result.failures.count, 1)
     }
 
-    func testConflictingPresenceKeepsOnePlayerAndRecordsConflict() async {
-        let user = RobloxSocialUser(id: 10, name: "target", displayName: "Target")
-        let social = MockSocial(
-            friends: [1: [user]],
-            presences: [
-                presence(userID: 10, placeID: 100, jobID: jobID(1)),
-                presence(userID: 10, placeID: 101, jobID: nil)
-            ]
-        )
-        let servers = MockServers(pages: ["first": .init(data: [server(id: jobID(1))])])
-        let result = await PlayerDiscoveryService(social: social, serverProvider: servers)
-            .discover(sourceAccounts: [account(id: UUID(), userID: 1)])
-        XCTAssertEqual(result.players.count, 1)
+    func testConflictingFriendResponsesKeepTheMoreCompleteTarget() async {
+        let partial = visibleFriend(userID: 50, placeID: 100, jobID: nil)
+        let complete = visibleFriend(userID: 50, placeID: 101, jobID: jobID(2))
+        let social = MockSocial(online: [1: [partial], 2: [complete]])
+
+        let result = await PlayerDiscoveryService(social: social).discover(sources: [
+            source(account(userID: 1)), source(account(userID: 2))
+        ])
+
         XCTAssertTrue(result.players[0].conflictingPresenceWasObserved)
-        XCTAssertEqual(result.players[0].presence.jobID, jobID(1))
+        XCTAssertEqual(result.players[0].presence.placeID, 101)
+        XCTAssertEqual(result.players[0].presence.jobID, jobID(2))
     }
 
-    func testPresenceAndServerPagesAreCachedForOneMinute() async {
-        let target = RobloxSocialUser(id: 10, name: "target", displayName: "Target")
-        let social = MockSocial(
-            friends: [1: [target]],
-            presences: [presence(userID: 10, placeID: 100, jobID: jobID(2))]
+    func testOnlineFriendResultsAreCachedForOneMinute() async {
+        let social = MockSocial(online: [
+            1: [visibleFriend(userID: 50, placeID: 100, jobID: jobID(1))]
+        ])
+        let service = PlayerDiscoveryService(social: social)
+        let savedSource = source(account(userID: 1))
+
+        _ = await service.discover(sources: [savedSource])
+        _ = await service.discover(sources: [savedSource])
+
+        let counts = await social.requestCounts()
+        XCTAssertEqual(counts.online, 1)
+    }
+
+    func testFriendTargetContinueAndRefreshNeverSearchPublicServers() async {
+        let social = MockSocial(online: [:])
+        let service = PlayerDiscoveryService(social: social)
+        let player = DiscoveredPlayer(
+            candidate: PlayerCandidate(userID: 50, username: "friend", displayName: "Friend", sourceAccountIDs: []),
+            presence: PlayerPresenceSnapshot(
+                userID: 50,
+                presenceType: .inExperience,
+                placeID: 100,
+                jobID: jobID(1)
+            ),
+            verification: .friendTarget,
+            isPubliclyVisible: false
         )
-        let servers = MockServers(pages: ["first": .init(data: [server(id: jobID(2))])])
-        let service = PlayerDiscoveryService(social: social, serverProvider: servers)
-        let source = account(id: UUID(), userID: 1)
-        _ = await service.discover(sourceAccounts: [source])
-        _ = await service.discover(sourceAccounts: [source])
-        let presenceCalls = await social.presenceCallCount()
-        let serverCalls = await servers.callCount()
-        XCTAssertEqual(presenceCalls, 1)
-        XCTAssertEqual(serverCalls, 1)
+
+        let continued = await service.continueVerification(for: player)
+        let refreshed = await service.refreshVerification(for: player)
+        XCTAssertEqual(continued, .friendTarget)
+        XCTAssertEqual(refreshed, .friendTarget)
+        let counts = await social.requestCounts()
+        XCTAssertEqual(counts.online, 0)
+        XCTAssertEqual(counts.publicFriends, 0)
+        XCTAssertEqual(counts.presence, 0)
     }
 
-    func testOfflineAndMissingPresenceAreNotGuessedAsHidden() async {
-        let offline = RobloxSocialUser(id: 10, name: "offline", displayName: "Offline")
-        let missing = RobloxSocialUser(id: 11, name: "missing", displayName: "Missing")
-        let social = MockSocial(
-            friends: [1: [offline, missing]],
-            presences: [presence(userID: offline.id, placeID: nil, jobID: nil, type: 0)]
-        )
+    func testManualPublicVerificationStillHasABoundedPageBudget() async {
+        let servers = EndlessServers()
+        let result = await PublicServerVerificationService(
+            provider: servers,
+            configuration: .init(maximumServerPages: 3)
+        ).verify(placeID: 100, jobID: jobID(9))
 
-        let result = await PlayerDiscoveryService(social: social, serverProvider: MockServers(pages: [:]))
-            .discover(sourceAccounts: [account(id: UUID(), userID: 1)])
-
-        XCTAssertTrue(result.players.isEmpty)
-        XCTAssertTrue(result.usedPublicPresenceOnly)
+        XCTAssertEqual(result, .unconfirmed(pagesSearched: 3))
+        let calls = await servers.callCount()
+        XCTAssertEqual(calls, 3)
     }
 
-    func testMissingFriendNamesUseThePublicUserLookup() async {
-        let social = MockSocial(
-            friends: [1: [.init(id: 10, name: "", displayName: "")]],
-            presences: [presence(userID: 10, placeID: 100, jobID: jobID(1))],
-            profiles: [.init(id: 10, name: "resolved", displayName: "Resolved")]
-        )
-        let servers = MockServers(pages: ["first": .init(data: [server(id: jobID(1))])])
-
-        let result = await PlayerDiscoveryService(social: social, serverProvider: servers)
-            .discover(sourceAccounts: [account(id: UUID(), userID: 1)])
-
-        XCTAssertEqual(result.players.first?.candidate.username, "resolved")
-        XCTAssertEqual(result.players.first?.candidate.displayName, "Resolved")
+    private func account(userID: Int64) -> ManagedAccount {
+        ManagedAccount(userID: userID, username: "source\(userID)", displayName: "Source \(userID)")
     }
 
-    private func account(id: UUID, userID: Int64) -> ManagedAccount {
-        ManagedAccount(id: id, userID: userID, username: "source", displayName: "Source")
+    private func source(_ account: ManagedAccount) -> PlayerDiscoverySource {
+        PlayerDiscoverySource(account: account, session: "cookie-\(account.userID)")
     }
-    private func jobID(_ value: Int) -> String { String(format: "00000000-0000-0000-0000-%012d", value) }
-    private func server(id: String, playing: Int = 1, maxPlayers: Int = 10) -> RobloxPublicServer {
-        .init(id: id, maxPlayers: maxPlayers, playing: playing)
+
+    private func jobID(_ value: Int) -> String {
+        String(format: "00000000-0000-0000-0000-%012d", value)
     }
-    private func presence(
+
+    private func visibleFriend(
         userID: Int64,
         placeID: Int64?,
         jobID: String?,
         type: Int = 2
-    ) -> RobloxSocialPresence {
-        .init(userPresenceType: type, lastLocation: "Test", placeId: placeID, gameId: jobID, userId: userID)
+    ) -> RobloxVisibleFriend {
+        RobloxVisibleFriend(
+            id: userID,
+            name: "friend\(userID)",
+            displayName: "Friend \(userID)",
+            userPresenceType: type,
+            placeId: placeID,
+            rootPlaceId: placeID,
+            gameId: jobID,
+            universeId: 200,
+            lastLocation: "Test Experience"
+        )
     }
 }
 
 private actor MockSocial: RobloxSocialProviding {
-    let friendsByUserID: [Int64: [RobloxSocialUser]]
-    let presenceValues: [RobloxSocialPresence]
-    let profileValues: [RobloxSocialUser]
-    let failingFriendUserIDs: Set<Int64>
-    var batches: [[Int64]] = []
+    let onlineByUserID: [Int64: [RobloxVisibleFriend]]
+    let failingOnlineUserIDs: Set<Int64>
+    let requestDelayNanoseconds: UInt64
+    var onlineCalls = 0
+    var publicFriendCalls = 0
+    var presenceCalls = 0
+    var activeOnlineRequests = 0
+    var maximumActiveOnlineRequests = 0
 
     init(
-        friends: [Int64: [RobloxSocialUser]],
-        presences: [RobloxSocialPresence],
-        profiles: [RobloxSocialUser] = [],
-        failingFriendUserIDs: Set<Int64> = []
+        online: [Int64: [RobloxVisibleFriend]],
+        failingOnlineUserIDs: Set<Int64> = [],
+        requestDelayNanoseconds: UInt64 = 0
     ) {
-        friendsByUserID = friends
-        presenceValues = presences
-        profileValues = profiles
-        self.failingFriendUserIDs = failingFriendUserIDs
+        onlineByUserID = online
+        self.failingOnlineUserIDs = failingOnlineUserIDs
+        self.requestDelayNanoseconds = requestDelayNanoseconds
     }
 
     func friends(of userID: Int64) async throws -> [RobloxSocialUser] {
-        if failingFriendUserIDs.contains(userID) { throw RobloxSocialAPIError.networkUnavailable }
-        return friendsByUserID[userID] ?? []
+        publicFriendCalls += 1
+        return []
     }
-    func users(for userIDs: [Int64]) async throws -> [RobloxSocialUser] {
-        profileValues.filter { userIDs.contains($0.id) }
-    }
-    func onlineFriends(of userID: Int64, session: String) async throws -> [RobloxVisibleFriend] { [] }
-    func presences(for userIDs: [Int64], session: String?) async throws -> [RobloxSocialPresence] {
-        batches.append(userIDs)
-        return presenceValues.filter { userIDs.contains($0.userId) }
-    }
-    func requestedPresenceBatches() -> [[Int64]] { batches }
-    func presenceCallCount() -> Int { batches.count }
-}
 
-private actor MockServers: RobloxPublicServerProviding {
-    let pages: [String: RobloxPublicServerPage]
-    var calls = 0
-    init(pages: [String: RobloxPublicServerPage]) { self.pages = pages }
-    func publicServers(placeID: Int64, cursor: String?) async throws -> RobloxPublicServerPage {
-        calls += 1
-        return pages[cursor ?? "first"] ?? .init(data: [])
+    func users(for userIDs: [Int64]) async throws -> [RobloxSocialUser] { [] }
+
+    func onlineFriends(of userID: Int64, session: String) async throws -> [RobloxVisibleFriend] {
+        onlineCalls += 1
+        activeOnlineRequests += 1
+        maximumActiveOnlineRequests = max(maximumActiveOnlineRequests, activeOnlineRequests)
+        defer { activeOnlineRequests -= 1 }
+        if requestDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: requestDelayNanoseconds)
+        }
+        if failingOnlineUserIDs.contains(userID) { throw RobloxSocialAPIError.signedOut }
+        return onlineByUserID[userID] ?? []
     }
-    func callCount() -> Int { calls }
+
+    func presences(for userIDs: [Int64], session: String?) async throws -> [RobloxSocialPresence] {
+        presenceCalls += 1
+        return []
+    }
+
+    func requestCounts() -> (online: Int, publicFriends: Int, presence: Int) {
+        (onlineCalls, publicFriendCalls, presenceCalls)
+    }
+
+    func maximumConcurrentOnlineRequests() -> Int { maximumActiveOnlineRequests }
 }
 
 private actor EndlessServers: RobloxPublicServerProviding {
     var calls = 0
+
     func publicServers(placeID: Int64, cursor: String?) async throws -> RobloxPublicServerPage {
         calls += 1
-        return .init(nextPageCursor: "page-\(calls)", data: [])
+        return RobloxPublicServerPage(nextPageCursor: "page-\(calls)", data: [])
     }
+
     func callCount() -> Int { calls }
 }

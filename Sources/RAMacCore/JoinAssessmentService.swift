@@ -36,11 +36,18 @@ public struct JoinAssessmentService: JoinAssessing, Sendable {
                     explanation: "Check this account before launching it."
                 )
             case .ready:
-                guard target.verification.isVerifiedPublic else {
+                guard target.verification.allowsDirectJoinAttempt else {
                     return AccountJoinAssessment(
                         accountID: account.id,
                         state: .statusUnknown,
-                        explanation: "Roblox has not confirmed this as a public server."
+                        explanation: "Roblox did not provide a server that this app can target."
+                    )
+                }
+                if case .friendTarget = target.verification {
+                    return AccountJoinAssessment(
+                        accountID: account.id,
+                        state: .expectedToJoin,
+                        explanation: "The manager can send this account to the reported server. Roblox will decide access and space."
                     )
                 }
                 if let spaces, expectedCount >= spaces {

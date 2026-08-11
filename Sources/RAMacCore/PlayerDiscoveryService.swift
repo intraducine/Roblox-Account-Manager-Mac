@@ -52,6 +52,8 @@ public actor PublicServerVerificationService {
             return .unconfirmed(pagesSearched: searched)
         } catch is CancellationError {
             return .verificationFailed("Checking stopped.")
+        } catch RobloxAPIError.requestBudgetPaused(let retryAfter) {
+            return .paused(pagesSearched: searched, retryAfter: retryAfter)
         } catch {
             return .verificationFailed(error.localizedDescription)
         }
@@ -75,89 +77,109 @@ public actor PublicServerVerificationService {
 }
 
 public actor PlayerDiscoveryService: PlayerDiscovering {
-    private struct PresenceCacheEntry: Sendable {
-        let presence: RobloxSocialPresence
+    private struct FriendCacheEntry: Sendable {
+        let friends: [RobloxVisibleFriend]
         let fetchedAt: Date
     }
 
     private let social: any RobloxSocialProviding
-    private let verifier: PublicServerVerificationService
     private let configuration: PlayerDiscoveryConfiguration
-    private var presenceCache: [Int64: PresenceCacheEntry] = [:]
+    private var friendCache: [UUID: FriendCacheEntry] = [:]
 
     public init(
         social: any RobloxSocialProviding,
-        serverProvider: any RobloxPublicServerProviding,
         configuration: PlayerDiscoveryConfiguration = PlayerDiscoveryConfiguration()
     ) {
         self.social = social
-        self.verifier = PublicServerVerificationService(provider: serverProvider, configuration: configuration)
         self.configuration = configuration
     }
 
-    public func discover(sourceAccounts: [ManagedAccount]) async -> PlayerDiscoveryResult {
-        guard !sourceAccounts.isEmpty else { return PlayerDiscoveryResult() }
+    public func discover(sources: [PlayerDiscoverySource]) async -> PlayerDiscoveryResult {
+        guard !sources.isEmpty else { return PlayerDiscoveryResult(usedPublicPresenceOnly: false) }
         var candidates: [Int64: PlayerCandidate] = [:]
+        var snapshots: [Int64: PlayerPresenceSnapshot] = [:]
+        var conflictingUserIDs = Set<Int64>()
         var failures: [PlayerDiscoveryFailure] = []
+        let now = Date()
 
-        var nextSource = 0
-        while nextSource < sourceAccounts.count, !Task.isCancelled {
-            let end = min(nextSource + configuration.maximumConcurrentRequests, sourceAccounts.count)
-            let sourceBatch = Array(sourceAccounts[nextSource..<end])
-            await withTaskGroup(of: (ManagedAccount, Result<[RobloxSocialUser], Error>).self) { group in
-                for account in sourceBatch {
-                    group.addTask { [social] in
-                        do { return (account, .success(try await social.friends(of: account.userID))) }
-                        catch { return (account, .failure(error)) }
-                    }
-                }
-                for await (account, result) in group {
-                    switch result {
-                    case .success(let friends):
-                        for friend in friends {
-                            if var candidate = candidates[friend.id] {
-                                candidate.sourceAccountIDs.insert(account.id)
-                                candidates[friend.id] = candidate
-                            } else {
-                                candidates[friend.id] = PlayerCandidate(
-                                    userID: friend.id,
-                                    username: friend.name,
-                                    displayName: friend.displayName,
-                                    sourceAccountIDs: [account.id]
-                                )
-                            }
-                        }
-                    case .failure(let error):
-                        failures.append(PlayerDiscoveryFailure(accountID: account.id, message: error.localizedDescription))
-                    }
+        for source in sources where !Task.isCancelled {
+            let visibleFriends: [RobloxVisibleFriend]
+            if let cached = friendCache[source.account.id],
+               now.timeIntervalSince(cached.fetchedAt) < configuration.cacheLifetime {
+                visibleFriends = cached.friends
+            } else {
+                do {
+                    visibleFriends = try await social.onlineFriends(
+                        of: source.account.userID,
+                        session: source.session
+                    )
+                    friendCache[source.account.id] = FriendCacheEntry(friends: visibleFriends, fetchedAt: now)
+                } catch {
+                    failures.append(PlayerDiscoveryFailure(
+                        accountID: source.account.id,
+                        message: error.localizedDescription
+                    ))
+                    continue
                 }
             }
-            nextSource = end
+
+            for friend in visibleFriends {
+                let presenceType = RobloxPresenceType(rawPresenceType: friend.userPresenceType ?? 0)
+                guard presenceType == .inExperience else { continue }
+                if var candidate = candidates[friend.id] {
+                    candidate.sourceAccountIDs.insert(source.account.id)
+                    if candidate.username.isEmpty { candidate.username = friend.name }
+                    if candidate.displayName.isEmpty { candidate.displayName = friend.displayName }
+                    candidates[friend.id] = candidate
+                } else {
+                    candidates[friend.id] = PlayerCandidate(
+                        userID: friend.id,
+                        username: friend.name,
+                        displayName: friend.displayName,
+                        sourceAccountIDs: [source.account.id]
+                    )
+                }
+
+                let snapshot = PlayerPresenceSnapshot(
+                    userID: friend.id,
+                    presenceType: presenceType,
+                    placeID: friend.placeId,
+                    rootPlaceID: friend.rootPlaceId,
+                    universeID: friend.universeId,
+                    jobID: friend.gameId,
+                    locationName: friend.lastLocation,
+                    observedAt: now
+                )
+                if let current = snapshots[friend.id] {
+                    if current.placeID != snapshot.placeID || current.jobID != snapshot.jobID {
+                        conflictingUserIDs.insert(friend.id)
+                    }
+                    if completeness(of: snapshot) > completeness(of: current) {
+                        snapshots[friend.id] = snapshot
+                    }
+                } else {
+                    snapshots[friend.id] = snapshot
+                }
+            }
         }
 
         let missingProfileIDs = candidates.values.filter {
             $0.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || $0.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }.map(\.userID).sorted()
-        if !missingProfileIDs.isEmpty {
-            let profileBatches = stride(
-                from: 0,
-                to: missingProfileIDs.count,
-                by: configuration.presenceBatchSize
-            ).map {
-                Array(missingProfileIDs[$0..<min($0 + configuration.presenceBatchSize, missingProfileIDs.count)])
-            }
-            for batch in profileBatches where !Task.isCancelled {
-                do {
-                    for profile in try await social.users(for: batch) {
-                        guard var candidate = candidates[profile.id] else { continue }
-                        candidate.username = profile.name
-                        candidate.displayName = profile.displayName
-                        candidates[profile.id] = candidate
-                    }
-                } catch {
-                    failures.append(PlayerDiscoveryFailure(message: "Player names could not load. \(error.localizedDescription)"))
+        for batchStart in stride(from: 0, to: missingProfileIDs.count, by: configuration.presenceBatchSize) {
+            let batch = Array(missingProfileIDs[
+                batchStart..<min(batchStart + configuration.presenceBatchSize, missingProfileIDs.count)
+            ])
+            do {
+                for profile in try await social.users(for: batch) {
+                    guard var candidate = candidates[profile.id] else { continue }
+                    candidate.username = profile.name
+                    candidate.displayName = profile.displayName
+                    candidates[profile.id] = candidate
                 }
+            } catch {
+                failures.append(PlayerDiscoveryFailure(message: "Player names could not load. \(error.localizedDescription)"))
             }
         }
         for userID in candidates.keys {
@@ -168,123 +190,43 @@ public actor PlayerDiscoveryService: PlayerDiscovering {
             candidates[userID] = candidate
         }
 
-        let ids = candidates.keys.sorted()
-        let rawPresences = await loadPublicPresences(userIDs: ids, failures: &failures)
-        var presences: [Int64: RobloxSocialPresence] = [:]
-        var conflictingUserIDs = Set<Int64>()
-        for presence in rawPresences {
-            if let current = presences[presence.userId] {
-                if current.placeId != presence.placeId || current.gameId != presence.gameId {
-                    conflictingUserIDs.insert(presence.userId)
-                }
-                if completeness(of: presence) > completeness(of: current) {
-                    presences[presence.userId] = presence
-                }
-            } else {
-                presences[presence.userId] = presence
-            }
-        }
         var players: [DiscoveredPlayer] = []
-        for presence in presences.values where RobloxPresenceType(rawPresenceType: presence.userPresenceType) == .inExperience {
-            guard let candidate = candidates[presence.userId] else { continue }
-            let snapshot = PlayerPresenceSnapshot(
-                userID: presence.userId,
-                presenceType: RobloxPresenceType(rawPresenceType: presence.userPresenceType),
-                placeID: presence.placeId,
-                rootPlaceID: presence.rootPlaceId,
-                universeID: presence.universeId,
-                jobID: presence.gameId,
-                locationName: presence.lastLocation
-            )
-            let verification: PublicServerVerification
-            if let placeID = snapshot.placeID, let jobID = snapshot.jobID, !jobID.isEmpty {
-                verification = await verifier.verify(placeID: placeID, jobID: jobID)
-            } else {
-                verification = .noServerSupplied
-            }
+        for snapshot in snapshots.values {
+            guard let candidate = candidates[snapshot.userID] else { continue }
+            let verification: PublicServerVerification = snapshot.placeID != nil
+                && !(snapshot.jobID ?? "").isEmpty ? .friendTarget : .noServerSupplied
             players.append(DiscoveredPlayer(
                 candidate: candidate,
                 presence: snapshot,
                 verification: verification,
-                isPubliclyVisible: true,
-                conflictingPresenceWasObserved: conflictingUserIDs.contains(presence.userId)
+                isPubliclyVisible: false,
+                conflictingPresenceWasObserved: conflictingUserIDs.contains(snapshot.userID)
             ))
         }
         players.sort {
             ($0.candidate.displayName, $0.candidate.username)
                 < ($1.candidate.displayName, $1.candidate.username)
         }
-        return PlayerDiscoveryResult(players: players, failures: failures, usedPublicPresenceOnly: true)
+        return PlayerDiscoveryResult(players: players, failures: failures, usedPublicPresenceOnly: false)
     }
 
     public func continueVerification(for player: DiscoveredPlayer) async -> PublicServerVerification {
-        guard let placeID = player.presence.placeID, let jobID = player.presence.jobID else {
+        guard player.presence.placeID != nil, !(player.presence.jobID ?? "").isEmpty else {
             return .noServerSupplied
         }
-        return await verifier.verify(placeID: placeID, jobID: jobID, continuePastBudget: true)
+        return .friendTarget
     }
 
     public func refreshVerification(for player: DiscoveredPlayer) async -> PublicServerVerification {
-        guard let placeID = player.presence.placeID, let jobID = player.presence.jobID else {
-            return .noServerSupplied
-        }
-        return await verifier.verify(placeID: placeID, jobID: jobID, forceRefresh: true)
+        await continueVerification(for: player)
     }
 
     public func clearCache() async {
-        presenceCache.removeAll()
-        await verifier.clearCache()
+        friendCache.removeAll()
     }
 
-    private func loadPublicPresences(
-        userIDs: [Int64],
-        failures: inout [PlayerDiscoveryFailure]
-    ) async -> [RobloxSocialPresence] {
-        let now = Date()
-        var result: [RobloxSocialPresence] = []
-        var uncached: [Int64] = []
-        for userID in userIDs {
-            if let cached = presenceCache[userID],
-               now.timeIntervalSince(cached.fetchedAt) < configuration.cacheLifetime {
-                result.append(cached.presence)
-            } else {
-                uncached.append(userID)
-            }
-        }
-
-        let batches = stride(from: 0, to: uncached.count, by: configuration.presenceBatchSize).map {
-            Array(uncached[$0..<min($0 + configuration.presenceBatchSize, uncached.count)])
-        }
-        var nextBatch = 0
-        while nextBatch < batches.count {
-            let end = min(nextBatch + configuration.maximumConcurrentRequests, batches.count)
-            let slice = Array(batches[nextBatch..<end])
-            await withTaskGroup(of: Result<[RobloxSocialPresence], Error>.self) { group in
-                for batch in slice {
-                    group.addTask { [social] in
-                        do { return .success(try await social.presences(for: batch, session: nil)) }
-                        catch { return .failure(error) }
-                    }
-                }
-                for await outcome in group {
-                    switch outcome {
-                    case .success(let values):
-                        for value in values {
-                            presenceCache[value.userId] = PresenceCacheEntry(presence: value, fetchedAt: now)
-                            result.append(value)
-                        }
-                    case .failure(let error):
-                        failures.append(PlayerDiscoveryFailure(message: error.localizedDescription))
-                    }
-                }
-            }
-            nextBatch = end
-        }
-        return result
-    }
-
-    private func completeness(of presence: RobloxSocialPresence) -> Int {
-        [presence.placeId != nil, presence.gameId != nil, presence.universeId != nil, presence.lastLocation != nil]
+    private func completeness(of presence: PlayerPresenceSnapshot) -> Int {
+        [presence.placeID != nil, presence.jobID != nil, presence.universeID != nil, presence.locationName != nil]
             .filter { $0 }.count
     }
 }

@@ -6,6 +6,17 @@ import XCTest
 final class RobloxLauncherTests: XCTestCase {
     private let builder = RobloxLaunchURLBuilder()
 
+    func testCommandOutputLargerThanAPipeBufferDoesNotDeadlock() throws {
+        let output = try ParallelRobloxLauncher.collectCommandOutput(
+            executable: URL(fileURLWithPath: "/usr/bin/jot"),
+            arguments: ["50000"]
+        )
+
+        XCTAssertTrue(output.hasPrefix("1\n2\n3\n"))
+        XCTAssertTrue(output.hasSuffix("50000\n"))
+        XCTAssertGreaterThan(output.utf8.count, 64 * 1024)
+    }
+
     func testPublicLaunchURLUsesMacProtocolAndEncodedRequest() throws {
         let url = try builder.makeURL(
             ticket: "ticket-value",
@@ -42,6 +53,83 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertTrue(privateServer.absoluteString.contains("linkCode%3Dlink"))
     }
 
+    func testWebsitePlayLinkParsesAutomaticAndSpecificServerTargets() throws {
+        let automaticURL = try builder.makeURL(
+            ticket: "page-ticket-that-must-not-be-reused",
+            placeID: 1818,
+            trackerID: "123456789012",
+            launchTime: 1
+        )
+        let jobURL = try builder.makeURL(
+            ticket: "another-page-ticket",
+            placeID: 1818,
+            target: .job("11111111-2222-3333-4444-555555555555"),
+            trackerID: "123456789012",
+            launchTime: 1
+        )
+
+        XCTAssertEqual(
+            RobloxWebLaunchRequestParser.parse(automaticURL),
+            RobloxWebLaunchRequest(placeID: 1818, server: .automatic)
+        )
+        XCTAssertEqual(
+            RobloxWebLaunchRequestParser.parse(jobURL),
+            RobloxWebLaunchRequest(
+                placeID: 1818,
+                server: .manualJob("11111111-2222-3333-4444-555555555555")
+            )
+        )
+    }
+
+    func testWebsitePrivatePlayLinkKeepsOnlyTheReusableLinkCode() throws {
+        let pageURL = try builder.makeURL(
+            ticket: "page-ticket",
+            placeID: 1818,
+            target: .privateServer(accessCode: "page-access-code", linkCode: "private-link-code"),
+            trackerID: "123456789012",
+            launchTime: 1
+        )
+        let request = try XCTUnwrap(RobloxWebLaunchRequestParser.parse(pageURL))
+
+        XCTAssertEqual(request.placeID, 1818)
+        guard case .privateLink(let link) = request.server else {
+            return XCTFail("Expected a private link target")
+        }
+        XCTAssertEqual(RobloxLaunchURLBuilder.privateLinkCode(from: link), "private-link-code")
+        XCTAssertFalse(link.contains("page-access-code"))
+        XCTAssertFalse(link.contains("page-ticket"))
+    }
+
+    func testWebsitePlayParserAcceptsOfficialDirectLinkAndRejectsAnotherLauncherHost() throws {
+        let direct = try XCTUnwrap(URL(string: "roblox://placeId=1818&launchData=ignored"))
+        XCTAssertEqual(
+            RobloxWebLaunchRequestParser.parse(direct),
+            RobloxWebLaunchRequest(placeID: 1818, server: .automatic)
+        )
+
+        let unsafeLauncher = "https://example.com/game/PlaceLauncher.ashx?request=RequestGame&placeId=1818"
+        let encoded = try XCTUnwrap(
+            unsafeLauncher.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+        )
+        let unsafeURL = try XCTUnwrap(URL(string: "roblox-player:1+launchmode:play+placelauncherurl:\(encoded)"))
+        XCTAssertNil(RobloxWebLaunchRequestParser.parse(unsafeURL))
+    }
+
+    func testWebsitePlayParserAcceptsCurrentRobloxWebsiteLauncherHost() throws {
+        let launcher = "https://www.roblox.com/Game/PlaceLauncher.ashx?request=RequestGame&placeId=1818&isPlayTogetherGame=false"
+        let encoded = try XCTUnwrap(
+            launcher.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+        )
+        let url = try XCTUnwrap(
+            URL(string: "roblox-player:1+launchmode:play+gameinfo:page-ticket+placelauncherurl:\(encoded)")
+        )
+
+        XCTAssertEqual(
+            RobloxWebLaunchRequestParser.parse(url),
+            RobloxWebLaunchRequest(placeID: 1818, server: .automatic)
+        )
+    }
+
     func testPrivateLinkParsing() {
         XCTAssertEqual(
             RobloxLaunchURLBuilder.privateLinkCode(
@@ -62,7 +150,7 @@ final class RobloxLauncherTests: XCTestCase {
             RobloxServerSelection.player(username: "builder", userID: 42, jobID: jobID).persistedValue,
             ""
         )
-        XCTAssertEqual(RobloxServerSelection.manualJob(jobID).persistedValue, jobID)
+        XCTAssertEqual(RobloxServerSelection.manualJob(jobID).persistedValue, "")
     }
 
     func testModernPrivateShareLinkIsRecognizedSeparately() {
@@ -104,7 +192,8 @@ final class RobloxLauncherTests: XCTestCase {
             "CFBundleIdentifier": "com.roblox.RobloxPlayer",
             "CFBundleExecutable": "RobloxPlayer",
             "CFBundleVersion": "7330989",
-            "LSMultipleInstancesProhibited": true
+            "LSMultipleInstancesProhibited": true,
+            "NSMicrophoneUsageDescription": "Roblox microphone description"
         ]
         let data = try PropertyListSerialization.data(fromPropertyList: source, format: .xml, options: 0)
         let patched = try ParallelRobloxLauncher.patchedInfoPlist(
@@ -116,6 +205,10 @@ final class RobloxLauncherTests: XCTestCase {
         let info = try XCTUnwrap(object as? [String: Any])
         XCTAssertEqual(info["CFBundleExecutable"] as? String, "RobloxPlayer")
         XCTAssertEqual(info["CFBundleVersion"] as? String, "7330989")
+        XCTAssertEqual(
+            info["NSMicrophoneUsageDescription"] as? String,
+            "Roblox microphone description"
+        )
         XCTAssertEqual(info["LSMultipleInstancesProhibited"] as? Bool, false)
         XCTAssertEqual(
             info["CFBundleIdentifier"] as? String,
@@ -126,6 +219,26 @@ final class RobloxLauncherTests: XCTestCase {
             info["RAMPreparationVersion"] as? Int,
             ParallelRobloxLauncher.preparationVersion
         )
+    }
+
+    func testManagerBundleDeclaresPrivacyUsageForManagedRobloxClients() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let infoURL = repositoryRoot.appendingPathComponent("packaging/Info.plist")
+        let data = try Data(contentsOf: infoURL)
+        let object = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+        let info = try XCTUnwrap(object as? [String: Any])
+
+        for key in [
+            "NSMicrophoneUsageDescription",
+            "NSCameraUsageDescription",
+            "NSLocalNetworkUsageDescription"
+        ] {
+            let description = try XCTUnwrap(info[key] as? String, "Missing \(key)")
+            XCTAssertFalse(description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
     }
 
     func testManagedClientSettingsDisableMenuBarAndDesktopNotifications() {

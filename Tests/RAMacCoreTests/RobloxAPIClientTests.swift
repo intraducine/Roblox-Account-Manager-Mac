@@ -152,6 +152,36 @@ final class RobloxAPIClientTests: XCTestCase {
         }
     }
 
+    func testPublicServerBudgetStopsTheNextRequestBeforeRobloxReceivesIt() async throws {
+        var calls = 0
+        let client = makeClient { request in
+            calls += 1
+            return Self.response(
+                request: request,
+                status: 200,
+                headers: [
+                    "x-ratelimit-limit": "3, 3;w=60",
+                    "x-ratelimit-remaining": "0",
+                    "x-ratelimit-reset": "12"
+                ],
+                body: #"{"previousPageCursor":null,"nextPageCursor":"next","data":[]}"#
+            )
+        }
+
+        _ = try await client.publicServers(placeID: 1818, cursor: nil)
+        do {
+            _ = try await client.publicServers(placeID: 1818, cursor: "next")
+            XCTFail("Expected the local request budget to pause")
+        } catch let error as RobloxAPIError {
+            guard case .requestBudgetPaused(let retryAfter) = error else {
+                return XCTFail("Unexpected API error: \(error)")
+            }
+            XCTAssertNotNil(retryAfter)
+            XCTAssertGreaterThanOrEqual(retryAfter ?? 0, 12)
+        }
+        XCTAssertEqual(calls, 1)
+    }
+
     private func makeClient(
         handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
     ) -> RobloxAPIClient {

@@ -7,6 +7,7 @@ public enum RobloxAPIError: LocalizedError, Equatable {
     case authenticationTicketUnavailable
     case privateServerUnavailable
     case rateLimited(Int?)
+    case requestBudgetPaused(Int?)
     case userNotFound
     case server(Int, String)
 
@@ -27,6 +28,12 @@ public enum RobloxAPIError: LocalizedError, Equatable {
                 return "Roblox is limiting server requests. Try again in \(retryAfter) seconds."
             }
             return "Roblox is limiting server requests. Try again in a minute."
+        case .requestBudgetPaused(let retryAfter):
+            if let retryAfter, retryAfter > 0 {
+                let unit = retryAfter == 1 ? "second" : "seconds"
+                return "Server checking is paused to stay within Roblox's request limit. Try again in \(retryAfter) \(unit)."
+            }
+            return "Server checking is paused to stay within Roblox's request limit. Try again in a minute."
         case .userNotFound:
             return "Roblox could not find that username."
         case .server(let status, let message):
@@ -61,17 +68,20 @@ public extension RobloxAPIProviding {
 
 public struct RobloxAPIClient: Sendable {
     private let session: URLSession
+    private let publicServerLimiter: PublicServerRequestLimiter
     private let decoder = JSONDecoder()
 
     public init(session: URLSession? = nil) {
         if let session {
             self.session = session
+            publicServerLimiter = PublicServerRequestLimiter()
         } else {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.httpShouldSetCookies = false
             configuration.httpCookieAcceptPolicy = .never
             configuration.urlCache = nil
             self.session = URLSession(configuration: configuration)
+            publicServerLimiter = .shared
         }
     }
 
@@ -124,6 +134,7 @@ public struct RobloxAPIClient: Sendable {
 
     public func publicServers(placeID: Int64, cursor: String? = nil) async throws -> RobloxPublicServerPage {
         guard placeID > 0 else { throw RobloxLaunchError.invalidPlaceID }
+        try await publicServerLimiter.acquirePermit()
         var components = URLComponents(string: "https://games.roblox.com/v1/games/\(placeID)/servers/Public")!
         var queryItems = [
             URLQueryItem(name: "sortOrder", value: "Asc"),
@@ -136,8 +147,17 @@ public struct RobloxAPIClient: Sendable {
         components.queryItems = queryItems
         var request = URLRequest(url: components.url!)
         applyPublicHeaders(to: &request)
-        let (data, response) = try await session.data(for: request)
-        let http = try httpResponse(response)
+        let data: Data
+        let http: HTTPURLResponse
+        do {
+            let response = try await session.data(for: request)
+            data = response.0
+            http = try httpResponse(response.1)
+            await publicServerLimiter.observe(http)
+        } catch {
+            await publicServerLimiter.requestFailedBeforeResponse()
+            throw error
+        }
         try checkDiscoveryStatus(http, data: data)
         do {
             return try decoder.decode(RobloxPublicServerPage.self, from: data)
@@ -260,12 +280,12 @@ public struct RobloxAPIClient: Sendable {
         request.setValue(".ROBLOSECURITY=\(cookie)", forHTTPHeaderField: "Cookie")
         request.setValue("https://www.roblox.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.roblox.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Roblox Account Manager for Mac/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox Account Manager for Mac/2.0.0", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 
     private func applyPublicHeaders(to request: inout URLRequest) {
-        request.setValue("Roblox Account Manager for Mac/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox Account Manager for Mac/2.0.0", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 
@@ -282,8 +302,8 @@ public struct RobloxAPIClient: Sendable {
     private func checkDiscoveryStatus(_ response: HTTPURLResponse, data: Data) throws {
         guard (200...299).contains(response.statusCode) else {
             if response.statusCode == 429 {
-                let retry = response.value(forHTTPHeaderField: "x-ratelimit-reset").flatMap(Int.init)
-                    ?? response.value(forHTTPHeaderField: "retry-after").flatMap(Int.init)
+                let retry = response.value(forHTTPHeaderField: "retry-after").flatMap(Int.init)
+                    ?? response.value(forHTTPHeaderField: "x-ratelimit-reset").flatMap(Int.init)
                 throw RobloxAPIError.rateLimited(retry)
             }
             throw RobloxAPIError.server(response.statusCode, serverMessage(from: data))

@@ -26,12 +26,22 @@ struct AccountWebsiteRequest: Codable, Hashable {
     let destination: AccountWebsiteDestination
 }
 
+enum AccountWebNavigationDecision: Equatable {
+    case allow
+    case cancel
+    case launchManaged(RobloxWebLaunchRequest)
+    case unsupportedRobloxLaunch
+    case openExternally(URL)
+}
+
 @MainActor
 final class AccountWebSessionModel: NSObject, ObservableObject {
     @Published var isLoading = true
     @Published var canGoBack = false
     @Published var canGoForward = false
     @Published var pendingExternalURL: URL?
+    @Published var pendingManagedLaunch: RobloxWebLaunchRequest?
+    @Published var hasUnsupportedRobloxLaunch = false
     @Published var errorMessage: String?
 
     private(set) weak var webView: WKWebView?
@@ -101,6 +111,44 @@ final class AccountWebSessionModel: NSObject, ObservableObject {
         self.pendingExternalURL = nil
     }
 
+    var pendingExternalDestination: String {
+        if let host = pendingExternalURL?.host, !host.isEmpty {
+            return host
+        }
+        if let scheme = pendingExternalURL?.scheme, !scheme.isEmpty {
+            return "\(scheme) link"
+        }
+        return "this link"
+    }
+
+    static func navigationDecision(
+        for url: URL?,
+        targetIsMainFrame: Bool?
+    ) -> AccountWebNavigationDecision {
+        guard let url else { return .cancel }
+        if RobloxWebLaunchRequestParser.isRobloxLaunchURL(url) {
+            guard let request = RobloxWebLaunchRequestParser.parse(url) else {
+                return .unsupportedRobloxLaunch
+            }
+            return .launchManaged(request)
+        }
+        let scheme = url.scheme?.lowercased()
+
+        if targetIsMainFrame == false {
+            switch scheme {
+            case "https", "about", "data", "blob": return .allow
+            default: return .cancel
+            }
+        }
+
+        guard let host = url.host?.lowercased() else {
+            return .openExternally(url)
+        }
+        let isRoblox = scheme == "https"
+            && (host == "roblox.com" || host.hasSuffix(".roblox.com"))
+        return isRoblox ? .allow : .openExternally(url)
+    }
+
     private func updateNavigationState(_ webView: WKWebView) {
         canGoBack = webView.canGoBack
         canGoForward = webView.canGoForward
@@ -114,19 +162,24 @@ extension AccountWebSessionModel: WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        guard let url = navigationAction.request.url,
-              let host = url.host?.lowercased() else {
+        switch Self.navigationDecision(
+            for: navigationAction.request.url,
+            targetIsMainFrame: navigationAction.targetFrame?.isMainFrame
+        ) {
+        case .allow:
+            decisionHandler(.allow)
+        case .cancel:
             decisionHandler(.cancel)
-            return
-        }
-        let isRoblox = url.scheme?.lowercased() == "https"
-            && (host == "roblox.com" || host.hasSuffix(".roblox.com"))
-        guard isRoblox else {
+        case .launchManaged(let request):
+            decisionHandler(.cancel)
+            pendingManagedLaunch = request
+        case .unsupportedRobloxLaunch:
+            decisionHandler(.cancel)
+            hasUnsupportedRobloxLaunch = true
+        case .openExternally(let url):
             decisionHandler(.cancel)
             pendingExternalURL = url
-            return
         }
-        decisionHandler(.allow)
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {

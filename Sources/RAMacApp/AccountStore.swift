@@ -102,8 +102,7 @@ final class AccountStore: ObservableObject {
         self.builder = builder
         self.launcher = launcher ?? ParallelRobloxLauncher()
         self.playerDiscovery = playerDiscovery ?? PlayerDiscoveryService(
-            social: RobloxSocialAPIClient(),
-            serverProvider: RobloxAPIClient()
+            social: RobloxSocialAPIClient()
         )
         self.joinAssessor = joinAssessor ?? JoinAssessmentService()
         self.healthChecker = healthChecker ?? AccountHealthService(vault: vault, api: api)
@@ -190,6 +189,8 @@ final class AccountStore: ObservableObject {
             return .unconfirmed(pagesSearched: searched)
         } catch is CancellationError {
             return .verificationFailed("Checking stopped.")
+        } catch RobloxAPIError.requestBudgetPaused(let retryAfter) {
+            return .paused(pagesSearched: searched, retryAfter: retryAfter)
         } catch {
             return .verificationFailed(error.localizedDescription)
         }
@@ -216,6 +217,20 @@ final class AccountStore: ObservableObject {
     func load() {
         do {
             accounts = try repository.load()
+            var removedTemporaryServer = false
+            for index in accounts.indices {
+                guard case .manualJob = RobloxServerSelection.savedValue(accounts[index].savedServer) else {
+                    continue
+                }
+                guard !accounts[index].savedServer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    continue
+                }
+                accounts[index].savedServer = ""
+                removedTemporaryServer = true
+            }
+            if removedTemporaryServer {
+                try repository.save(accounts)
+            }
             groups = ManagedAccount.normalizedGroups(
                 (try repository.loadGroups()) + accounts.flatMap(\.groups)
             )
@@ -319,9 +334,18 @@ final class AccountStore: ObservableObject {
     }
 
     func refreshRunningInstances() async {
+        let previousIDs = runningAccountIDs
         let refreshedIDs = await launcher.runningAccountIDs(from: accounts.map(\.id))
         if refreshedIDs != runningAccountIDs {
             runningAccountIDs = refreshedIDs
+        }
+        if !previousIDs.isEmpty,
+           refreshedIDs.isEmpty,
+           !isWorking,
+           !isBatchLaunching,
+           !isStoppingAll {
+            launchStatus = "Ready"
+            batchStatus = "No managed Roblox clients are running"
         }
         let staleTargets = activeLaunchTargets.keys.filter { !refreshedIDs.contains($0) }
         if !staleTargets.isEmpty {
@@ -399,9 +423,25 @@ final class AccountStore: ObservableObject {
             discoveryUpdatedAt = Date()
             return
         }
-        let result = await playerDiscovery.discover(sourceAccounts: validSources)
+        var sources: [PlayerDiscoverySource] = []
+        var sessionFailures: [PlayerDiscoveryFailure] = []
+        for account in validSources {
+            do {
+                guard let session = try vault.read(for: account.id), !session.isEmpty else {
+                    sessionFailures.append(PlayerDiscoveryFailure(
+                        accountID: account.id,
+                        message: "Sign in to this account before checking its friends."
+                    ))
+                    continue
+                }
+                sources.append(PlayerDiscoverySource(account: account, session: session))
+            } catch {
+                sessionFailures.append(PlayerDiscoveryFailure(accountID: account.id, message: error.localizedDescription))
+            }
+        }
+        let result = await playerDiscovery.discover(sources: sources)
         discoveredPlayers = result.players
-        discoveryFailures = result.failures
+        discoveryFailures = sessionFailures + result.failures
         discoveryUpdatedAt = result.completedAt
     }
 
@@ -474,8 +514,93 @@ final class AccountStore: ObservableObject {
         )
     }
 
+    func launchFriendPlayer(_ player: DiscoveredPlayer, accountIDs: Set<UUID>) async {
+        guard case .friendTarget = player.verification,
+              let placeID = player.presence.placeID,
+              let jobID = player.presence.jobID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !jobID.isEmpty else {
+            notice = Notice(
+                title: "No friend server is available",
+                message: "Refresh the friend list. Roblox may have stopped sharing this server."
+            )
+            return
+        }
+
+        let selected = accounts.filter { accountIDs.contains($0.id) }
+        guard !selected.isEmpty else { return }
+        guard selected.allSatisfy({ !runningAccountIDs.contains($0.id) }) else {
+            notice = Notice(
+                title: "A selected account is already running",
+                message: "Clear that account or stop its managed Roblox client, then try again."
+            )
+            return
+        }
+
+        await checkAccounts(accountIDs)
+        let notReady = selected.filter { accountHealth[$0.id]?.isReady != true }
+        guard notReady.isEmpty else {
+            notice = Notice(
+                title: "Some accounts are not ready",
+                message: "Sign in to the marked accounts. No Roblox client was started."
+            )
+            return
+        }
+
+        guard let source = selected.first(where: { player.candidate.sourceAccountIDs.contains($0.id) }) else {
+            notice = Notice(
+                title: "Select a friend account",
+                message: "Select at least one account listed under Found through. That account must start first."
+            )
+            return
+        }
+
+        batchStatus = "Starting @\(source.username) first"
+        await launch(
+            account: source,
+            placeText: String(placeID),
+            server: .manualJob(jobID),
+            rememberSelection: false
+        )
+        guard runningAccountIDs.contains(source.id) else {
+            batchStatus = "The source account did not start"
+            return
+        }
+
+        let remainingIDs = accountIDs.subtracting([source.id])
+        guard !remainingIDs.isEmpty else {
+            clearRememberedFriendServer(jobID, accountIDs: [source.id])
+            batchSelectedIDs.removeAll()
+            batchStates.removeAll()
+            batchStatus = "Started @\(source.username)"
+            return
+        }
+
+        batchSelectedIDs = remainingIDs
+        batchStatus = "Source started. Starting \(remainingIDs.count) more"
+        await launchBatch(
+            placeText: String(placeID),
+            server: .manualJob(jobID),
+            skipPublicServerPreflight: true,
+            skipHealthPreflight: true,
+            rememberSelection: false
+        )
+        clearRememberedFriendServer(
+            jobID,
+            accountIDs: accountIDs.intersection(runningAccountIDs)
+        )
+        if accountIDs.isSubset(of: runningAccountIDs) {
+            batchStatus = "Started all \(accountIDs.count) accounts"
+            launchStatus = "Running \(accountIDs.count) accounts in the friend server"
+        }
+    }
+
     func tryUnconfirmedPlayer(_ player: DiscoveredPlayer, accountIDs: Set<UUID>) async {
-        guard case .unconfirmed = player.verification,
+        let canTryServer: Bool
+        switch player.verification {
+        case .unconfirmed, .paused: canTryServer = true
+        default: canTryServer = false
+        }
+        guard canTryServer,
               let placeID = player.presence.placeID,
               let jobID = player.presence.jobID,
               !jobID.isEmpty else {
@@ -821,7 +946,36 @@ final class AccountStore: ObservableObject {
         )
     }
 
-    func launch(account: ManagedAccount, placeText: String, server: RobloxServerSelection) async {
+    func launchFromWebsite(accountID: UUID, request: RobloxWebLaunchRequest) async {
+        await refreshRunningInstances()
+        guard let account = accounts.first(where: { $0.id == accountID }) else {
+            notice = Notice(
+                title: "Account is no longer available",
+                message: "Close this website window and choose another managed account."
+            )
+            return
+        }
+        await launch(
+            account: account,
+            placeText: String(request.placeID),
+            server: request.server,
+            rememberSelection: false
+        )
+    }
+
+    func launch(
+        account: ManagedAccount,
+        placeText: String,
+        server: RobloxServerSelection,
+        rememberSelection: Bool = true
+    ) async {
+        guard !isWorking, !isBatchLaunching else {
+            notice = Notice(
+                title: "Another launch is starting",
+                message: "Wait for the current launch to finish, then select Play again."
+            )
+            return
+        }
         guard !isRunning(account) else {
             notice = Notice(title: "Account is already running", message: RobloxLaunchError.accountAlreadyRunning.localizedDescription)
             return
@@ -894,8 +1048,10 @@ final class AccountStore: ObservableObject {
 
             var updated = account
             updated.lastUsed = Date()
-            updated.savedPlaceID = placeText.trimmingCharacters(in: .whitespacesAndNewlines)
-            updated.savedServer = launchServer.persistedValue
+            if rememberSelection {
+                updated.savedPlaceID = placeText.trimmingCharacters(in: .whitespacesAndNewlines)
+                updated.savedServer = launchServer.persistedValue
+            }
             update(updated)
             recordLaunchTarget(
                 accountID: account.id,
@@ -926,7 +1082,8 @@ final class AccountStore: ObservableObject {
         placeText: String,
         server: RobloxServerSelection,
         skipPublicServerPreflight: Bool = false,
-        skipHealthPreflight: Bool = false
+        skipHealthPreflight: Bool = false,
+        rememberSelection: Bool = true
     ) async {
         guard !isWorking, !isBatchLaunching else { return }
         guard let placeID = Int64(placeText.trimmingCharacters(in: .whitespacesAndNewlines)), placeID > 0 else {
@@ -1096,8 +1253,10 @@ final class AccountStore: ObservableObject {
         for outcome in outcomes where outcome.errorMessage == nil {
             if let index = accounts.firstIndex(where: { $0.id == outcome.accountID }) {
                 accounts[index].lastUsed = Date()
-                accounts[index].savedPlaceID = String(placeID)
-                accounts[index].savedServer = launchServer.persistedValue
+                if rememberSelection {
+                    accounts[index].savedPlaceID = String(placeID)
+                    accounts[index].savedServer = launchServer.persistedValue
+                }
             }
             if let processIdentifier = outcome.processIdentifier {
                 recordLaunchTarget(
@@ -1145,6 +1304,29 @@ final class AccountStore: ObservableObject {
         batchStatus = count == 0
             ? "Select accounts from the shelf"
             : "\(count) account\(count == 1 ? "" : "s") ready"
+    }
+
+    private func clearRememberedFriendServer(_ jobID: String, accountIDs: Set<UUID>) {
+        let cleanJobID = jobID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanJobID.isEmpty else { return }
+
+        var changed = false
+        for index in accounts.indices where accountIDs.contains(accounts[index].id) {
+            let savedServer = accounts[index].savedServer.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard savedServer.caseInsensitiveCompare(cleanJobID) == .orderedSame else { continue }
+            accounts[index].savedServer = ""
+            changed = true
+        }
+        guard changed else { return }
+
+        do {
+            try repository.save(accounts)
+        } catch {
+            notice = Notice(
+                title: "Launch choice was not reset",
+                message: "The friend server was temporary, but the app could not reset the main launch form. Choose Automatic before your next launch."
+            )
+        }
     }
 
     private func recordLaunchTarget(

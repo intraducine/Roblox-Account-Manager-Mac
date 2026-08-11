@@ -384,14 +384,13 @@ private struct PlayerServerSearchView: View {
     let onChoose: (RobloxServerSelection, Int64) -> Void
     @State private var username = ""
     @State private var result: JoinablePlayerServer?
-    @State private var verifiedServer: RobloxPublicServer?
     @State private var message: String?
     @State private var isSearching = false
 
     var body: some View {
         Form {
             Section {
-                Text("Roblox will only return a server when the player is in a joinable game and shares that presence.")
+                Text("Roblox must show this player's current game and server. If one of your saved accounts is their friend, use Find Players for the source-first launch.")
                     .foregroundStyle(.secondary)
             }
 
@@ -406,20 +405,15 @@ private struct PlayerServerSearchView: View {
 
             if let result,
                let placeID = result.presence.placeId,
-               let server = verifiedServer {
-                Section("Verified public server") {
+               let jobID = result.presence.gameId,
+               !jobID.isEmpty {
+                Section("Reported server") {
                     LabeledContent("Player", value: "@\(result.user.name)")
                     LabeledContent("Location", value: result.presence.lastLocation ?? "Roblox game")
-                    LabeledContent("Open spaces", value: String(server.openSpaces))
+                    Text("Roblox will check this account's access and server space when it opens.")
+                        .foregroundStyle(.secondary)
                     Button("Join @\(result.user.name)'s Server") {
-                        onChoose(
-                            .publicInstance(
-                                jobID: server.id,
-                                playing: server.playing,
-                                maxPlayers: server.maxPlayers
-                            ),
-                            placeID
-                        )
+                        onChoose(.manualJob(jobID), placeID)
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -442,7 +436,6 @@ private struct PlayerServerSearchView: View {
         guard !cleanUsername.isEmpty, !isSearching else { return }
         isSearching = true
         result = nil
-        verifiedServer = nil
         message = nil
         defer { isSearching = false }
         do {
@@ -450,20 +443,7 @@ private struct PlayerServerSearchView: View {
             if found.presence.placeId != nil,
                let gameID = found.presence.gameId,
                !gameID.isEmpty {
-                guard let placeID = found.presence.placeId else { return }
-                switch await store.verifyPublicServer(placeID: placeID, jobID: gameID) {
-                case .verifiedPublic(let server):
-                    result = found
-                    verifiedServer = server
-                case .unconfirmed:
-                    message = "Roblox supplied a server, but the public-server search limit ended before it was found. Use Find Players to continue checking or open the player's profile."
-                case .restrictedOrUnavailable:
-                    message = "Roblox supplied a server, but it was not in the complete public-server list. Use Find Players to open the player's profile with a source account."
-                case .verificationFailed(let detail):
-                    message = detail
-                case .noServerSupplied:
-                    message = "Roblox did not supply a server that this app can target."
-                }
+                result = found
             } else if found.presence.userPresenceType == 0 {
                 message = "Roblox did not provide a current experience for @\(found.user.name). The player may be offline or may limit who can see their activity."
             } else {

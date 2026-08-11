@@ -16,7 +16,7 @@ The upstream application is a Windows Forms program that targets .NET Framework 
 4. Read `rbx-authentication-ticket`.
 5. Build a `roblox-player` launch URL with a Roblox PlaceLauncher URL.
 
-The Windows account file uses Windows Data Protection API or password-based libsodium encryption. A Mac cannot use the machine-bound Windows Data Protection API. The port therefore keeps each session as a separate generic-password item in macOS Keychain. It keeps only non-secret metadata in JSON.
+The Windows account file uses Windows Data Protection API or password-based libsodium encryption. A Mac cannot use the machine-bound Windows Data Protection API. The port stores all sessions in one versioned generic-password item in macOS Keychain. The shared item avoids one approval prompt per account after an ad hoc rebuild. It keeps only non-secret metadata in JSON. Older per-account items migrate into the shared item when the app reads them.
 
 ## Historical Mac findings
 
@@ -32,21 +32,20 @@ The same build required an explicit warning before enabling Modified Parallel Fa
 
 ## API behavior checked
 
-### Version 1.0 presence decision
+### Current friend-presence decision
 
-The V1 design does not depend on relationship-specific presence. Roblox documents public connection data and presence features, but this project did not prove one authenticated endpoint across the full public, friend-only, hidden, public-server, and private-server test matrix.
+The current friend flow uses the authenticated online-friends response for each saved source account. It records the source account for each visible friend and uses the Place ID and Job ID that Roblox returns for that relationship.
 
-V1 therefore uses the conservative branch in the implementation specification:
+The flow now has these limits:
 
-- It merges friends from the selected valid source accounts.
-- It requests public presence in limited batches without an account cookie.
-- It labels every automatic result **Publicly visible**.
-- It verifies a supplied Job ID against public server pages before it presents a confident batch join.
-- It calls a limited search **Not confirmed**, not private.
-- It sends friend-only and restricted cases to an isolated selected-account Roblox website.
-- It does not guess hidden activity or use an undocumented presence bypass.
+- It checks source accounts one at a time and caches each result for one minute.
+- It does not call anonymous presence for friend discovery.
+- It does not search public-server pages before a friend join.
+- It starts one source account first, then passes the same reported Job ID to the other selected accounts.
+- It does not claim that another selected account has access or that the server has space. Roblox decides both during launch.
+- It does not guess hidden activity or query accounts that the user did not save.
 
-This boundary can change only after a controlled test records all required visibility and access cases. No usernames, sessions, private links, or launch tickets belong in that record.
+The earlier public-presence and public-server verification design remains useful only as development history. Public-server browsing is still available as a separate manual tool.
 
 An unauthenticated request to `https://users.roblox.com/v1/users/authenticated` returned HTTP 401 with an authentication-token error. The app uses this endpoint to reject an expired or incorrect imported session before Keychain storage.
 

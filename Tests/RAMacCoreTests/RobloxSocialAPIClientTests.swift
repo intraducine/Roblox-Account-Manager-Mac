@@ -29,6 +29,26 @@ final class RobloxSocialAPIClientTests: XCTestCase {
         XCTAssertEqual(call, 2)
     }
 
+    func testOnlineFriendsDecodeTheCurrentNestedPresenceShape() async throws {
+        let jobID = "11111111-2222-3333-4444-555555555555"
+        let client = makeClient { request in
+            XCTAssertEqual(request.url?.path, "/v1/users/42/friends/online")
+            return Self.response(
+                request,
+                status: 200,
+                body: #"{"data":[{"id":7,"name":"friend","displayName":"Friend","userPresence":{"UserPresenceType":"InGame","UserLocationType":"Game","lastLocation":"Test","placeId":1818,"rootPlaceId":1818,"gameInstanceId":"\#(jobID)","universeId":13058}}]}"#
+            )
+        }
+
+        let friends = try await client.onlineFriends(of: 42, session: "secret")
+
+        XCTAssertEqual(friends.count, 1)
+        XCTAssertEqual(friends[0].userPresenceType, RobloxPresenceType.inExperience.rawValue)
+        XCTAssertEqual(friends[0].placeId, 1818)
+        XCTAssertEqual(friends[0].gameId, jobID)
+        XCTAssertEqual(friends[0].lastLocation, "Test")
+    }
+
     func testStatusCodesHaveSeparateErrors() async {
         for (status, expected) in [
             (401, RobloxSocialAPIError.signedOut),
@@ -77,6 +97,23 @@ final class RobloxSocialAPIClientTests: XCTestCase {
             XCTFail("Unexpected error: \(error)")
         }
         XCTAssertEqual(SocialMockURLProtocol.requestCount, 3)
+    }
+
+    func testOnlineFriendRateLimitDoesNotRetryInABurst() async {
+        let client = makeClient { request in
+            XCTAssertEqual(request.url?.path, "/v1/users/42/friends/online")
+            return Self.response(request, status: 429, headers: ["Retry-After": "45"])
+        }
+
+        do {
+            _ = try await client.onlineFriends(of: 42, session: "secret")
+            XCTFail("Expected a rate-limit error")
+        } catch let error as RobloxSocialAPIError {
+            XCTAssertEqual(error, .rateLimited(45))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(SocialMockURLProtocol.requestCount, 1)
     }
 
     private func makeClient(

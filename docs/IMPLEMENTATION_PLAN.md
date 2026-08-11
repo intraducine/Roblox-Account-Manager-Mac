@@ -24,7 +24,7 @@ The app uses standard macOS structure and controls. It follows the system appear
 - Opening `/Applications/Roblox.app` is outside the manager.
 - The optional advanced fallback changes and signs each copied app again. It stays off unless the user accepts the risk warning.
 - A Place ID selects the experience or place.
-- The server chooser can let Roblox choose, browse public servers, or find a player through public presence.
+- The server chooser can let Roblox choose, browse public servers, or use a player target that Roblox reports.
 - Advanced options accept an existing Job ID or a supported private server link.
 
 ## Development history

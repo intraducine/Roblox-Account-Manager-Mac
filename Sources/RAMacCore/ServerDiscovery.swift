@@ -93,12 +93,10 @@ public enum RobloxServerSelection: Equatable, Sendable {
 
     public var persistedValue: String {
         switch self {
-        case .automatic, .publicInstance, .player:
+        case .automatic, .publicInstance, .player, .manualJob:
             return ""
         case .privateLink(let link):
             return link.trimmingCharacters(in: .whitespacesAndNewlines)
-        case .manualJob(let jobID):
-            return jobID.trimmingCharacters(in: .whitespacesAndNewlines)
         }
     }
 
@@ -109,6 +107,107 @@ public enum RobloxServerSelection: Equatable, Sendable {
         case .automatic, .privateLink:
             return ""
         }
+    }
+}
+
+public struct RobloxWebLaunchRequest: Equatable, Sendable {
+    public let placeID: Int64
+    public let server: RobloxServerSelection
+
+    public init(placeID: Int64, server: RobloxServerSelection) {
+        self.placeID = placeID
+        self.server = server
+    }
+}
+
+public enum RobloxWebLaunchRequestParser {
+    public static func isRobloxLaunchURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else { return false }
+        return scheme == "roblox-player" || scheme == "roblox"
+    }
+
+    public static func parse(_ url: URL) -> RobloxWebLaunchRequest? {
+        guard isRobloxLaunchURL(url) else { return nil }
+        if url.scheme?.lowercased() == "roblox",
+           let direct = parseDirectRobloxURL(url) {
+            return direct
+        }
+
+        let marker = "placelauncherurl:"
+        guard let field = url.absoluteString
+            .split(separator: "+", omittingEmptySubsequences: false)
+            .first(where: { $0.lowercased().hasPrefix(marker) }) else {
+            return nil
+        }
+        var launcherText = String(field.dropFirst(marker.count))
+        for _ in 0..<2 {
+            guard let decoded = launcherText.removingPercentEncoding,
+                  decoded != launcherText else { break }
+            launcherText = decoded
+        }
+        guard let components = URLComponents(string: launcherText),
+              components.scheme?.lowercased() == "https",
+              isLauncherHost(components.host),
+              components.path.lowercased() == "/game/placelauncher.ashx" else {
+            return nil
+        }
+
+        let values = Dictionary(
+            components.queryItems?.map { ($0.name.lowercased(), $0.value ?? "") } ?? [],
+            uniquingKeysWith: { first, _ in first }
+        )
+        guard let placeID = Int64(values["placeid"] ?? ""), placeID > 0 else { return nil }
+
+        switch values["request"]?.lowercased() {
+        case "requestgame":
+            return RobloxWebLaunchRequest(placeID: placeID, server: .automatic)
+        case "requestgamejob":
+            guard let jobID = clean(values["gameid"]), !jobID.isEmpty else { return nil }
+            return RobloxWebLaunchRequest(placeID: placeID, server: .manualJob(jobID))
+        case "requestprivategame":
+            guard let linkCode = clean(values["linkcode"]), !linkCode.isEmpty,
+                  let link = privateServerLink(placeID: placeID, linkCode: linkCode) else {
+                return nil
+            }
+            return RobloxWebLaunchRequest(placeID: placeID, server: .privateLink(link))
+        default:
+            return nil
+        }
+    }
+
+    private static func parseDirectRobloxURL(_ url: URL) -> RobloxWebLaunchRequest? {
+        let raw = url.absoluteString
+        guard let separator = raw.firstIndex(of: ":") else { return nil }
+        var payload = String(raw[raw.index(after: separator)...])
+        if payload.hasPrefix("//") { payload.removeFirst(2) }
+        let fields = payload.split(separator: "&", omittingEmptySubsequences: false)
+        guard let placeField = fields.first(where: {
+            $0.lowercased().hasPrefix("placeid=")
+        }),
+        let equals = placeField.firstIndex(of: "="),
+        let placeID = Int64(placeField[placeField.index(after: equals)...]),
+        placeID > 0 else { return nil }
+        return RobloxWebLaunchRequest(placeID: placeID, server: .automatic)
+    }
+
+    private static func isLauncherHost(_ host: String?) -> Bool {
+        guard let host = host?.lowercased() else { return false }
+        return host == "www.roblox.com"
+            || host == "assetgame.roblox.com"
+            || host == "gamejoin.roblox.com"
+    }
+
+    private static func clean(_ value: String?) -> String? {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func privateServerLink(placeID: Int64, linkCode: String) -> String? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "www.roblox.com"
+        components.path = "/games/\(placeID)"
+        components.queryItems = [URLQueryItem(name: "privateServerLinkCode", value: linkCode)]
+        return components.url?.absoluteString
     }
 }
 

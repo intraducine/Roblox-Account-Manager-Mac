@@ -22,6 +22,7 @@ struct LicenseNoticeView: View {
                 }
 
                 Section("Project and License") {
+                    LabeledContent("Version", value: releaseVersion)
                     Text("This app is based on Roblox Account Manager by ic3w0lf22 and its contributors. Roblox Corporation does not make or approve it. Roblox is a trademark of Roblox Corporation.")
                     Text("GNU GPL version 3 lets you inspect, share, and change the source code. The software has no warranty.")
                 }
@@ -36,5 +37,18 @@ struct LicenseNoticeView: View {
             }
         }
         .frame(width: 760, height: 680)
+    }
+
+    private var releaseVersion: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        switch (version, build) {
+        case let (version?, build?) where !version.isEmpty && !build.isEmpty:
+            return "\(version) (\(build))"
+        case let (version?, _):
+            return version
+        default:
+            return "Development build"
+        }
     }
 }

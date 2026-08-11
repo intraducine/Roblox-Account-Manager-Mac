@@ -1,18 +1,20 @@
-# Roblox Account Manager for Mac 1.0 Implementation Specification
+# Roblox Account Manager for Mac 2.0 implementation specification
 
 ## 1. Product goal
 
-Version 1.0 must make this outcome reliable:
+Version 2.0 must make this outcome reliable:
 
 > A user can find a player visible to any saved Roblox account, identify the server, select other saved accounts, and launch every account that is expected to have access.
 
 The app must never claim that an account can join when Roblox has not provided enough information. It must not bypass Roblox privacy or private-server access rules.
 
+This file defines the version 2.0 release contract. The live test report states which checks used real Roblox clients and which cases still need controlled test accounts.
+
 This specification assumes:
 
 - The user owns or has permission to use every saved account.
 - "Joinable players" means the union of online friends visible to the saved accounts.
-- Followers and users followed are outside the initial 1.0 scope.
+- Followers and users followed are outside the version 2.0 scope.
 - The user has only a free Apple developer account.
 - The app remains a native SwiftUI macOS application.
 - The normal Roblox client copies remain unchanged.
@@ -25,7 +27,7 @@ A free Apple account is sufficient for local development. It is not sufficient f
 
 ### Required release approach
 
-Version 1.0 must:
+Version 2.0 must:
 
 - Build a universal Intel and Apple silicon app.
 - Use an ad hoc signature when no paid signing identity exists.
@@ -35,7 +37,7 @@ Version 1.0 must:
 - Explain that a downloaded build is not notarized.
 - Recommend building from source for the best local trust boundary.
 
-Version 1.0 must not:
+Version 2.0 must not:
 
 - Depend on Personal Team provisioning.
 - Claim that the app is notarized.
@@ -44,16 +46,16 @@ Version 1.0 must not:
 
 WebKit, Keychain, local files, and normal HTTPS requests do not require paid Apple services for this unsandboxed Mac app.
 
-## 3. Version 1.0 scope
+## 3. Version 2.0 scope
 
 ### Required features
 
 1. Selected-account Roblox website
 2. Joinable Players discovery
-3. Public-server verification
+3. Authenticated friend-target discovery
 4. Per-account join assessment
-5. Batch join into a verified public server
-6. Restricted-server web fallback
+5. Source-first Job ID handoff
+6. Missing-target web fallback
 7. Session health and reauthentication
 8. Launch Sets
 9. Recent and favorite experiences
@@ -139,11 +141,17 @@ When the window closes:
 6. If Roblox invalidated the old session, mark the account as signed out.
 7. Never save a cookie that belongs to a different user ID.
 
+### Keychain layout
+
+Store every account session in one versioned generic-password item. The item contains a dictionary keyed by the local account UUID. Serialize access inside the process and cache the decoded dictionary after the first successful read.
+
+Older releases stored one item per account. If the shared item does not contain an account, read that older item once and add its session to the shared item. Delete the old item only after the shared item update succeeds. Do not weaken the Keychain access list. A rebuilt ad hoc app can require one macOS approval for the shared item. It must not require one approval for every current account.
+
 ### Restricted-player fallback
 
-This browser is also the safe fallback for players whose servers cannot be verified as public.
+This browser is also the fallback when Roblox does not return a Job ID.
 
-The app should open the target player's Roblox profile as a source account that can see the player. The user can then use Roblox's own Join Experience button.
+The app should open the target player's Roblox profile as a source account that can see the player. When the user selects Roblox's Join Experience button, the managed browser must cancel the original launch request. It must keep only the Place ID and supported server choice, request a new ticket for the account shown in that window, and launch that account through the normal unchanged-copy path. It must not pass the website's ticket to Roblox or fall back to the normal installed client.
 
 Roblox states that this button appears only when the player allows the current user to join and the current user has the required experience permissions. See [How to follow or join another player in experiences](https://en.help.roblox.com/hc/en-us/articles/203314220-How-to-follow-or-join-another-player-in-experiences).
 
@@ -153,27 +161,19 @@ Roblox states that this button appears only when the player allows the current u
 
 #### Source account
 
-A managed account whose Roblox friends are being checked.
+A managed account whose authenticated online-friends result is being checked.
 
 #### Candidate player
 
-A Roblox user found through at least one source account's friend list.
+A Roblox user shown in at least one source account's online-friends result.
 
 #### Visible player
 
 A candidate for whom Roblox provides online or in-experience information to at least one source account.
 
-#### Verified public server
+#### Friend target
 
-A server whose Job ID appears in Roblox's public server list for the reported Place ID.
-
-#### Restricted or unlisted server
-
-A server that does not appear in the complete public server search.
-
-#### Unconfirmed server
-
-A server that was not found before the public-server search budget ended.
+A Place ID and Job ID that Roblox reports to a saved account for one of its online friends.
 
 #### Expected to join
 
@@ -181,53 +181,17 @@ A managed account that:
 
 - Has a valid saved session.
 - Is not already running.
-- Can access the experience as far as the app can determine.
-- Is targeting a verified public server.
-- Fits within the last reported server capacity.
+- Has a friend target with a Place ID and Job ID.
 
 "Expected" is not a guarantee. Roblox can still reject the launch because of age, region, experience access, bans, a full server, or a server closing.
 
 ## 6. Discovery data sources
 
-Roblox documents endpoints for public friend lists, online friends, friend status, and presence. Some online-friend operations use cookie authentication. See the [Roblox Connections reference](https://create.roblox.com/docs/cloud/reference/features/friends).
+Roblox documents endpoints for online friends and connection data. The current app calls the authenticated online-friends endpoint once for each source account. See the [Roblox Connections reference](https://create.roblox.com/docs/cloud/reference/features/friends).
 
 Legacy cookie-based Roblox APIs can change without notice. Keep all such calls behind a narrow protocol so they can be replaced without changing the UI. See [Roblox Cloud API guidance](https://create.roblox.com/docs/cloud).
 
-### Phase 0 research requirement
-
-Before agents build the production feature, they must test:
-
-1. A target visible to everyone.
-2. A target visible only to friends.
-3. A target hidden from all tested accounts.
-4. A target in a public server.
-5. A target in a private server.
-6. A source account that is the target's friend.
-7. A loaded account that is not the target's friend.
-
-For each case, compare:
-
-- Anonymous Presence API response
-- Presence request with the source account cookie
-- Authenticated online-friends response
-- Roblox website behavior for the same account
-- Public server list results
-
-### Required research decision
-
-If an authenticated endpoint reliably returns relationship-specific presence:
-
-- Use it for each source account.
-- Record which source accounts can see each target.
-
-If it does not:
-
-- Limit automatic discovery to public presence.
-- Label the result "Publicly visible."
-- Do not claim that the app can compile friend-only presence.
-- Keep friend-only joining in the selected-account website.
-
-Agents must not use an undocumented workaround to expose hidden presence.
+The app does not use anonymous presence for friend discovery. It does not query accounts that the user did not save. It does not guess hidden presence.
 
 ## 7. Discovery algorithm
 
@@ -243,14 +207,16 @@ Allow the user to limit discovery to:
 
 Do not query accounts with expired sessions through authenticated endpoints.
 
-### Step 2: load friends
+### Step 2: load online friends
 
 For every source account:
 
-1. Load its Roblox friend list.
-2. Record the source account ID for every friend.
-3. Merge duplicate players by Roblox user ID.
-4. Keep all source relationships.
+1. Read its saved session from the shared Keychain item.
+2. Request its authenticated online-friends result.
+3. Process source accounts one at a time. Do not create a request burst.
+4. Record the source account ID for every friend in an experience.
+5. Merge duplicate players by Roblox user ID.
+6. Keep all source relationships.
 
 Example:
 
@@ -264,19 +230,9 @@ struct PlayerCandidate {
 }
 ```
 
-### Step 3: load presence
+### Step 3: record the reported target
 
-Request presence in bounded batches.
-
-Initial values:
-
-```swift
-let presenceBatchSize = 50
-let maximumConcurrentRequests = 2
-let cacheLifetime: TimeInterval = 60
-```
-
-These values must be configurable.
+Use the presence fields in the authenticated online-friends response. Do not make a separate public-presence request.
 
 For each player, record:
 
@@ -299,94 +255,43 @@ If several source accounts see the same player:
 
 - Show one player row.
 - Show every source account that can see that player.
-- Prefer the newest complete presence response.
+- Prefer the most complete current response.
 - Record conflicting results for diagnostics.
 - Do not expose cookies or raw response bodies in diagnostics.
 
-### Step 5: verify the server
+### Step 5: hand off the Job ID
 
-For each unique `(placeID, jobID)` pair:
+Friend joining must not query public server pages.
 
-1. Query Roblox's public server pages.
-2. Stop when the matching Job ID is found.
-3. Cache every fetched page for one minute.
-4. Stop after 10 pages by default.
-5. Allow the user to continue the search manually.
-6. Respect HTTP 429 and `Retry-After`.
+1. Require at least one selected account from the player's **Found through** list.
+2. Check every selected account before any launch.
+3. Start one **Found through** account first with the reported Place ID and Job ID.
+4. Stop if that source client does not start.
+5. After the source client starts, give the same Place ID and Job ID to the other selected accounts.
+6. Keep a separate success or failure result for every account.
 
-Classification:
-
-- Found: `verifiedPublic`
-- All pages exhausted: `restrictedOrUnavailable`
-- Search budget ended: `unconfirmed`
-- Network failed: `verificationFailed`
-
-Absence from the first page must never mean "private."
-
-### Step 6: calculate capacity
-
-For a verified public server:
-
-```swift
-openSpaces = maxPlayers - playing
-```
-
-Before launch:
-
-- Refresh the matching public-server page.
-- Compare open spaces with the selected account count.
-- Exclude accounts that are already running.
-- Warn that capacity can change during launch.
-
-If only two spaces remain and four accounts are selected, offer:
-
-- Launch First 2
-- Change Selection
-- Cancel
-
-Do not silently drop accounts.
+The manager cannot know current capacity without a public-server request. Show capacity as unknown. State that Roblox decides access and space for each account.
 
 ## 8. Join decision tree
 
-### Case A: verified public server
+### Case A: friend target with a Job ID
 
-Allow any selected valid managed account to attempt the Job ID launch.
+Require at least one selected source account that can see the friend.
 
 Show each account as:
 
 - Expected to join
 - Already running
 - Signed out
-- Server has no space for this account
 - Account status unknown
 
 Primary action:
 
-> Join 4 Accounts
+> Join Friend with 4 Accounts
 
-### Case B: public status unconfirmed
+The source starts first. The other selected accounts start only after the source process is running. Roblox may still reject any account.
 
-Do not label it private.
-
-Offer:
-
-- Continue Checking
-- Try Selected Accounts
-- Open Player Profile as @source
-
-"Try Selected Accounts" must explain that Roblox may reject some accounts.
-
-### Case C: server confirmed unlisted
-
-Do not batch-launch arbitrary accounts by Job ID.
-
-If the target is visible to a source account, offer:
-
-> Open @target's Profile as @source
-
-The user then uses Roblox's normal Join button.
-
-### Case D: private server link is available
+### Case B: private server link is available
 
 Use the existing private-server path.
 
@@ -400,7 +305,7 @@ For each selected account:
 
 Roblox states that private-server access can depend on invitations, friend access, age, and privacy settings. Error 524 commonly means that the account lacks permission. See [Roblox Error 524 guidance](https://en.help.roblox.com/hc/en-us/articles/41933144508180-Error-Code-524-You-do-not-have-permission-to-join-this-game).
 
-### Case E: no Job ID
+### Case C: no Job ID
 
 Show:
 
@@ -408,7 +313,7 @@ Show:
 
 Offer only the account-browser fallback.
 
-### Case F: offline or hidden
+### Case D: offline or hidden
 
 Show:
 
@@ -444,18 +349,14 @@ Open a separate window. Do not add another large block to the account detail scr
 Columns:
 
 - Player
-- Visible To
+- Found Through
 - Experience
 - Server
 - Open Spaces
 
 Server values:
 
-- Public
-- Public, full
-- Checking
-- Not confirmed
-- Restricted or unavailable
+- Friend server
 - No server supplied
 
 Do not use status pills for every row. Use text, weight, and a small system status symbol only where needed.
@@ -468,8 +369,8 @@ When the user selects a player, show:
 - Username
 - Experience
 - Source accounts that can see the player
-- Server verification result
-- Open-space count
+- Reported server result
+- Capacity shown as unknown
 - Managed account selection
 - Per-account assessment
 - One primary action
@@ -477,7 +378,6 @@ When the user selects a player, show:
 Possible primary actions:
 
 - Join Selected Accounts
-- Continue Checking
 - Open Profile as @source
 
 ### Empty states
@@ -673,9 +573,9 @@ All new network code must:
 
 A partial failure must not discard successful results from other accounts.
 
-## 17. Proposed source layout
+## 17. Source layout
 
-### New core files
+### Primary core files
 
 - `Sources/RAMacCore/RobloxSocialAPIClient.swift`
 - `Sources/RAMacCore/PlayerDiscoveryModels.swift`
@@ -683,16 +583,13 @@ A partial failure must not discard successful results from other accounts.
 - `Sources/RAMacCore/JoinAssessmentService.swift`
 - `Sources/RAMacCore/AccountHealthService.swift`
 - `Sources/RAMacCore/LaunchSet.swift`
-- `Sources/RAMacCore/LaunchSetRepository.swift`
 - `Sources/RAMacCore/ExperienceLibrary.swift`
 - `Sources/RAMacCore/MetadataArchive.swift`
 - `Sources/RAMacCore/DiagnosticReport.swift`
 
-### New app files
+### Primary app files
 
 - `Sources/RAMacApp/JoinablePlayersView.swift`
-- `Sources/RAMacApp/JoinablePlayerDetailView.swift`
-- `Sources/RAMacApp/AccountJoinMatrixView.swift`
 - `Sources/RAMacApp/AccountWebView.swift`
 - `Sources/RAMacApp/AccountWebSessionModel.swift`
 - `Sources/RAMacApp/LaunchSetsView.swift`
@@ -700,7 +597,7 @@ A partial failure must not discard successful results from other accounts.
 - `Sources/RAMacApp/AccountHealthView.swift`
 - `Sources/RAMacApp/DiagnosticsView.swift`
 
-### Existing files to extend
+### Supporting files
 
 - `AccountStore.swift`
 - `ContentView.swift`
@@ -732,7 +629,7 @@ protocol RobloxSocialProviding: Sendable {
 
 protocol PlayerDiscovering: Sendable {
     func discover(
-        sourceAccounts: [ManagedAccount]
+        sources: [PlayerDiscoverySource]
     ) async -> PlayerDiscoveryResult
 }
 
@@ -755,13 +652,11 @@ Cover:
 - Friend union and user-ID deduplication
 - Multiple source accounts for one player
 - Conflicting presence results
-- Presence batching
-- Cache expiration
-- Public-server pagination
-- Server found on a later page
-- Search budget ending before a match
-- Full server
-- Partial capacity
+- Sequential source requests
+- Online-friends cache use
+- Zero public-presence calls during friend discovery
+- Zero public-server calls during friend discovery and launch
+- Source account launches before the other selected accounts
 - Offline player
 - Hidden or missing presence
 - Invalid source session
@@ -783,8 +678,8 @@ Simulate:
 - Three loaded accounts
 - Overlapping friend lists
 - One target visible to two accounts
-- One public server
-- One unlisted server
+- One friend target with a Place ID and Job ID
+- One friend target without a Job ID
 - One expired account
 - One rate-limited source account
 
@@ -807,62 +702,63 @@ Use test accounts owned by the developer.
 11. Two managed accounts launch together
 12. Stop All leaves zero managed Roblox processes
 
-Record only account IDs created for testing. Do not commit cookies, usernames, private links, or launch tickets.
+Use anonymous account labels in the test report. Do not commit account IDs, cookies, usernames, private links, or launch tickets.
 
-## 20. Implementation phases
+## 20. Implementation record
 
-### Phase 0: endpoint research
+These phases record the build order. They are not current user instructions.
+
+### Phase 0: endpoint research - complete
 
 - Complete the relationship-specific presence test.
 - Record exact status codes and response fields.
-- Decide whether authenticated friend-only discovery is reliable.
-- Do not build UI against assumed behavior.
+- Use the authenticated online-friends response as the current friend source.
 
-### Phase 1: social models and mocked discovery
+### Phase 1: social models and mocked discovery - complete
 
 - Add protocols and models.
 - Implement union and deduplication.
 - Add deterministic tests.
 - Do not add production network calls yet.
 
-### Phase 2: production discovery client
+### Phase 2: production discovery client - complete
 
-- Implement friend and presence calls.
+- Implement authenticated online-friends calls.
 - Add request limits, caching, and cancellation.
-- Add public-server verification.
+- Keep public-server browsing separate from friend discovery.
 - Add partial-failure handling.
 
-### Phase 3: Joinable Players UI
+### Phase 3: Joinable Players UI - complete
 
 - Add the window, table, detail view, and join matrix.
 - Use existing account selection behavior.
-- Add public batch join.
-- Add restricted-server fallback.
+- Add source-first Job ID handoff.
+- Add missing-target profile fallback.
 
-### Phase 4: selected-account website
+### Phase 4: selected-account website - complete
 
 - Add isolated WebKit sessions.
 - Add identity toolbar.
 - Add cookie validation and synchronization.
-- Connect restricted targets to profile fallback.
+- Connect missing targets to profile fallback.
 
-### Phase 5: health, presets, and experience library
+### Phase 5: health, presets, and experience library - complete
 
 - Add account health.
 - Add Launch Sets.
 - Add recent and favorite experiences.
 - Add migration tests.
 
-### Phase 6: backup and diagnostics
+### Phase 6: backup and diagnostics - complete
 
 - Add redacted export and import.
 - Add local diagnostics.
 - Verify no secret leakage.
 
-### Phase 7: release hardening
+### Phase 7: release hardening - complete
 
 - Run all automated tests.
-- Run the live test matrix.
+- Record completed live checks and open controlled-account cases.
 - Build both architectures.
 - Create the universal app.
 - Apply ad hoc signing.
@@ -872,15 +768,17 @@ Record only account IDs created for testing. Do not commit cookies, usernames, p
 
 ## 21. Acceptance criteria
 
-Version 1.0 is complete only when:
+Version 2.0 is complete only when:
 
 - The app combines duplicate friends from several managed accounts.
 - Every discovered player shows which managed accounts can see them.
-- The app verifies a server as public before presenting a confident bulk-join action.
-- Any valid selected account can attempt to join a verified public Job ID.
-- Capacity is checked before batch launch.
+- Friend discovery uses the authenticated online-friends result for each source.
+- Friend joining makes no public-presence or public-server request.
+- At least one selected source account starts before the other accounts.
+- The same reported Place ID and Job ID are passed to every selected account.
+- The UI states that Roblox decides access and capacity.
 - Each account gets a separate success or failure result.
-- Restricted servers use the Roblox profile fallback.
+- Missing Job IDs use the Roblox profile fallback.
 - Private links are checked separately for each account.
 - Hidden presence is never exposed or guessed.
 - The selected-account website never shares cookies across accounts.
@@ -893,16 +791,16 @@ Version 1.0 is complete only when:
 - The app builds with no paid Apple services.
 - The release documentation does not claim notarization.
 - The complete automated suite passes.
-- The live public, private, full, hidden, and expired-session cases are recorded.
+- The live report clearly separates completed checks from cases that still need controlled test accounts.
 
 ### Primary success measure
 
 A user with three saved accounts can:
 
 1. Refresh Joinable Players.
-2. Select a visible player in a verified public server.
-3. Select two other accounts.
-4. Launch both accounts.
+2. Select a friend with a reported server.
+3. Select the source account and two other accounts.
+4. Start the source account, then launch the other accounts into the same Job ID.
 5. See a clear result for each account.
 
 The full flow should take less than 30 seconds after cached data is available.
@@ -912,7 +810,7 @@ The full flow should take less than 30 seconds after cached data is available.
 - Zero session secrets in logs or exports
 - Zero cross-account browser-cookie leaks
 - Zero hidden-presence bypasses
-- Zero automatic launches into unverified restricted servers
+- Zero public-server scans in the friend flow
 - Zero silent account drops from a batch
 - Zero modified Roblox files in the normal launch method
 

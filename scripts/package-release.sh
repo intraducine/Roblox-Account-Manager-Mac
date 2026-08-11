@@ -5,7 +5,8 @@ script_dir=${0:A:h}
 project_dir=${script_dir:h}
 app_name="Roblox Account Manager.app"
 app_path="$project_dir/dist/$app_name"
-archive_path="$project_dir/dist/Roblox-Account-Manager-for-Mac-1.0.0.zip"
+release_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$project_dir/packaging/Info.plist")
+archive_path="$project_dir/dist/Roblox-Account-Manager-for-Mac-$release_version.zip"
 checksum_path="$archive_path.sha256"
 
 cd "$project_dir"

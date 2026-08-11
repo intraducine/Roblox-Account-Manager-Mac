@@ -16,16 +16,22 @@
     <string>Roblox Account Manager</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
-    <key>CFBundleVersion</key>
-	<string>10</string>
+	<key>CFBundleShortVersionString</key>
+	<string>2.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>20</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Roblox clients started by this app use the microphone for Roblox voice chat.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Roblox clients started by this app use the camera for Roblox camera features.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Roblox clients started by this app use the local network for Roblox device and game features.</string>
     <key>NSHumanReadableCopyright</key>
     <string>GPL-3.0. Mac port copyright 2026 Intraducine and contributors.</string>
 </dict>

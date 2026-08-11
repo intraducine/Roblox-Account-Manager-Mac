@@ -48,7 +48,7 @@ struct AccountWebsiteWindow: View {
                 .navigationTitle("Roblox Website as @\(account.username)")
                 .toolbar { browserToolbar(account) }
                 .confirmationDialog(
-                    "Open this link outside Roblox?",
+                    "Open \(model.pendingExternalDestination)?",
                     isPresented: Binding(
                         get: { model.pendingExternalURL != nil },
                         set: { if !$0 { model.pendingExternalURL = nil } }
@@ -57,7 +57,25 @@ struct AccountWebsiteWindow: View {
                     Button("Open in Default Browser") { model.openPendingExternalURL() }
                     Button("Cancel", role: .cancel) { model.pendingExternalURL = nil }
                 } message: {
-                    Text("This link is not on roblox.com. It will open without this managed account sign-in.")
+                    Text("The Roblox page requested this address. It will open in your default browser. Your managed account sign-in will not be shared.")
+                }
+                .onChange(of: model.pendingManagedLaunch) { launchRequest in
+                    guard let launchRequest else { return }
+                    model.pendingManagedLaunch = nil
+                    Task {
+                        await store.launchFromWebsite(
+                            accountID: account.id,
+                            request: launchRequest
+                        )
+                    }
+                }
+                .onChange(of: model.hasUnsupportedRobloxLaunch) { isUnsupported in
+                    guard isUnsupported else { return }
+                    model.hasUnsupportedRobloxLaunch = false
+                    store.notice = AccountStore.Notice(
+                        title: "This Roblox Play link could not be read",
+                        message: "The manager did not open the normal Roblox app because it could use the wrong account. Return to the game page and try again."
+                    )
                 }
                 .onDisappear { synchronizeAndClear(account) }
             } else {
@@ -93,9 +111,21 @@ struct AccountWebsiteWindow: View {
                 Text("@\(account.username)").font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Text("This window uses only this account's temporary Roblox sign-in.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if store.isRunning(account) {
+                Label("Running", systemImage: "play.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if store.isWorking {
+                ProgressView()
+                    .controlSize(.small)
+                Text(store.launchStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("This window uses only this account's temporary Roblox sign-in.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

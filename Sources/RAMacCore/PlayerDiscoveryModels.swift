@@ -69,14 +69,33 @@ public struct PlayerPresenceSnapshot: Equatable, Sendable {
 
 public enum PublicServerVerification: Equatable, Sendable {
     case noServerSupplied
+    case friendTarget
     case verifiedPublic(RobloxPublicServer)
     case restrictedOrUnavailable
     case unconfirmed(pagesSearched: Int)
+    case paused(pagesSearched: Int, retryAfter: Int?)
     case verificationFailed(String)
 
     public var isVerifiedPublic: Bool {
         if case .verifiedPublic = self { return true }
         return false
+    }
+
+    public var allowsDirectJoinAttempt: Bool {
+        switch self {
+        case .friendTarget, .verifiedPublic: return true
+        default: return false
+        }
+    }
+}
+
+public struct PlayerDiscoverySource: Sendable {
+    public let account: ManagedAccount
+    public let session: String
+
+    public init(account: ManagedAccount, session: String) {
+        self.account = account
+        self.session = session
     }
 }
 
@@ -144,7 +163,7 @@ public struct PlayerDiscoveryConfiguration: Equatable, Sendable {
         presenceBatchSize: Int = 50,
         maximumConcurrentRequests: Int = 2,
         cacheLifetime: TimeInterval = 60,
-        maximumServerPages: Int = 10
+        maximumServerPages: Int = 3
     ) {
         self.presenceBatchSize = max(1, presenceBatchSize)
         self.maximumConcurrentRequests = max(1, maximumConcurrentRequests)
@@ -201,7 +220,7 @@ public struct PlayerJoinTarget: Equatable, Sendable {
 }
 
 public protocol PlayerDiscovering: Sendable {
-    func discover(sourceAccounts: [ManagedAccount]) async -> PlayerDiscoveryResult
+    func discover(sources: [PlayerDiscoverySource]) async -> PlayerDiscoveryResult
     func continueVerification(for player: DiscoveredPlayer) async -> PublicServerVerification
     func refreshVerification(for player: DiscoveredPlayer) async -> PublicServerVerification
     func clearCache() async

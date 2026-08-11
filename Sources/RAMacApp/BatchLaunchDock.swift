@@ -26,9 +26,9 @@ struct BatchLaunchBar: View {
             )
 
             HStack(spacing: 10) {
-                TextField("Shared place ID", text: $placeID)
+                TextField("Shared place ID", text: gamePlaceID)
                     .frame(width: 180)
-                ExperienceChooserButton(store: store, placeID: $placeID)
+                ExperienceChooserButton(store: store, placeID: gamePlaceID)
                 ServerSelectionControl(
                     store: store,
                     placeID: $placeID,
@@ -50,6 +50,13 @@ struct BatchLaunchBar: View {
 
     private var selectionCount: Int {
         store.batchSelectedIDs.count
+    }
+
+    private var gamePlaceID: Binding<String> {
+        placeIDBindingResettingServer(
+            placeID: $placeID,
+            serverSelection: $serverSelection
+        )
     }
 
     private var buttonTitle: String {

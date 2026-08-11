@@ -12,7 +12,7 @@ public struct RobloxSocialUser: Codable, Equatable, Sendable {
     }
 }
 
-public struct RobloxVisibleFriend: Codable, Equatable, Sendable {
+public struct RobloxVisibleFriend: Decodable, Equatable, Sendable {
     public let id: Int64
     public let name: String
     public let displayName: String
@@ -43,6 +43,73 @@ public struct RobloxVisibleFriend: Codable, Equatable, Sendable {
         self.gameId = gameId
         self.universeId = universeId
         self.lastLocation = lastLocation
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case displayName
+        case userPresence
+        case userPresenceType
+        case placeId
+        case rootPlaceId
+        case gameId
+        case universeId
+        case lastLocation
+    }
+
+    private enum PresenceKeys: String, CodingKey {
+        case userPresenceType = "UserPresenceType"
+        case lowerUserPresenceType = "userPresenceType"
+        case lastLocation
+        case placeId
+        case rootPlaceId
+        case gameInstanceId
+        case gameId
+        case universeId
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(Int64.self, forKey: .id)
+        name = try values.decodeIfPresent(String.self, forKey: .name) ?? ""
+        displayName = try values.decodeIfPresent(String.self, forKey: .displayName) ?? name
+
+        if let presence = try? values.nestedContainer(keyedBy: PresenceKeys.self, forKey: .userPresence) {
+            let stringType = (try? presence.decodeIfPresent(String.self, forKey: .userPresenceType))
+                ?? (try? presence.decodeIfPresent(String.self, forKey: .lowerUserPresenceType))
+            let integerType = (try? presence.decodeIfPresent(Int.self, forKey: .userPresenceType))
+                ?? (try? presence.decodeIfPresent(Int.self, forKey: .lowerUserPresenceType))
+            placeId = try presence.decodeIfPresent(Int64.self, forKey: .placeId)
+            rootPlaceId = try presence.decodeIfPresent(Int64.self, forKey: .rootPlaceId)
+            gameId = try presence.decodeIfPresent(String.self, forKey: .gameInstanceId)
+                ?? presence.decodeIfPresent(String.self, forKey: .gameId)
+            universeId = try presence.decodeIfPresent(Int64.self, forKey: .universeId)
+            lastLocation = try presence.decodeIfPresent(String.self, forKey: .lastLocation)
+            userPresenceType = integerType
+                ?? Self.presenceType(from: stringType, hasGameTarget: placeId != nil && gameId != nil)
+        } else {
+            userPresenceType = try values.decodeIfPresent(Int.self, forKey: .userPresenceType)
+            placeId = try values.decodeIfPresent(Int64.self, forKey: .placeId)
+            rootPlaceId = try values.decodeIfPresent(Int64.self, forKey: .rootPlaceId)
+            gameId = try values.decodeIfPresent(String.self, forKey: .gameId)
+            universeId = try values.decodeIfPresent(Int64.self, forKey: .universeId)
+            lastLocation = try values.decodeIfPresent(String.self, forKey: .lastLocation)
+        }
+    }
+
+    private static func presenceType(from value: String?, hasGameTarget: Bool) -> Int {
+        let normalized = value?.lowercased() ?? ""
+        if normalized.contains("studio") { return RobloxPresenceType.inStudio.rawValue }
+        if normalized.contains("game") || normalized.contains("experience") {
+            return RobloxPresenceType.inExperience.rawValue
+        }
+        if normalized.contains("online") || normalized.contains("website") {
+            return RobloxPresenceType.online.rawValue
+        }
+        if normalized.contains("invisible") { return RobloxPresenceType.invisible.rawValue }
+        if hasGameTarget { return RobloxPresenceType.inExperience.rawValue }
+        return RobloxPresenceType.offline.rawValue
     }
 }
 
@@ -151,9 +218,14 @@ public struct RobloxSocialAPIClient: RobloxSocialProviding, Sendable {
         var request = URLRequest(url: url)
         applyPublicHeaders(to: &request)
         applyCookie(rawSession, to: &request)
-        let data = try await responseData(for: request, safeRead: true)
-        do { return try decoder.decode(OnlineFriendResponse.self, from: data).data }
-        catch { throw RobloxSocialAPIError.invalidResponse }
+        let data = try await responseData(for: request, safeRead: false)
+        if let response = try? decoder.decode(OnlineFriendResponse.self, from: data) {
+            return response.data
+        }
+        if let response = try? decoder.decode([RobloxVisibleFriend].self, from: data) {
+            return response
+        }
+        throw RobloxSocialAPIError.invalidResponse
     }
 
     public func presences(for userIDs: [Int64], session rawSession: String? = nil) async throws -> [RobloxSocialPresence] {
@@ -209,7 +281,7 @@ public struct RobloxSocialAPIClient: RobloxSocialProviding, Sendable {
     }
 
     private func applyPublicHeaders(to request: inout URLRequest) {
-        request.setValue("Roblox Account Manager for Mac/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox Account Manager for Mac/2.0.0", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 

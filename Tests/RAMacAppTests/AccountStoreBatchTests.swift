@@ -93,7 +93,7 @@ final class AccountStoreBatchTests: XCTestCase {
 
         let saved = try fixture.repository.load()
         XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[0].id })?.savedPlaceID, "12345")
-        XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[0].id })?.savedServer, jobID)
+        XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[0].id })?.savedServer, "")
         XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[1].id })?.savedPlaceID, "")
     }
 
@@ -137,6 +137,184 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(result.user.name, "builderman")
         XCTAssertEqual(result.presence.placeId, 1818)
         XCTAssertEqual(result.presence.gameId, "11111111-2222-3333-4444-555555555555")
+    }
+
+    func testFriendJoinStartsSourceFirstAndNeverSearchesPublicServers() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let sourceAccount = fixture.accounts[1]
+        let jobID = "11111111-2222-3333-4444-555555555555"
+        var staleSource = sourceAccount
+        staleSource.savedPlaceID = "999"
+        staleSource.savedServer = jobID
+        fixture.store.update(staleSource)
+        var savedPrivateChoice = fixture.accounts[0]
+        savedPrivateChoice.savedPlaceID = "888"
+        savedPrivateChoice.savedServer = "https://www.roblox.com/games/888?privateServerLinkCode=saved-choice"
+        fixture.store.update(savedPrivateChoice)
+        let player = DiscoveredPlayer(
+            candidate: PlayerCandidate(
+                userID: 900,
+                username: "friend",
+                displayName: "Friend",
+                sourceAccountIDs: [sourceAccount.id]
+            ),
+            presence: PlayerPresenceSnapshot(
+                userID: 900,
+                presenceType: .inExperience,
+                placeID: 1818,
+                jobID: jobID
+            ),
+            verification: .friendTarget,
+            isPubliclyVisible: false
+        )
+
+        await fixture.store.launchFriendPlayer(
+            player,
+            accountIDs: Set(fixture.accounts.map(\.id))
+        )
+
+        let attempts = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertEqual(attempts.first, sourceAccount.id)
+        XCTAssertEqual(Set(attempts.dropFirst()), Set(fixture.accounts.map(\.id)).subtracting([sourceAccount.id]))
+        let publicServerRequests = await fixture.api.publicServerRequestCount()
+        XCTAssertEqual(publicServerRequests, 0)
+        XCTAssertEqual(fixture.store.runningAccountIDs, Set(fixture.accounts.map(\.id)))
+        XCTAssertEqual(fixture.store.batchStatus, "Started all 3 accounts")
+        XCTAssertEqual(fixture.store.launchStatus, "Running 3 accounts in the friend server")
+
+        let saved = try fixture.repository.load()
+        let sourceAfterLaunch = try XCTUnwrap(saved.first(where: { $0.id == sourceAccount.id }))
+        XCTAssertEqual(sourceAfterLaunch.savedPlaceID, "999")
+        XCTAssertEqual(sourceAfterLaunch.savedServer, "")
+        let privateChoiceAfterLaunch = try XCTUnwrap(saved.first(where: { $0.id == savedPrivateChoice.id }))
+        XCTAssertEqual(privateChoiceAfterLaunch.savedPlaceID, "888")
+        XCTAssertEqual(privateChoiceAfterLaunch.savedServer, savedPrivateChoice.savedServer)
+        let untouchedAfterLaunch = try XCTUnwrap(saved.first(where: { $0.id == fixture.accounts[2].id }))
+        XCTAssertEqual(untouchedAfterLaunch.savedPlaceID, "")
+        XCTAssertEqual(untouchedAfterLaunch.savedServer, "")
+    }
+
+    func testFriendJoinRequiresASelectedSourceAccount() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let player = DiscoveredPlayer(
+            candidate: PlayerCandidate(
+                userID: 900,
+                username: "friend",
+                displayName: "Friend",
+                sourceAccountIDs: [fixture.accounts[0].id]
+            ),
+            presence: PlayerPresenceSnapshot(
+                userID: 900,
+                presenceType: .inExperience,
+                placeID: 1818,
+                jobID: "11111111-2222-3333-4444-555555555555"
+            ),
+            verification: .friendTarget,
+            isPubliclyVisible: false
+        )
+
+        await fixture.store.launchFriendPlayer(
+            player,
+            accountIDs: [fixture.accounts[1].id, fixture.accounts[2].id]
+        )
+
+        XCTAssertEqual(fixture.store.notice?.title, "Select a friend account")
+        let attemptedAccountIDs = await fixture.launcher.attemptedAccountIDs()
+        XCTAssertTrue(attemptedAccountIDs.isEmpty)
+    }
+
+    func testFriendJoinRejectsAnAccountThatIsAlreadyRunning() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let source = fixture.accounts[0]
+        await fixture.store.launch(account: source, placeText: "1818", server: .automatic)
+        let attemptsBeforeFriendJoin = await fixture.launcher.orderedAttemptedAccountIDs()
+        let player = DiscoveredPlayer(
+            candidate: PlayerCandidate(
+                userID: 900,
+                username: "friend",
+                displayName: "Friend",
+                sourceAccountIDs: [source.id]
+            ),
+            presence: PlayerPresenceSnapshot(
+                userID: 900,
+                presenceType: .inExperience,
+                placeID: 1818,
+                jobID: "11111111-2222-3333-4444-555555555555"
+            ),
+            verification: .friendTarget,
+            isPubliclyVisible: false
+        )
+
+        await fixture.store.launchFriendPlayer(player, accountIDs: [source.id, fixture.accounts[1].id])
+
+        XCTAssertEqual(fixture.store.notice?.title, "A selected account is already running")
+        let attemptsAfterFriendJoin = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertEqual(attemptsAfterFriendJoin, attemptsBeforeFriendJoin)
+    }
+
+    func testLoadRemovesSavedJobIDsButKeepsPrivateServerLinks() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-temporary-server-tests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let jobID = "11111111-2222-3333-4444-555555555555"
+        let privateLink = "https://www.roblox.com/games/1818?privateServerLinkCode=saved-choice"
+        let accounts = [
+            ManagedAccount(userID: 1, username: "temporary", displayName: "Temporary", savedServer: jobID),
+            ManagedAccount(userID: 2, username: "private", displayName: "Private", savedServer: privateLink)
+        ]
+        try repository.save(accounts)
+
+        let store = AccountStore(
+            repository: repository,
+            vault: MemoryVault(),
+            api: BatchMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil)
+        )
+
+        XCTAssertEqual(store.accounts.first(where: { $0.id == accounts[0].id })?.savedServer, "")
+        XCTAssertEqual(store.accounts.first(where: { $0.id == accounts[1].id })?.savedServer, privateLink)
+        let saved = try repository.load()
+        XCTAssertEqual(saved.first(where: { $0.id == accounts[0].id })?.savedServer, "")
+        XCTAssertEqual(saved.first(where: { $0.id == accounts[1].id })?.savedServer, privateLink)
+    }
+
+    func testWebsitePlayLaunchesTheProfileAccountWithoutSavingThePageTarget() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let account = fixture.accounts[1]
+
+        await fixture.store.launchFromWebsite(
+            accountID: account.id,
+            request: RobloxWebLaunchRequest(placeID: 1818, server: .automatic)
+        )
+
+        let attemptedAccountIDs = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertEqual(attemptedAccountIDs, [account.id])
+        XCTAssertTrue(fixture.store.runningAccountIDs.contains(account.id))
+        let saved = try fixture.repository.load()
+        let savedAccount = try XCTUnwrap(saved.first(where: { $0.id == account.id }))
+        XCTAssertEqual(savedAccount.savedPlaceID, "")
+        XCTAssertEqual(savedAccount.savedServer, "")
+    }
+
+    func testNormalClientExitClearsStaleRunningStatus() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let account = fixture.accounts[0]
+
+        await fixture.store.launch(account: account, placeText: "1818", server: .automatic)
+        XCTAssertTrue(fixture.store.launchStatus.hasPrefix("Running"))
+
+        await fixture.launcher.simulateExit(accountID: account.id)
+        await fixture.store.refreshRunningInstances()
+
+        XCTAssertEqual(fixture.store.launchStatus, "Ready")
+        XCTAssertEqual(fixture.store.batchStatus, "No managed Roblox clients are running")
+        XCTAssertTrue(fixture.store.runningAccountIDs.isEmpty)
     }
 
     func testWebCookieRotationSavesOnlyTheSameRobloxUser() async throws {
@@ -392,6 +570,7 @@ private actor BatchMockAPI: RobloxAPIProviding {
 private actor BatchMockLauncher: ParallelRobloxLaunching {
     private let failingAccountID: UUID?
     private var attempted = Set<UUID>()
+    private var orderedAttempts: [UUID] = []
     private var modes = Set<RobloxLaunchMode>()
     private var running = Set<UUID>()
 
@@ -405,6 +584,7 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
         mode: RobloxLaunchMode
     ) async throws -> ParallelRobloxInstance {
         attempted.insert(accountID)
+        orderedAttempts.append(accountID)
         modes.insert(mode)
         if accountID == failingAccountID { throw RobloxLaunchError.openFailed }
         running.insert(accountID)
@@ -430,6 +610,12 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
 
     func attemptedAccountIDs() -> Set<UUID> {
         attempted
+    }
+
+    func orderedAttemptedAccountIDs() -> [UUID] { orderedAttempts }
+
+    func simulateExit(accountID: UUID) {
+        running.remove(accountID)
     }
 
     func attemptedModes() -> Set<RobloxLaunchMode> {

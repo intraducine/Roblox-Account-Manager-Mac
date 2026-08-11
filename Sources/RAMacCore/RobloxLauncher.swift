@@ -929,6 +929,10 @@ public actor ParallelRobloxLauncher {
 
     @discardableResult
     private func run(executable: URL, arguments: [String]) throws -> String {
+        try Self.collectCommandOutput(executable: executable, arguments: arguments)
+    }
+
+    nonisolated static func collectCommandOutput(executable: URL, arguments: [String]) throws -> String {
         let process = Process()
         let pipe = Pipe()
         process.executableURL = executable
@@ -936,8 +940,8 @@ public actor ParallelRobloxLauncher {
         process.standardOutput = pipe
         process.standardError = pipe
         try process.run()
-        process.waitUntilExit()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         let output = String(data: data, encoding: .utf8) ?? ""
         guard process.terminationStatus == 0 else {
             throw CommandFailure(output: output.trimmingCharacters(in: .whitespacesAndNewlines))

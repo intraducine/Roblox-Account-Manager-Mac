@@ -40,4 +40,22 @@ final class JoinAssessmentServiceTests: XCTestCase {
         )
         XCTAssertEqual(result.map(\.state), [.alreadyRunning, .signedOut, .statusUnknown])
     }
+
+    func testFriendTargetDoesNotNeedPublicCapacityData() async {
+        let accounts = (1...3).map {
+            ManagedAccount(userID: Int64($0), username: "u\($0)", displayName: "U\($0)")
+        }
+        let health = Dictionary(uniqueKeysWithValues: accounts.map {
+            ($0.id, AccountHealth.ready(lastChecked: Date()))
+        })
+        let result = await JoinAssessmentService().assess(
+            target: PlayerJoinTarget(placeID: 1, jobID: "job", verification: .friendTarget),
+            accounts: accounts,
+            health: health,
+            runningAccountIDs: []
+        )
+
+        XCTAssertEqual(result.map(\.state), [.expectedToJoin, .expectedToJoin, .expectedToJoin])
+        XCTAssertTrue(result.allSatisfy { $0.explanation.contains("Roblox will decide") })
+    }
 }

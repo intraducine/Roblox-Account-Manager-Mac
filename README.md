@@ -4,13 +4,13 @@ A native SwiftUI app for running several Roblox accounts on one Mac. It saves ea
 
 This project is independent. Roblox Corporation does not make or approve it. Use only accounts that you own or have permission to use.
 
-## Version 1.0 features
+## Version 2.0 features
 
 - Launch several saved accounts together.
 - Stop one managed Roblox client or use **Stop All**.
-- Find friends whose current experience is publicly visible.
-- Verify that a reported Job ID is in Roblox's public server list before a normal batch join.
-- Check open server spaces before launch. The app never removes selected accounts without telling you.
+- Find friends whose current experience is visible to at least one saved account.
+- Start a friend account first, then send the same reported Job ID to the other selected accounts.
+- Browse public servers separately when you want a server with known open spaces.
 - Open Roblox Home, Profile, Settings, or Security in an isolated window for one selected account.
 - Check account sign-in health and sign in again without losing aliases, groups, notes, favorites, or Launch Sets.
 - Save Launch Sets for common account and experience choices.
@@ -42,7 +42,7 @@ To create the optional ZIP file and SHA-256 checksum:
 
 ```sh
 ./scripts/package-release.sh
-shasum -a 256 -c "dist/Roblox-Account-Manager-for-Mac-1.0.0.zip.sha256"
+shasum -a 256 -c "dist/Roblox-Account-Manager-for-Mac-2.0.0.zip.sha256"
 ```
 
 A downloaded build is not notarized. macOS can show a warning when you open it. Building from source gives you the clearest local trust boundary. This project does not use an automatic updater or paid Apple services.
@@ -52,6 +52,10 @@ A downloaded build is not notarized. macOS can show a warning when you open it. 
 Use **Add Account** and sign in on Roblox's temporary page. The page uses a non-persistent browser store. After sign-in, the app checks the Roblox user ID and saves only the `.ROBLOSECURITY` session in macOS Keychain.
 
 Treat `.ROBLOSECURITY` like a password. Never send it to another person.
+
+The current app stores all saved sessions inside one Keychain item. A rebuilt ad hoc app can make macOS ask for Keychain approval once when it first reads that item. It does not need one approval for each account. An older install may ask once for each old item during the one-time migration. The app removes each old item only after it saves that session in the shared item.
+
+The managed Roblox website window keeps top-level browsing on `roblox.com`. Secure frames used inside Roblox pages can load without an external-link warning, and they do not receive the Roblox session cookie. A real link to another site asks before it opens in the default browser and names the destination.
 
 You can give one account an alias, notes, and several groups. These fields do not change the Roblox account.
 
@@ -68,24 +72,26 @@ To launch:
 3. Let Roblox choose a server, browse public servers, find a player, or enter a supported private server link.
 4. Select **Launch Selected Accounts**.
 
-A Place ID is the number after `/games/` in a Roblox experience link. A Job ID identifies one current server. Job IDs stop working when that server closes.
+A Place ID is the number after `/games/` in a Roblox experience link. A Job ID identifies one current server. Job IDs stop working when that server closes, so the app never saves them as a future launch choice. Choosing or typing a different Place ID returns the server choice to **Let Roblox choose**. A private-server link can remain saved for its account.
 
-The bottom **Advanced fallback** changes copied app settings and applies a different signature. Roblox can detect that change. Use it only for recovery tests. Normal V1 launches use unchanged copies.
+The bottom **Advanced fallback** changes copied app settings and applies a different signature. Roblox can detect that change. Use it only for recovery tests. Normal managed launches use unchanged copies.
 
 ## Find Players
 
 Open **Find Players** in the toolbar or choose **View > Joinable Players**.
 
-The window checks the friends of all valid source accounts, merges duplicate players, and shows which source accounts found each player. V1 automatic discovery uses only presence that Roblox makes public. It labels these results **Publicly visible**. It does not claim to find friend-only or hidden activity.
+The window checks authenticated online-friend results for each valid source account, one account at a time. It merges duplicate players and shows which saved accounts can see each player. It does not query public presence or scan public server pages.
 
-For each public result, the app searches Roblox's public server pages for the reported Job ID:
+To join a friend with several accounts:
 
-- **Public** means the Job ID was found. You can select managed accounts and join them.
-- **Not confirmed** means the first search limit ended. You can continue checking or make a warned attempt.
-- **Restricted or unavailable** means the complete public search did not find the server. Open the player's profile as a source account and use Roblox's own Join button if it appears.
-- **No server supplied** means Roblox showed an experience but did not give the app a server target.
+1. Select the friend.
+2. Select every account that you want to launch. Accounts that already have a managed Roblox client running are disabled.
+3. Include at least one account shown under **Found through**.
+4. Select **Join Friend**.
 
-Before a verified batch join, the app refreshes capacity and checks each selected account. If only two spaces remain for four selected accounts, it offers **Launch First 2**, **Change Selection**, and **Cancel**. Roblox can still reject a launch if access, capacity, age, region, or the server changes.
+The manager starts one **Found through** account first. It then gives the same Place ID and Job ID to the other selected accounts. Roblox checks access and available space for each account. An account can still be rejected because it cannot join that player, the server is full, the experience has limits, or the server changed.
+
+This friend flow makes no public-server requests. Public-server browsing remains a separate manual tool.
 
 Roblox controls online visibility and join access. See [Roblox Online Status and Visibility](https://en.help.roblox.com/hc/en-us/articles/39144167691284-Online-Status-and-Visibility).
 
@@ -99,8 +105,11 @@ Right-click an account or use its detail view to open Roblox Home, Profile, Sett
 - Clears web data when it closes.
 - Saves a changed session only after Roblox confirms the same user ID.
 - Opens non-Roblox links in the normal browser only after confirmation.
+- Sends Roblox Play and Join actions back to the manager for this account.
 
-This is the safe fallback for friend-only or restricted player joins. The user completes the join through Roblox's normal website controls.
+When you select Play or Join on the Roblox website, the manager reads only the Place ID and server choice. It does not reuse the website's launch ticket. It requests a new ticket for the account shown at the top of the window, then starts that account in a separate unchanged Roblox copy. It does not open the normal Roblox app. If that account already has a managed client running, the manager stops the second launch and tells you why.
+
+Use this window when you want to browse as one saved account, start a game from its page, or use a friend's Join button when that account is allowed to join them.
 
 ## Launch Sets and experiences
 
@@ -122,7 +131,7 @@ Roblox declares that its normal macOS app should have only one instance. The man
 
 Roblox can still see normal device, process, network, session, and account behavior. An unchanged copy does not make the manager invisible and does not override the rules of an experience.
 
-Roblox can request microphone, local-network, notification, or login-item permission. These requests come from Roblox. This app cannot remove those requests while keeping the Roblox bundle unchanged.
+Roblox can request microphone, camera, local-network, notification, or login-item permission. Roblox starts the access, but macOS can name the manager as the responsible app because it started the Roblox process. The manager includes clear privacy descriptions so macOS can show the request instead of terminating Roblox. The app cannot suppress valid Roblox permission requests while keeping each Roblox copy unchanged.
 
 The optional modified fallback does not meet the unchanged-copy rule. Roblox states that modified clients can lead to account restrictions. See [Roblox anti-cheat messages](https://en.help.roblox.com/hc/en-us/articles/24275616578708-Anti-cheat-Messages).
 
@@ -132,15 +141,15 @@ The optional modified fallback does not meet the unchanged-copy rule. Roblox sta
 - Group names: `~/Library/Application Support/Roblox Account Manager/Groups.json`
 - Launch Sets, experiences, and active target records: the same local data folder
 - Managed copies: `~/Library/Application Support/Roblox Account Manager/Instances`
-- Sessions: macOS Keychain only
+- Sessions: one encrypted macOS Keychain item
 
-Removing an account deletes its Keychain item and local account metadata.
+Removing an account deletes its session from the shared Keychain item and removes its local account metadata.
 
 ## Development notes
 
-[docs/V1_LIVE_TEST_REPORT.md](docs/V1_LIVE_TEST_REPORT.md) records the live checks completed for this release and the cases that still need controlled test accounts. [docs/RESEARCH.md](docs/RESEARCH.md) records old experiments and the V1 presence decision. [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) is development history. These files do not replace this current guide.
+[docs/V2_LIVE_TEST_REPORT.md](docs/V2_LIVE_TEST_REPORT.md) records the live checks completed for this release and the cases that still need controlled test accounts. [docs/V2_IMPLEMENTATION_SPEC.md](docs/V2_IMPLEMENTATION_SPEC.md) defines the release behavior. [docs/RESEARCH.md](docs/RESEARCH.md) records old experiments and current technical decisions. [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) is development history. These files do not replace this current guide.
 
-Windows-only features from the original project remain outside V1. These include Win32 window placement, Windows registry work, a local control API, process injection, and gameplay automation.
+Windows-only features from the original project remain outside this release. These include Win32 window placement, Windows registry work, a local control API, process injection, and gameplay automation.
 
 ## License
 
