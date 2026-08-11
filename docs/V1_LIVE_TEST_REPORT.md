@@ -8,7 +8,11 @@ This report uses saved account labels only. It does not contain usernames, cooki
 
 - The native Software Update window checked the public GitHub project without a login or token.
 - Unit tests cover numeric version ordering, exact release filenames, prerelease rejection, standard SHA-256 output, and strict checksum filename parsing.
-- The final updater package test is recorded below after the version 1.0.3 release assets are published.
+- The clean version 1.0.3 source passed 102 tests with zero failures. Three separate Roblox and updater live tests stayed opt-in during that run.
+- The release package passed its strict code-signature check. It contains Apple silicon and Intel code, reports version 1.0.3 build 103, and matches its SHA-256 checksum file.
+- The published GitHub release reported the same SHA-256 values as both local release files.
+- The opt-in updater integration test downloaded the real version 1.0.3 GitHub release, checked both published fingerprints, checked the app signature and signing identity, replaced a temporary signed version 1.0.2 app, confirmed the version 1.0.2 backup, and restored that backup. The test passed with zero failures.
+- A second end-to-end test used the visible Software Update window. The window found version 1.0.3 from a disposable version 1.0.2 app. **Download Update** prepared the signed release. **Install and Restart** replaced the app and opened it again at the same path. The restarted window reported version 1.0.3 and no newer final release. The saved account list remained available, and the hidden backup reported version 1.0.2.
 
 ## Version 1.0.2 Keychain update
 
