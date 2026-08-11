@@ -4,19 +4,25 @@ A native SwiftUI app for running several Roblox accounts on one Mac. It saves ea
 
 This project is independent. Roblox Corporation does not make or approve it. Use only accounts that you own or have permission to use.
 
-## Version 2.0 features
+## What the app can do
 
-- Launch several saved accounts together.
-- Stop one managed Roblox client or use **Stop All**.
-- Find friends whose current experience is visible to at least one saved account.
-- Start a friend account first, then send the same reported Job ID to the other selected accounts.
-- Browse public servers separately when you want a server with known open spaces.
-- Open Roblox Home, Profile, Settings, or Security in an isolated window for one selected account.
-- Check account sign-in health and sign in again without losing aliases, groups, notes, favorites, or Launch Sets.
-- Save Launch Sets for common account and experience choices.
-- Reuse recent and favorite experiences from the Place ID chooser.
-- Export and import account metadata without Roblox sessions.
-- Run local checks for Roblox, unchanged copies, storage, Keychain entries, process records, and Roblox services.
+- Save several Roblox accounts without saving their passwords.
+- Run several saved accounts at the same time in separate Roblox windows.
+- Start one account, several selected accounts, or every account in a group.
+- Stop one managed Roblox window or close all managed windows with **Stop All**.
+- Give accounts easy-to-read names, notes, and membership in more than one group.
+- Search saved accounts and show only the accounts in one group.
+- Save common account and game choices as **Launch Sets** so you can reuse them later.
+- Keep a list of recently played games and mark games as favorites.
+- Let Roblox choose a server, choose a public server with enough open spaces, or use a supported private-server link.
+- Find friends whose current game is visible to at least one saved account.
+- Join a visible friend with several accounts. The friend account starts first, then the app sends the other selected accounts to the same server.
+- Open Roblox Home, Profile, Settings, or Security as one saved account without signing the other accounts out.
+- Use Roblox Play and Join buttons in that account's website window. The correct saved account opens in its own managed Roblox window.
+- Check whether a saved account is still signed in and sign in again without losing its name, groups, notes, favorites, or Launch Sets.
+- Export and import account names, groups, notes, games, and Launch Sets without copying Roblox sign-ins.
+- Check the Roblox installation, saved data, Keychain storage, managed copies, running processes, and Roblox services for common problems.
+- Offer an optional advanced recovery method if unchanged Roblox copies stop working. This method changes the copy and warns you before it runs.
 
 The app does not store passwords. It does not solve captchas, inject code, automate gameplay, reveal hidden presence, or bypass private-server access.
 
