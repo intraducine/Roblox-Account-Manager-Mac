@@ -13,7 +13,8 @@ This report uses saved account labels only. It does not contain usernames, cooki
 - The app uses the same Apple Development signing identity as version 1.0.3 so the in-app updater and Keychain access can recognize it. The public code signature includes the certificate identity. It does not include a password, token, or Roblox session.
 - `Roblox-Account-Manager-for-Mac-1.0.4.zip` matches its SHA-256 sidecar. Its SHA-256 value is `4e11c585344e48d26ddad4816fe4ce7c62ea408ee7c80e7ad7b7c1ebed7e4dc2`.
 - The ZIP contains only the app bundle and its required files. It contains no `.DS_Store`, AppleDouble `._` file, repository source, local account data, or user home path.
-- No real Roblox account launch ran during this release check. The account-launch and updater integration tests remain opt-in. The earlier live results below still describe the tested platform boundaries.
+- The opt-in updater integration test downloaded the public version 1.0.4 assets, checked their fingerprints and app identity, replaced a temporary signed version 1.0.2 app, confirmed its backup, and restored version 1.0.2. It passed with zero failures.
+- No real Roblox account launch ran during this release check. The account-launch integration tests remain opt-in. The earlier live results below still describe the tested platform boundaries.
 
 ## Version 1.0.3 updater
 
