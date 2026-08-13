@@ -504,6 +504,25 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertTrue(store.runningAccountIDs.contains(account.id))
     }
 
+    func testConcurrentLaunchSetRequestsStartEachAccountOnlyOnce() async throws {
+        let fixture = try makeFixture(launchDelayNanoseconds: 200_000_000)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let launchSet = LaunchSet(
+            name: "Wave",
+            accountIDs: fixture.accounts.map(\.id),
+            placeID: 12345
+        )
+
+        async let firstRun: Void = fixture.store.runLaunchSet(launchSet)
+        async let secondRun: Void = fixture.store.runLaunchSet(launchSet)
+        _ = await (firstRun, secondRun)
+
+        let attempts = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertEqual(attempts.count, fixture.accounts.count)
+        XCTAssertEqual(Set(attempts), Set(fixture.accounts.map(\.id)))
+        XCTAssertNil(fixture.store.runningLaunchSetID)
+    }
+
     func testNormalClientExitClearsStaleRunningStatus() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }

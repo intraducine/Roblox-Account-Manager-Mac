@@ -17,13 +17,23 @@ struct LaunchSetsView: View {
                             .foregroundStyle(.secondary)
                     }
                     .tag(launchSet.id)
-                    .contextMenu {
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) {
+                        run(launchSet)
+                    }
+                }
+                .contextMenu(forSelectionType: UUID.self) { selectedIDs in
+                    if let launchSet = launchSet(in: selectedIDs) {
+                        Button {
+                            run(launchSet)
+                        } label: {
+                            Label("Run Launch Set", systemImage: "play.fill")
+                        }
+
+                        Divider()
+
                         Button("Delete", role: .destructive) {
-                            store.removeLaunchSet(launchSet)
-                            if selectedID == launchSet.id {
-                                selectedID = nil
-                                draft = nil
-                            }
+                            remove(launchSet)
                         }
                     }
                 }
@@ -72,6 +82,28 @@ struct LaunchSetsView: View {
         let launchSet = LaunchSet(name: "New Launch Set", placeID: 0)
         draft = launchSet
         selectedID = launchSet.id
+    }
+
+    private func run(_ launchSet: LaunchSet) {
+        guard store.runningLaunchSetID == nil,
+              !store.isWorking,
+              !store.isBatchLaunching,
+              !store.isOpeningSelectedApps else { return }
+        selectedID = launchSet.id
+        Task { await store.runLaunchSet(launchSet) }
+    }
+
+    private func launchSet(in selectedIDs: Set<UUID>) -> LaunchSet? {
+        guard selectedIDs.count == 1, let id = selectedIDs.first else { return nil }
+        return store.launchSets.first(where: { $0.id == id })
+    }
+
+    private func remove(_ launchSet: LaunchSet) {
+        store.removeLaunchSet(launchSet)
+        if selectedID == launchSet.id {
+            selectedID = nil
+            draft = nil
+        }
     }
 
     private func binding(for fallback: LaunchSet) -> Binding<LaunchSet> {
@@ -174,7 +206,11 @@ private struct LaunchSetEditor: View {
                         Task { await store.runLaunchSet(draft) }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!isValid)
+                    .disabled(!isValid
+                        || store.runningLaunchSetID != nil
+                        || store.isWorking
+                        || store.isBatchLaunching
+                        || store.isOpeningSelectedApps)
                     Spacer()
                     Button("Save Changes") { applyFields(); onSave() }
                         .disabled(!isValid)

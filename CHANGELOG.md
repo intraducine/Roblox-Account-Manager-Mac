@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Ran saved Launch Sets from a right-click action or by double-clicking their list row.
 - Quit the account manager automatically after its final window closes.
 - Checked all saved accounts automatically when the account manager opens.
 - Prevented a saved game icon from briefly disappearing when switching between accounts.

@@ -72,6 +72,7 @@ final class AccountStore: ObservableObject {
     @Published private(set) var isDiscoveringPlayers = false
     @Published private(set) var accountHealth: [UUID: AccountHealth] = [:]
     @Published private(set) var launchSets: [LaunchSet] = []
+    @Published private(set) var runningLaunchSetID: UUID?
     @Published private(set) var experiences: [ExperienceRecord] = []
     @Published private(set) var experienceMetadataLoadingIDs = Set<Int64>()
     @Published private(set) var privateServers: [SavedPrivateServer] = []
@@ -876,6 +877,13 @@ final class AccountStore: ObservableObject {
     }
 
     func runLaunchSet(_ launchSet: LaunchSet) async {
+        guard runningLaunchSetID == nil,
+              !isWorking,
+              !isBatchLaunching,
+              !isOpeningSelectedApps else { return }
+        runningLaunchSetID = launchSet.id
+        defer { runningLaunchSetID = nil }
+
         let groupAccountIDs = Set(accounts.filter { account in
             launchSet.groupNames.contains { account.belongs(to: $0) }
         }.map(\.id))
