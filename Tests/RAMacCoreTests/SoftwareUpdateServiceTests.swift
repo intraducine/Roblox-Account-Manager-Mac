@@ -95,9 +95,9 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         let service = GitHubSoftwareUpdateService()
         let check = try await service.check(currentVersion: "1.0.2")
         guard case .available(let release) = check else {
-            return XCTFail("Expected the published version 1.0.3 release")
+            return XCTFail("Expected the published version 1.0.4 release")
         }
-        XCTAssertEqual(release.version, AppVersion("1.0.3"))
+        XCTAssertEqual(release.version, AppVersion("1.0.4"))
 
         let prepared = try await service.downloadAndPrepare(
             release,
@@ -107,7 +107,7 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         let installer = SoftwareUpdateInstaller(service: service)
         let backupURL = try installer.install(prepared, replacing: currentURL)
 
-        XCTAssertEqual(Self.bundleVersion(at: currentURL), "1.0.3")
+        XCTAssertEqual(Self.bundleVersion(at: currentURL), "1.0.4")
         XCTAssertEqual(Self.bundleVersion(at: backupURL), "1.0.2")
         try installer.restorePreviousVersion(from: backupURL, to: currentURL)
         XCTAssertEqual(Self.bundleVersion(at: currentURL), "1.0.2")

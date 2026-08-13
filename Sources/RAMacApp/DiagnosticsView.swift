@@ -89,6 +89,11 @@ struct DiagnosticsView: View {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            guard let fileSize = values.fileSize,
+                  fileSize <= MetadataArchiveService.maximumArchiveBytes else {
+                throw MetadataArchiveService.ArchiveError.tooLarge
+            }
             let count = try store.importMetadata(Data(contentsOf: url))
             store.notice = .init(
                 title: "Backup imported",

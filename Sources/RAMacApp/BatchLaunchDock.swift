@@ -10,7 +10,7 @@ struct BatchLaunchBar: View {
     var body: some View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
-                Label("Launch Together", systemImage: "person.2.fill")
+                Label("Selected Accounts", systemImage: "person.2.fill")
                     .fontWeight(.semibold)
                 Text("\(selectionCount) account\(selectionCount == 1 ? "" : "s")")
                     .foregroundStyle(.secondary)
@@ -18,6 +18,12 @@ struct BatchLaunchBar: View {
                 Text(store.batchStatus)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button(store.isOpeningSelectedApps ? "Opening Apps" : "Open Roblox Apps") {
+                    Task { await store.launchSelectedApps() }
+                }
+                .buttonStyle(.borderless)
+                .disabled(store.isBatchLaunching || store.isOpeningSelectedApps || store.isWorking)
+                .help("Open the Roblox app for every selected account without joining a game")
             }
 
             LaunchClientNotice(
@@ -40,10 +46,10 @@ struct BatchLaunchBar: View {
                     Task { await store.launchBatch(placeText: placeID, server: serverSelection) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(store.isBatchLaunching)
+                .disabled(store.isBatchLaunching || store.isOpeningSelectedApps)
             }
             .controlSize(.large)
-            .disabled(store.isBatchLaunching)
+            .disabled(store.isBatchLaunching || store.isOpeningSelectedApps)
         }
         .padding(14)
         .background(.bar)

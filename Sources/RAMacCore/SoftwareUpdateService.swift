@@ -136,7 +136,7 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
             configuration.httpAdditionalHeaders = [
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2026-03-10",
-                "User-Agent": "Roblox-Account-Manager-Mac/1.0.3"
+                "User-Agent": "Roblox-Account-Manager-Mac/1.0.4"
             ]
             redirectDelegate = delegate
             self.session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
@@ -151,7 +151,7 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
         var request = URLRequest(url: Self.latestReleaseURL)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2026-03-10", forHTTPHeaderField: "X-GitHub-Api-Version")
-        request.setValue("Roblox-Account-Manager-Mac/1.0.3", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox-Account-Manager-Mac/1.0.4", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse,
               http.statusCode == 200,
@@ -305,7 +305,7 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
         }
         var request = URLRequest(url: asset.downloadURL)
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
-        request.setValue("Roblox-Account-Manager-Mac/1.0.3", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox-Account-Manager-Mac/1.0.4", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse,
               http.statusCode == 200,

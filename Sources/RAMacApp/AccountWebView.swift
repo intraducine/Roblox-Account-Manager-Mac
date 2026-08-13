@@ -59,15 +59,26 @@ struct AccountWebsiteWindow: View {
                 } message: {
                     Text("The Roblox page requested this address. It will open in your default browser. Your managed account sign-in will not be shared.")
                 }
-                .onChange(of: model.pendingManagedLaunch) { launchRequest in
-                    guard let launchRequest else { return }
-                    model.pendingManagedLaunch = nil
-                    Task {
-                        await store.launchFromWebsite(
-                            accountID: account.id,
-                            request: launchRequest
-                        )
+                .confirmationDialog(
+                    "Open this Roblox game?",
+                    isPresented: Binding(
+                        get: { model.pendingManagedLaunch != nil },
+                        set: { if !$0 { model.pendingManagedLaunch = nil } }
+                    )
+                ) {
+                    Button("Open with @\(account.username)") {
+                        guard let launchRequest = model.pendingManagedLaunch else { return }
+                        model.pendingManagedLaunch = nil
+                        Task {
+                            await store.launchFromWebsite(
+                                accountID: account.id,
+                                request: launchRequest
+                            )
+                        }
                     }
+                    Button("Cancel", role: .cancel) { model.pendingManagedLaunch = nil }
+                } message: {
+                    Text("The Roblox page requested a native launch. Confirm that you want to use this managed account.")
                 }
                 .onChange(of: model.hasUnsupportedRobloxLaunch) { isUnsupported in
                     guard isUnsupported else { return }

@@ -34,6 +34,11 @@ public struct MetadataImportResult: Equatable, Sendable {
 }
 
 public struct MetadataArchiveService: Sendable {
+    public static let maximumArchiveBytes = 10 * 1024 * 1024
+    private static let maximumAccounts = 10_000
+    private static let maximumGroups = 5_000
+    private static let maximumExperiences = 50_000
+    private static let maximumLaunchSets = 10_000
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
@@ -80,8 +85,15 @@ public struct MetadataArchiveService: Sendable {
         existingExperiences: [ExperienceRecord],
         existingLaunchSets: [LaunchSet]
     ) throws -> MetadataImportResult {
+        guard data.count <= Self.maximumArchiveBytes else { throw ArchiveError.tooLarge }
         let archive = try decoder.decode(MetadataArchive.self, from: data)
         guard archive.formatVersion == 1 else { throw ArchiveError.unsupportedVersion }
+        guard archive.accounts.count <= Self.maximumAccounts,
+              archive.groups.count <= Self.maximumGroups,
+              archive.experiences.count <= Self.maximumExperiences,
+              archive.launchSets.count <= Self.maximumLaunchSets else {
+            throw ArchiveError.tooManyRecords
+        }
         var accounts = existingAccounts
         var importedCount = 0
         var accountIDMap: [UUID: UUID] = [:]
@@ -105,7 +117,7 @@ public struct MetadataArchiveService: Sendable {
             }
         }
 
-        var experiences = Dictionary(uniqueKeysWithValues: existingExperiences.map { ($0.placeID, $0) })
+        var experiences = Dictionary(existingExperiences.map { ($0.placeID, $0) }) { current, _ in current }
         for imported in archive.experiences {
             if let current = experiences[imported.placeID] {
                 var merged = current.lastLaunchedAt >= imported.lastLaunchedAt ? current : imported
@@ -117,7 +129,7 @@ public struct MetadataArchiveService: Sendable {
             }
         }
 
-        var sets = Dictionary(uniqueKeysWithValues: existingLaunchSets.map { ($0.id, $0) })
+        var sets = Dictionary(existingLaunchSets.map { ($0.id, $0) }) { current, _ in current }
         for imported in archive.launchSets {
             var mapped = imported
             mapped.accountIDs = imported.accountIDs.compactMap { accountIDMap[$0] }
@@ -134,6 +146,18 @@ public struct MetadataArchiveService: Sendable {
 
     public enum ArchiveError: LocalizedError {
         case unsupportedVersion
-        public var errorDescription: String? { "This backup was made by an unsupported app version." }
+        case tooLarge
+        case tooManyRecords
+
+        public var errorDescription: String? {
+            switch self {
+            case .unsupportedVersion:
+                return "This backup was made by an unsupported app version."
+            case .tooLarge:
+                return "This backup is larger than the 10 MB safety limit."
+            case .tooManyRecords:
+                return "This backup contains too many records to import safely."
+            }
+        }
     }
 }

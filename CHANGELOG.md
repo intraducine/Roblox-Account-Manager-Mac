@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.4 - 2026-08-13
+
+- Added **Open Roblox App** for an account-only launch with no game target.
+- Allowed another account's Roblox app to start while the first app is still opening.
+- Added **Open Roblox Apps** for all accounts selected in the sidebar.
+- Isolated each managed Roblox copy's home, WebKit, cookie, cache, and preferences data by account.
+- Fixed account sessions changing together after leaving a game for the Roblox app.
+- Added current Roblox private-server share-link support in the built-in website window.
+- Added current share-link support to saved private servers and Launch Sets.
+- Added a confirmation before a Roblox website page starts a native managed client.
+- Restricted the embedded sign-in window to secure Roblox main-page addresses.
+- Marked managed Roblox session cookies as HTTP-only.
+- Stopped Roblox clients from inheriting unrelated parent-process secrets.
+- Required an Apple-anchored Roblox Corporation code-signing requirement.
+- Rebuilt the optional modified fallback copy before every launch.
+- Restricted imported avatar images to secure Roblox CDN addresses.
+- Removed reusable private-server links from active process records.
+- Hardened release scripts against inherited command search paths.
+
 ## 1.0.3 - 2026-08-11
 
 - Added **Check for Updates** to the app menu and About window.

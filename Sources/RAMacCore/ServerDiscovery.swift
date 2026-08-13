@@ -129,6 +129,10 @@ public enum RobloxWebLaunchRequestParser {
     public static func parse(_ url: URL) -> RobloxWebLaunchRequest? {
         guard isRobloxLaunchURL(url) else { return nil }
         if url.scheme?.lowercased() == "roblox",
+           let shareRequest = parseShareLinkNavigationURL(url) {
+            return shareRequest
+        }
+        if url.scheme?.lowercased() == "roblox",
            let direct = parseDirectRobloxURL(url) {
             return direct
         }
@@ -176,6 +180,28 @@ public enum RobloxWebLaunchRequestParser {
     }
 
     private static func parseDirectRobloxURL(_ url: URL) -> RobloxWebLaunchRequest? {
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           components.host?.caseInsensitiveCompare("experiences") == .orderedSame,
+           components.path.caseInsensitiveCompare("/start") == .orderedSame {
+            let values = Dictionary(
+                components.queryItems?.map { ($0.name.lowercased(), $0.value ?? "") } ?? [],
+                uniquingKeysWith: { first, _ in first }
+            )
+            guard let placeID = Int64(values["placeid"] ?? ""), placeID > 0 else { return nil }
+            if let linkCode = clean(values["linkcode"]), !linkCode.isEmpty,
+               let link = privateServerLink(placeID: placeID, linkCode: linkCode) {
+                return RobloxWebLaunchRequest(placeID: placeID, server: .privateLink(link))
+            }
+            if values["accesscode"]?.isEmpty == false
+                || values["reservedserveraccesscode"]?.isEmpty == false {
+                return nil
+            }
+            if let jobID = clean(values["gameinstanceid"]), !jobID.isEmpty {
+                return RobloxWebLaunchRequest(placeID: placeID, server: .manualJob(jobID))
+            }
+            return RobloxWebLaunchRequest(placeID: placeID, server: .automatic)
+        }
+
         let raw = url.absoluteString
         guard let separator = raw.firstIndex(of: ":") else { return nil }
         var payload = String(raw[raw.index(after: separator)...])
@@ -188,6 +214,23 @@ public enum RobloxWebLaunchRequestParser {
         let placeID = Int64(placeField[placeField.index(after: equals)...]),
         placeID > 0 else { return nil }
         return RobloxWebLaunchRequest(placeID: placeID, server: .automatic)
+    }
+
+    private static func parseShareLinkNavigationURL(_ url: URL) -> RobloxWebLaunchRequest? {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.host?.caseInsensitiveCompare("navigation") == .orderedSame,
+              components.path.caseInsensitiveCompare("/share_links") == .orderedSame else {
+            return nil
+        }
+        let values = Dictionary(
+            components.queryItems?.map { ($0.name.lowercased(), $0.value ?? "") } ?? [],
+            uniquingKeysWith: { first, _ in first }
+        )
+        guard values["type"]?.caseInsensitiveCompare("Server") == .orderedSame,
+              let code = clean(values["code"]),
+              !code.isEmpty,
+              let link = currentPrivateServerLink(shareCode: code) else { return nil }
+        return RobloxWebLaunchRequest(placeID: 0, server: .privateLink(link))
     }
 
     private static func isLauncherHost(_ host: String?) -> Bool {
@@ -207,6 +250,18 @@ public enum RobloxWebLaunchRequestParser {
         components.host = "www.roblox.com"
         components.path = "/games/\(placeID)"
         components.queryItems = [URLQueryItem(name: "privateServerLinkCode", value: linkCode)]
+        return components.url?.absoluteString
+    }
+
+    private static func currentPrivateServerLink(shareCode: String) -> String? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "www.roblox.com"
+        components.path = "/share"
+        components.queryItems = [
+            URLQueryItem(name: "code", value: shareCode),
+            URLQueryItem(name: "type", value: "Server")
+        ]
         return components.url?.absoluteString
     }
 }

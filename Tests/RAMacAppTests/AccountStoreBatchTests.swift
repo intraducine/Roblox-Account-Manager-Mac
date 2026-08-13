@@ -326,6 +326,108 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(savedAccount.savedServer, "")
     }
 
+    func testOpenRobloxAppUsesTheSelectedAccountWithoutAPlaceLaunch() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let account = fixture.accounts[1]
+
+        await fixture.store.launchApp(account: account)
+
+        let attempts = await fixture.launcher.orderedAttemptedAccountIDs()
+        let urls = await fixture.launcher.attemptedURLs()
+        XCTAssertEqual(attempts, [account.id])
+        XCTAssertEqual(urls.count, 1)
+        XCTAssertTrue(urls[0].absoluteString.contains("launchmode:app"))
+        XCTAssertFalse(urls[0].absoluteString.contains("placelauncherurl"))
+        XCTAssertTrue(fixture.store.runningAccountIDs.contains(account.id))
+    }
+
+    func testSecondAppStartsWhileFirstAppIsStillOpening() async throws {
+        let fixture = try makeFixture(launchDelayNanoseconds: 500_000_000)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let firstAccount = fixture.accounts[0]
+        let secondAccount = fixture.accounts[1]
+
+        let firstLaunch = Task { await fixture.store.launchApp(account: firstAccount) }
+        for _ in 0..<100 {
+            if await fixture.launcher.attemptedAccountIDs().contains(firstAccount.id) { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        let firstAttempts = await fixture.launcher.attemptedAccountIDs()
+        XCTAssertTrue(firstAttempts.contains(firstAccount.id))
+
+        let secondLaunch = Task { await fixture.store.launchApp(account: secondAccount) }
+        for _ in 0..<100 {
+            if await fixture.launcher.attemptedAccountIDs().contains(secondAccount.id) { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+
+        let concurrentAttempts = await fixture.launcher.attemptedAccountIDs()
+        XCTAssertEqual(concurrentAttempts, Set([firstAccount.id, secondAccount.id]))
+        XCTAssertEqual(
+            fixture.store.appOpeningAccountIDs,
+            Set([firstAccount.id, secondAccount.id])
+        )
+
+        await firstLaunch.value
+        await secondLaunch.value
+        XCTAssertEqual(
+            fixture.store.runningAccountIDs,
+            Set([firstAccount.id, secondAccount.id])
+        )
+    }
+
+    func testBulkOpenAppsStartsEverySelectedAccountWithoutJoiningAGame() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        fixture.store.toggleBatchGroup("Wave")
+        await fixture.store.launchSelectedApps()
+
+        let urls = await fixture.launcher.attemptedURLs()
+        let maximumConcurrentRequests = await fixture.api.maximumConcurrentTicketRequests()
+        let attemptedAccountIDs = await fixture.launcher.attemptedAccountIDs()
+        XCTAssertEqual(maximumConcurrentRequests, 3)
+        XCTAssertEqual(attemptedAccountIDs, Set(fixture.accounts.map(\.id)))
+        XCTAssertEqual(urls.count, 3)
+        XCTAssertTrue(urls.allSatisfy { $0.absoluteString.contains("launchmode:app") })
+        XCTAssertTrue(urls.allSatisfy { !$0.absoluteString.contains("placelauncherurl") })
+        XCTAssertEqual(fixture.store.runningAccountIDs, Set(fixture.accounts.map(\.id)))
+        XCTAssertTrue(fixture.store.batchSelectedIDs.isEmpty)
+        XCTAssertEqual(fixture.store.batchStatus, "Opened all 3 apps")
+        XCTAssertEqual(fixture.store.launchStatus, "Running 3 Roblox apps")
+    }
+
+    func testCurrentPrivateShareFromBuiltInBrowserResolvesForSelectedAccount() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-web-private-share-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let account = ManagedAccount(userID: 1, username: "allowed", displayName: "Allowed")
+        try repository.save([account])
+        let vault = MemoryVault()
+        try vault.save("allow", for: account.id)
+        let launcher = BatchMockLauncher(failingAccountID: nil)
+        let store = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: PrivateAccessMockAPI(),
+            launcher: launcher
+        )
+        let deepLink = try XCTUnwrap(
+            URL(string: "roblox://navigation/share_links?code=share-code&type=Server")
+        )
+        let request = try XCTUnwrap(RobloxWebLaunchRequestParser.parse(deepLink))
+
+        await store.launchFromWebsite(accountID: account.id, request: request)
+
+        let urls = await launcher.attemptedURLs()
+        XCTAssertEqual(urls.count, 1)
+        XCTAssertTrue(urls[0].absoluteString.contains("placeId%3D17625359962"))
+        XCTAssertTrue(urls[0].absoluteString.contains("RequestPrivateGame"))
+        XCTAssertTrue(store.runningAccountIDs.contains(account.id))
+    }
+
     func testNormalClientExitClearsStaleRunningStatus() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -430,7 +532,67 @@ final class AccountStoreBatchTests: XCTestCase {
         }
     }
 
-    func testPrivateServerLibrarySavesUpdatesReloadsAndRemovesLinks() throws {
+    func testCurrentShareLinkAccessDenialsAppearBeforeAnyLaunch() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-share-link-preflight-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let accounts = [
+            ManagedAccount(userID: 1, username: "allowed", displayName: "Allowed", group: "Wave"),
+            ManagedAccount(userID: 2, username: "denied", displayName: "Denied", group: "Wave")
+        ]
+        try repository.save(accounts)
+        let vault = MemoryVault()
+        try vault.save("allow", for: accounts[0].id)
+        try vault.save("deny", for: accounts[1].id)
+        let launcher = BatchMockLauncher(failingAccountID: nil)
+        let store = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: PrivateAccessMockAPI(),
+            launcher: launcher
+        )
+        store.toggleBatchGroup("Wave")
+
+        await store.launchBatch(
+            placeText: "17625359962",
+            server: .privateLink("https://www.roblox.com/share?code=share-code&type=Server")
+        )
+
+        let attemptedAccountIDs = await launcher.attemptedAccountIDs()
+        XCTAssertTrue(attemptedAccountIDs.isEmpty)
+        XCTAssertEqual(store.batchSelectedIDs, [accounts[0].id])
+        guard case .failed = store.batchStates[accounts[1].id] else {
+            return XCTFail("Denied account must be shown before launch")
+        }
+    }
+
+    func testCurrentShareLinkCanBeSavedThroughASignedInAccount() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-share-link-save-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let account = ManagedAccount(userID: 1, username: "allowed", displayName: "Allowed")
+        try repository.save([account])
+        let vault = MemoryVault()
+        try vault.save("allow", for: account.id)
+        let store = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: PrivateAccessMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil)
+        )
+        let link = "https://www.roblox.com/share?code=share-code&type=Server"
+
+        let savedResult = await store.savePrivateServer(name: "Friends", link: link)
+        let saved = try XCTUnwrap(savedResult)
+
+        XCTAssertEqual(saved.placeID, 17_625_359_962)
+        XCTAssertEqual(saved.link, link)
+        XCTAssertEqual(store.privateServers, [saved])
+    }
+
+    func testPrivateServerLibrarySavesUpdatesReloadsAndRemovesLinks() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-private-library-tests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -443,8 +605,10 @@ final class AccountStoreBatchTests: XCTestCase {
             launcher: BatchMockLauncher(failingAccountID: nil)
         )
 
-        let first = try XCTUnwrap(store.savePrivateServer(name: "Friends", link: link))
-        let updated = try XCTUnwrap(store.savePrivateServer(name: "Weekend group", link: link))
+        let firstResult = await store.savePrivateServer(name: "Friends", link: link)
+        let updatedResult = await store.savePrivateServer(name: "Weekend group", link: link)
+        let first = try XCTUnwrap(firstResult)
+        let updated = try XCTUnwrap(updatedResult)
 
         XCTAssertEqual(first.id, updated.id)
         XCTAssertEqual(store.privateServers.count, 1)
@@ -495,7 +659,10 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(try PrivateServerRepository(dataDirectory: directory).load(), store.privateServers)
     }
 
-    private func makeFixture(failingIndex: Int? = nil) throws -> Fixture {
+    private func makeFixture(
+        failingIndex: Int? = nil,
+        launchDelayNanoseconds: UInt64 = 0
+    ) throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-batch-tests-\(UUID().uuidString)", isDirectory: true)
         let repository = AccountRepository(dataDirectory: directory)
@@ -515,7 +682,10 @@ final class AccountStoreBatchTests: XCTestCase {
         }
         let api = BatchMockAPI()
         let failingID = failingIndex.map { accounts[$0].id }
-        let launcher = BatchMockLauncher(failingAccountID: failingID)
+        let launcher = BatchMockLauncher(
+            failingAccountID: failingID,
+            launchDelayNanoseconds: launchDelayNanoseconds
+        )
         let store = AccountStore(
             repository: repository,
             vault: vault,
@@ -570,6 +740,16 @@ private actor PrivateAccessMockAPI: RobloxAPIProviding {
     func privateServerAccessCode(placeID: Int64, linkCode: String, cookie rawCookie: String) async throws -> String {
         if rawCookie == "deny" { throw RobloxAPIError.privateServerUnavailable }
         return "access"
+    }
+    func privateShareLinkResolution(
+        shareCode: String,
+        cookie rawCookie: String
+    ) async throws -> RobloxPrivateShareLinkResolution {
+        if rawCookie == "deny" { throw RobloxAPIError.privateServerUnavailable }
+        return RobloxPrivateShareLinkResolution(
+            placeID: 17_625_359_962,
+            linkCode: "resolved-private-code"
+        )
     }
 }
 
@@ -670,13 +850,16 @@ private actor BatchMockAPI: RobloxAPIProviding {
 
 private actor BatchMockLauncher: ParallelRobloxLaunching {
     private let failingAccountID: UUID?
+    private let launchDelayNanoseconds: UInt64
     private var attempted = Set<UUID>()
     private var orderedAttempts: [UUID] = []
     private var modes = Set<RobloxLaunchMode>()
     private var running = Set<UUID>()
+    private var urls: [URL] = []
 
-    init(failingAccountID: UUID?) {
+    init(failingAccountID: UUID?, launchDelayNanoseconds: UInt64 = 0) {
         self.failingAccountID = failingAccountID
+        self.launchDelayNanoseconds = launchDelayNanoseconds
     }
 
     func launch(
@@ -687,7 +870,11 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
         attempted.insert(accountID)
         orderedAttempts.append(accountID)
         modes.insert(mode)
+        urls.append(url)
         if accountID == failingAccountID { throw RobloxLaunchError.openFailed }
+        if launchDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: launchDelayNanoseconds)
+        }
         running.insert(accountID)
         return ParallelRobloxInstance(
             accountID: accountID,
@@ -722,4 +909,6 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     func attemptedModes() -> Set<RobloxLaunchMode> {
         modes
     }
+
+    func attemptedURLs() -> [URL] { urls }
 }

@@ -30,6 +30,15 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertTrue(url.absoluteString.contains("%26isPlayTogetherGame%3Dfalse"))
     }
 
+    func testAppLaunchURLSelectsAccountWithoutJoiningAGame() throws {
+        let url = try builder.makeAppURL(ticket: "account-ticket")
+
+        XCTAssertEqual(url.scheme, "roblox-player")
+        XCTAssertTrue(url.absoluteString.contains("launchmode:app"))
+        XCTAssertTrue(url.absoluteString.contains("gameinfo:account-ticket"))
+        XCTAssertFalse(url.absoluteString.contains("placelauncherurl"))
+    }
+
     func testJobAndPrivateServerRequests() throws {
         let job = try builder.makeURL(
             ticket: "ticket",
@@ -115,6 +124,41 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertNil(RobloxWebLaunchRequestParser.parse(unsafeURL))
     }
 
+    func testWebsiteCurrentShareLinkBecomesAnAccountResolvedPrivateLaunch() throws {
+        let url = try XCTUnwrap(
+            URL(string: "roblox://navigation/share_links?code=current-share-code&type=Server")
+        )
+        let request = try XCTUnwrap(RobloxWebLaunchRequestParser.parse(url))
+
+        XCTAssertEqual(request.placeID, 0)
+        guard case .privateLink(let link) = request.server else {
+            return XCTFail("Expected a private share link")
+        }
+        XCTAssertEqual(RobloxLaunchURLBuilder.privateShareCode(from: link), "current-share-code")
+    }
+
+    func testWebsiteDirectPrivateLaunchKeepsLinkCodeAndDropsAccessCode() throws {
+        let url = try XCTUnwrap(URL(
+            string: "roblox://experiences/start?placeId=1818&accessCode=page-access&linkCode=private-link"
+        ))
+        let request = try XCTUnwrap(RobloxWebLaunchRequestParser.parse(url))
+
+        XCTAssertEqual(request.placeID, 1818)
+        guard case .privateLink(let link) = request.server else {
+            return XCTFail("Expected a private link target")
+        }
+        XCTAssertEqual(RobloxLaunchURLBuilder.privateLinkCode(from: link), "private-link")
+        XCTAssertFalse(link.contains("page-access"))
+    }
+
+    func testWebsiteReservedServerWithoutReusableLinkCodeIsRejected() throws {
+        let url = try XCTUnwrap(URL(
+            string: "roblox://experiences/start?placeId=1818&reservedServerAccessCode=one-use-secret"
+        ))
+
+        XCTAssertNil(RobloxWebLaunchRequestParser.parse(url))
+    }
+
     func testWebsitePlayParserAcceptsCurrentRobloxWebsiteLauncherHost() throws {
         let launcher = "https://www.roblox.com/Game/PlaceLauncher.ashx?request=RequestGame&placeId=1818&isPlayTogetherGame=false"
         let encoded = try XCTUnwrap(
@@ -158,6 +202,12 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertEqual(RobloxLaunchURLBuilder.privateShareCode(from: link), "abc123")
         XCTAssertNil(RobloxLaunchURLBuilder.privateLinkCode(from: link))
         XCTAssertEqual(RobloxServerSelection.savedValue(link), .privateLink(link))
+        XCTAssertEqual(
+            RobloxLaunchURLBuilder.privateShareCode(
+                from: "https://www.roblox.com/share-links?type=Server&code=abc123"
+            ),
+            "abc123"
+        )
     }
 
     func testPrivateServerLinksRejectLookAlikeDomains() {
@@ -184,6 +234,42 @@ final class RobloxLauncherTests: XCTestCase {
             ParallelRobloxLauncher.bundleIdentifier(for: first),
             ParallelRobloxLauncher.bundleIdentifier(for: second)
         )
+    }
+
+    func testEachManagedAccountGetsASeparateRobloxHome() {
+        let root = URL(fileURLWithPath: "/tmp/ram-instance-root", isDirectory: true)
+        let first = UUID()
+        let second = UUID()
+
+        let firstHome = ParallelRobloxLauncher.isolatedHomeURL(instancesRoot: root, accountID: first)
+        let secondHome = ParallelRobloxLauncher.isolatedHomeURL(instancesRoot: root, accountID: second)
+
+        XCTAssertNotEqual(firstHome, secondHome)
+        XCTAssertTrue(firstHome.path.hasSuffix("/\(first.uuidString)/Home"))
+        XCTAssertTrue(secondHome.path.hasSuffix("/\(second.uuidString)/Home"))
+    }
+
+    func testRobloxChildEnvironmentDoesNotInheritParentSecrets() {
+        let home = URL(fileURLWithPath: "/tmp/ram-test-home", isDirectory: true)
+        let temporary = home.appendingPathComponent("tmp", isDirectory: true)
+        let environment = ParallelRobloxLauncher.sanitizedChildEnvironment(
+            parent: [
+                "LANG": "en_US.UTF-8",
+                "GITHUB_TOKEN": "must-not-cross",
+                "SSH_AUTH_SOCK": "/tmp/private-agent",
+                "HTTPS_PROXY": "https://secret.example"
+            ],
+            homeURL: home,
+            temporaryURL: temporary
+        )
+
+        XCTAssertEqual(environment["HOME"], home.path)
+        XCTAssertEqual(environment["CFFIXED_USER_HOME"], home.path)
+        XCTAssertEqual(environment["TMPDIR"], temporary.path + "/")
+        XCTAssertEqual(environment["LANG"], "en_US.UTF-8")
+        XCTAssertNil(environment["GITHUB_TOKEN"])
+        XCTAssertNil(environment["SSH_AUTH_SOCK"])
+        XCTAssertNil(environment["HTTPS_PROXY"])
     }
 
     func testParallelInfoPlistPatchPreservesRobloxMetadata() throws {

@@ -46,7 +46,6 @@ final class AccountWebSessionModel: NSObject, ObservableObject {
 
     private(set) weak var webView: WKWebView?
     func configure(session: String, destination: URL) -> WKWebView {
-        let normalizedSession = RobloxAPIClient.normalizedCookie(from: session)
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let view = WKWebView(frame: .zero, configuration: configuration)
@@ -54,15 +53,7 @@ final class AccountWebSessionModel: NSObject, ObservableObject {
         view.allowsMagnification = true
         webView = view
 
-        let properties: [HTTPCookiePropertyKey: Any] = [
-            .domain: ".roblox.com",
-            .path: "/",
-            .name: ".ROBLOSECURITY",
-            .value: normalizedSession,
-            .secure: true,
-            .expires: Date(timeIntervalSinceNow: 60 * 60 * 24 * 365)
-        ]
-        if let cookie = HTTPCookie(properties: properties) {
+        if let cookie = Self.managedSessionCookie(from: session) {
             configuration.websiteDataStore.httpCookieStore.setCookie(cookie) { [weak view] in
                 view?.load(URLRequest(url: destination))
             }
@@ -70,6 +61,23 @@ final class AccountWebSessionModel: NSObject, ObservableObject {
             view.load(URLRequest(url: destination))
         }
         return view
+    }
+
+    static func managedSessionCookie(from session: String) -> HTTPCookie? {
+        let normalizedSession = RobloxAPIClient.normalizedCookie(from: session)
+        let properties: [HTTPCookiePropertyKey: Any] = [
+            .domain: ".roblox.com",
+            .path: "/",
+            .name: ".ROBLOSECURITY",
+            .value: normalizedSession,
+            .secure: true,
+            HTTPCookiePropertyKey("HttpOnly"): true,
+            .expires: Date(timeIntervalSinceNow: 60 * 60 * 24 * 365)
+        ]
+        guard let cookie = HTTPCookie(properties: properties),
+              cookie.isSecure,
+              cookie.isHTTPOnly else { return nil }
+        return cookie
     }
 
     func goBack() { webView?.goBack() }
@@ -123,10 +131,12 @@ final class AccountWebSessionModel: NSObject, ObservableObject {
 
     static func navigationDecision(
         for url: URL?,
-        targetIsMainFrame: Bool?
+        targetIsMainFrame: Bool?,
+        sourceIsMainFrame: Bool = true
     ) -> AccountWebNavigationDecision {
         guard let url else { return .cancel }
         if RobloxWebLaunchRequestParser.isRobloxLaunchURL(url) {
+            guard sourceIsMainFrame else { return .cancel }
             guard let request = RobloxWebLaunchRequestParser.parse(url) else {
                 return .unsupportedRobloxLaunch
             }
@@ -164,7 +174,8 @@ extension AccountWebSessionModel: WKNavigationDelegate {
     ) {
         switch Self.navigationDecision(
             for: navigationAction.request.url,
-            targetIsMainFrame: navigationAction.targetFrame?.isMainFrame
+            targetIsMainFrame: navigationAction.targetFrame?.isMainFrame,
+            sourceIsMainFrame: navigationAction.sourceFrame.isMainFrame
         ) {
         case .allow:
             decisionHandler(.allow)

@@ -144,6 +144,13 @@ private struct ServerChooserView: View {
             .navigationTitle("Choose a Server")
         }
         .frame(width: 680, height: 560)
+        .alert(item: $store.notice) { notice in
+            Alert(
+                title: Text(notice.title),
+                message: Text(notice.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
 
     private func choose(_ newSelection: RobloxServerSelection) {
@@ -463,6 +470,7 @@ private struct PrivateServerLibraryView: View {
     @State private var name = ""
     @State private var link = ""
     @State private var pendingRemoval: SavedPrivateServer?
+    @State private var isSaving = false
 
     var body: some View {
         Form {
@@ -508,24 +516,38 @@ private struct PrivateServerLibraryView: View {
             Section("Add a private server") {
                 TextField("Name", text: $name, prompt: Text("For example, Friends server"))
                 SecureField("Private server link", text: $link)
-                if RobloxLaunchURLBuilder.privateShareCode(from: cleanLink) != nil {
-                    Text("Roblox's newer share links cannot select a saved account through this manager yet.")
-                        .foregroundStyle(.red)
+                if shareCode != nil {
+                    Text("This is a current Roblox share link. The app will check the link with one saved account now. Roblox will check access again for every account you launch.")
+                        .foregroundStyle(.secondary)
                 } else if !cleanLink.isEmpty,
                           parsedPlaceID == nil {
-                    Text("Paste the complete roblox.com link. It must include /games/, a Place ID, and a private server code.")
+                    Text("Paste a complete Roblox private server link. You can use a current /share link or an older /games link.")
                         .foregroundStyle(.red)
                 } else if let parsedPlaceID {
                     Text("This link is for Place ID \(parsedPlaceID).")
                         .foregroundStyle(.secondary)
                 }
-                Button("Save and Use Private Server") {
-                    if let server = store.savePrivateServer(name: cleanName, link: cleanLink) {
-                        onChoose(server)
+                Button {
+                    Task {
+                        isSaving = true
+                        defer { isSaving = false }
+                        if let server = await store.savePrivateServer(name: cleanName, link: cleanLink) {
+                            onChoose(server)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        if isSaving {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Checking Link")
+                        } else {
+                            Text("Save and Use Private Server")
+                        }
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(cleanName.isEmpty || parsedPlaceID == nil)
+                .disabled(cleanName.isEmpty || (parsedPlaceID == nil && shareCode == nil) || isSaving)
             }
         }
         .formStyle(.grouped)
@@ -559,6 +581,10 @@ private struct PrivateServerLibraryView: View {
 
     private var parsedPlaceID: Int64? {
         RobloxLaunchURLBuilder.privateServerPlaceID(from: cleanLink)
+    }
+
+    private var shareCode: String? {
+        RobloxLaunchURLBuilder.privateShareCode(from: cleanLink)
     }
 }
 

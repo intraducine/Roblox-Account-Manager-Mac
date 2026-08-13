@@ -40,6 +40,13 @@ final class AccountStore: ObservableObject {
         let accountID: UUID
         let username: String
         let processIdentifier: Int32?
+        let placeID: Int64?
+        let errorMessage: String?
+    }
+
+    private struct AppLaunchOutcome: Sendable {
+        let accountID: UUID
+        let username: String
         let errorMessage: String?
     }
 
@@ -53,6 +60,8 @@ final class AccountStore: ObservableObject {
     @Published private(set) var batchSelectedIDs = Set<UUID>()
     @Published private(set) var batchStates: [UUID: BatchLaunchState] = [:]
     @Published private(set) var isBatchLaunching = false
+    @Published private(set) var isOpeningSelectedApps = false
+    @Published private(set) var appOpeningAccountIDs = Set<UUID>()
     @Published private(set) var isStoppingAll = false
     @Published private(set) var batchStatus = "Select accounts from the shelf"
     @Published private(set) var launchMode: RobloxLaunchMode
@@ -122,7 +131,7 @@ final class AccountStore: ObservableObject {
     }
 
     func setLaunchMode(_ mode: RobloxLaunchMode) {
-        guard !isWorking, !isBatchLaunching else { return }
+        guard !isWorking, !isBatchLaunching, appOpeningAccountIDs.isEmpty else { return }
         guard runningAccountIDs.isEmpty else {
             notice = Notice(
                 title: "Stop Roblox before changing mode",
@@ -252,9 +261,9 @@ final class AccountStore: ObservableObject {
                 notice = Notice(title: "Private servers could not load", message: error.localizedDescription)
             }
             activeLaunchTargets = Dictionary(
-                uniqueKeysWithValues: ((try? activeLaunchRepository.load()) ?? []).map { ($0.accountID, $0) }
-            )
-            accountHealth = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, AccountHealth.unchecked) })
+                ((try? activeLaunchRepository.load()) ?? []).map { ($0.accountID, $0) }
+            ) { current, _ in current }
+            accountHealth = Dictionary(accounts.map { ($0.id, AccountHealth.unchecked) }) { current, _ in current }
             if selectedID == nil { selectedID = accounts.first?.id }
             Task {
                 await refreshAvatarURLs()
@@ -270,12 +279,16 @@ final class AccountStore: ObservableObject {
         runningAccountIDs.contains(account.id)
     }
 
+    func isOpeningApp(_ account: ManagedAccount) -> Bool {
+        appOpeningAccountIDs.contains(account.id)
+    }
+
     func isBatchSelected(_ account: ManagedAccount) -> Bool {
         batchSelectedIDs.contains(account.id)
     }
 
     func toggleBatchSelection(_ account: ManagedAccount) {
-        guard !isBatchLaunching, !isRunning(account) else { return }
+        guard !isBatchLaunching, !isOpeningSelectedApps, !isRunning(account), !isOpeningApp(account) else { return }
         if batchSelectedIDs.remove(account.id) == nil {
             batchSelectedIDs.insert(account.id)
         }
@@ -284,8 +297,10 @@ final class AccountStore: ObservableObject {
     }
 
     func toggleBatchGroup(_ group: String) {
-        guard !isBatchLaunching else { return }
-        let eligible = Set(accounts.lazy.filter { $0.belongs(to: group) && !self.isRunning($0) }.map(\.id))
+        guard !isBatchLaunching, !isOpeningSelectedApps else { return }
+        let eligible = Set(accounts.lazy.filter {
+            $0.belongs(to: group) && !self.isRunning($0) && !self.isOpeningApp($0)
+        }.map(\.id))
         guard !eligible.isEmpty else { return }
         if eligible.isSubset(of: batchSelectedIDs) {
             batchSelectedIDs.subtract(eligible)
@@ -297,12 +312,14 @@ final class AccountStore: ObservableObject {
     }
 
     func isBatchGroupSelected(_ group: String) -> Bool {
-        let eligible = Set(accounts.lazy.filter { $0.belongs(to: group) && !self.isRunning($0) }.map(\.id))
+        let eligible = Set(accounts.lazy.filter {
+            $0.belongs(to: group) && !self.isRunning($0) && !self.isOpeningApp($0)
+        }.map(\.id))
         return !eligible.isEmpty && eligible.isSubset(of: batchSelectedIDs)
     }
 
     func clearBatchSelection() {
-        guard !isBatchLaunching else { return }
+        guard !isBatchLaunching, !isOpeningSelectedApps else { return }
         batchSelectedIDs.removeAll()
         batchStates.removeAll()
         updateBatchSelectionStatus()
@@ -358,6 +375,7 @@ final class AccountStore: ObservableObject {
            refreshedIDs.isEmpty,
            !isWorking,
            !isBatchLaunching,
+           appOpeningAccountIDs.isEmpty,
            !isStoppingAll {
             launchStatus = "Ready"
             batchStatus = "No managed Roblox clients are running"
@@ -726,15 +744,41 @@ final class AccountStore: ObservableObject {
     }
 
     @discardableResult
-    func savePrivateServer(name rawName: String, link rawLink: String) -> SavedPrivateServer? {
+    func savePrivateServer(name rawName: String, link rawLink: String) async -> SavedPrivateServer? {
         let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         let link = rawLink.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
             notice = Notice(title: "Name required", message: "Give this private server a name that you will recognize later.")
             return nil
         }
-        guard let placeID = RobloxLaunchURLBuilder.privateServerPlaceID(from: link),
-              let linkCode = RobloxLaunchURLBuilder.privateLinkCode(from: link) else {
+
+        let placeID: Int64
+        if let legacyPlaceID = RobloxLaunchURLBuilder.privateServerPlaceID(from: link),
+           RobloxLaunchURLBuilder.privateLinkCode(from: link) != nil {
+            placeID = legacyPlaceID
+        } else if let shareCode = RobloxLaunchURLBuilder.privateShareCode(from: link) {
+            var resolution: RobloxPrivateShareLinkResolution?
+            var lastError: Error?
+            for account in accounts {
+                do {
+                    guard let cookie = try vault.read(for: account.id), !cookie.isEmpty else { continue }
+                    resolution = try await api.privateShareLinkResolution(
+                        shareCode: shareCode,
+                        cookie: cookie
+                    )
+                    break
+                } catch {
+                    lastError = error
+                }
+            }
+            guard let resolution else {
+                let message = lastError?.localizedDescription
+                    ?? "Add or sign in to an account, then try this link again. Roblox must check the link through a saved account."
+                notice = Notice(title: "Private server was not saved", message: message)
+                return nil
+            }
+            placeID = resolution.placeID
+        } else {
             notice = Notice(title: "Private server was not saved", message: "Paste a complete Roblox private server link.")
             return nil
         }
@@ -742,9 +786,9 @@ final class AccountStore: ObservableObject {
         let previous = privateServers
         let now = Date()
         let saved: SavedPrivateServer
+        let key = privateServerKey(placeID: placeID, link: link)
         if let index = privateServers.firstIndex(where: {
-            $0.placeID == placeID
-                && RobloxLaunchURLBuilder.privateLinkCode(from: $0.link) == linkCode
+            privateServerKey(placeID: $0.placeID, link: $0.link) == key
         }) {
             privateServers[index].name = name
             privateServers[index].link = link
@@ -971,8 +1015,8 @@ final class AccountStore: ObservableObject {
     }
 
     func remove(_ account: ManagedAccount) {
-        guard !isRunning(account) else {
-            notice = Notice(title: "Account is still running", message: "Stop this account's Roblox instance before removing it.")
+        guard !isRunning(account), !isOpeningApp(account) else {
+            notice = Notice(title: "Account is still active", message: "Wait for this account to finish opening or stop its Roblox instance before removing it.")
             return
         }
         let original = accounts
@@ -998,7 +1042,7 @@ final class AccountStore: ObservableObject {
     }
 
     func stop(_ account: ManagedAccount) async {
-        guard isRunning(account), !isWorking else { return }
+        guard isRunning(account), !isWorking, appOpeningAccountIDs.isEmpty else { return }
         isWorking = true
         defer { isWorking = false }
         launchStatus = "Stopping @\(account.username)"
@@ -1017,7 +1061,7 @@ final class AccountStore: ObservableObject {
 
     func stopAll() async {
         let accountIDs = runningAccountIDs
-        guard !accountIDs.isEmpty, !isWorking, !isBatchLaunching else { return }
+        guard !accountIDs.isEmpty, !isWorking, !isBatchLaunching, appOpeningAccountIDs.isEmpty else { return }
 
         isWorking = true
         isStoppingAll = true
@@ -1081,13 +1125,203 @@ final class AccountStore: ObservableObject {
         )
     }
 
+    func launchApp(account: ManagedAccount) async {
+        guard !isWorking, !isBatchLaunching, !isOpeningSelectedApps else {
+            notice = Notice(
+                title: "Another launch is starting",
+                message: "Wait for the current launch to finish, then open the Roblox app again."
+            )
+            return
+        }
+        guard !isRunning(account), !isOpeningApp(account) else {
+            notice = Notice(
+                title: "Account is already running",
+                message: RobloxLaunchError.accountAlreadyRunning.localizedDescription
+            )
+            return
+        }
+
+        appOpeningAccountIDs.insert(account.id)
+        launchStatus = "Opening Roblox as @\(account.username)"
+        defer { appOpeningAccountIDs.remove(account.id) }
+
+        await checkAccount(account)
+        guard accountHealth[account.id]?.isReady == true else {
+            notice = Notice(
+                title: "This account is not ready",
+                message: "Use Sign In Again, then try to open the Roblox app again."
+            )
+            return
+        }
+
+        do {
+            guard let cookie = try vault.read(for: account.id), !cookie.isEmpty else {
+                throw RobloxAPIError.invalidSession
+            }
+            let ticket = try await api.authenticationTicket(cookie: cookie)
+            let url = try builder.makeAppURL(ticket: ticket)
+            _ = try await launcher.launch(url, for: account.id, mode: launchMode)
+
+            var updated = account
+            updated.lastUsed = Date()
+            update(updated)
+            activeLaunchTargets[account.id] = nil
+            try? activeLaunchRepository.save(Array(activeLaunchTargets.values))
+            await refreshRunningInstances()
+
+            switch launchMode {
+            case .unmodifiedParallel:
+                launchStatus = "Roblox is open as @\(account.username)"
+            case .official:
+                launchStatus = "Official Roblox is open as @\(account.username)"
+            case .modifiedParallel:
+                launchStatus = "Fallback Roblox is open as @\(account.username)"
+            }
+            if !runningAccountIDs.contains(account.id) {
+                runningAccountIDs.insert(account.id)
+            }
+        } catch {
+            launchStatus = "Open failed"
+            notice = Notice(title: "Roblox did not open", message: error.localizedDescription)
+        }
+    }
+
+    func launchSelectedApps(skipHealthPreflight: Bool = false) async {
+        guard !isWorking, !isBatchLaunching, !isOpeningSelectedApps else { return }
+        let selectedAccounts = accounts.filter {
+            batchSelectedIDs.contains($0.id) && !isRunning($0) && !isOpeningApp($0)
+        }
+        guard !selectedAccounts.isEmpty else {
+            batchSelectedIDs.removeAll()
+            batchStates.removeAll()
+            batchStatus = "Select accounts that are not running"
+            return
+        }
+
+        let selectedIDs = Set(selectedAccounts.map(\.id))
+        let total = selectedAccounts.count
+        isOpeningSelectedApps = true
+        appOpeningAccountIDs.formUnion(selectedIDs)
+        batchStates = Dictionary(uniqueKeysWithValues: selectedAccounts.map { ($0.id, .starting) })
+        batchStatus = "Opening 0 of \(total) apps"
+        launchStatus = "Opening selected Roblox apps"
+        defer {
+            appOpeningAccountIDs.subtract(selectedIDs)
+            isOpeningSelectedApps = false
+        }
+
+        if !skipHealthPreflight {
+            await checkAccounts(selectedIDs)
+        }
+
+        let readyAccounts = selectedAccounts.filter {
+            skipHealthPreflight || accountHealth[$0.id]?.isReady == true
+        }
+        var outcomes = selectedAccounts.compactMap { account -> AppLaunchOutcome? in
+            guard !readyAccounts.contains(where: { $0.id == account.id }) else { return nil }
+            let message = "Sign in again before opening this account."
+            batchStates[account.id] = .failed(message)
+            return AppLaunchOutcome(
+                accountID: account.id,
+                username: account.username,
+                errorMessage: message
+            )
+        }
+
+        let vault = self.vault
+        let api = self.api
+        let builder = self.builder
+        let launcher = self.launcher
+        let launchMode = self.launchMode
+        await withTaskGroup(of: AppLaunchOutcome.self) { group in
+            for account in readyAccounts {
+                group.addTask {
+                    do {
+                        guard let cookie = try vault.read(for: account.id), !cookie.isEmpty else {
+                            throw RobloxAPIError.invalidSession
+                        }
+                        let ticket = try await api.authenticationTicket(cookie: cookie)
+                        let url = try builder.makeAppURL(ticket: ticket)
+                        _ = try await launcher.launch(url, for: account.id, mode: launchMode)
+                        return AppLaunchOutcome(
+                            accountID: account.id,
+                            username: account.username,
+                            errorMessage: nil
+                        )
+                    } catch {
+                        return AppLaunchOutcome(
+                            accountID: account.id,
+                            username: account.username,
+                            errorMessage: error.localizedDescription
+                        )
+                    }
+                }
+            }
+
+            for await outcome in group {
+                outcomes.append(outcome)
+                if let message = outcome.errorMessage {
+                    batchStates[outcome.accountID] = .failed(message)
+                } else {
+                    batchStates[outcome.accountID] = nil
+                }
+                let started = outcomes.filter { $0.errorMessage == nil }.count
+                batchStatus = "Opened \(started) of \(total) apps"
+            }
+        }
+
+        await refreshRunningInstances()
+        outcomes = outcomes.map { outcome in
+            guard outcome.errorMessage == nil,
+                  !runningAccountIDs.contains(outcome.accountID) else { return outcome }
+            let message = "Roblox closed before the manager could confirm that it was running."
+            batchStates[outcome.accountID] = .failed(message)
+            return AppLaunchOutcome(
+                accountID: outcome.accountID,
+                username: outcome.username,
+                errorMessage: message
+            )
+        }
+
+        let now = Date()
+        for outcome in outcomes where outcome.errorMessage == nil {
+            if let index = accounts.firstIndex(where: { $0.id == outcome.accountID }) {
+                accounts[index].lastUsed = now
+            }
+            activeLaunchTargets[outcome.accountID] = nil
+        }
+        do {
+            try repository.save(accounts)
+            try activeLaunchRepository.save(Array(activeLaunchTargets.values))
+        } catch {
+            notice = Notice(title: "Launch details were not saved", message: error.localizedDescription)
+        }
+
+        let failures = outcomes.filter { $0.errorMessage != nil }
+        if failures.isEmpty {
+            batchSelectedIDs.removeAll()
+            batchStates.removeAll()
+            batchStatus = "Opened all \(total) apps"
+            launchStatus = "Running \(total) Roblox apps"
+        } else {
+            batchSelectedIDs = Set(failures.map(\.accountID))
+            batchStates = batchStates.filter { batchSelectedIDs.contains($0.key) }
+            batchStatus = "\(total - failures.count) opened, \(failures.count) failed"
+            launchStatus = "\(total - failures.count) running, \(failures.count) failed"
+            notice = Notice(
+                title: "\(failures.count) account\(failures.count == 1 ? "" : "s") did not open",
+                message: appLaunchFailureMessage(failures)
+            )
+        }
+    }
+
     func launch(
         account: ManagedAccount,
         placeText: String,
         server: RobloxServerSelection,
         rememberSelection: Bool = true
     ) async {
-        guard !isWorking, !isBatchLaunching else {
+        guard !isWorking, !isBatchLaunching, appOpeningAccountIDs.isEmpty else {
             notice = Notice(
                 title: "Another launch is starting",
                 message: "Wait for the current launch to finish, then select Play again."
@@ -1098,10 +1332,18 @@ final class AccountStore: ObservableObject {
             notice = Notice(title: "Account is already running", message: RobloxLaunchError.accountAlreadyRunning.localizedDescription)
             return
         }
-        guard let placeID = Int64(placeText.trimmingCharacters(in: .whitespacesAndNewlines)), placeID > 0 else {
+        let enteredPlaceID = Int64(placeText.trimmingCharacters(in: .whitespacesAndNewlines))
+        let isUnresolvedShareLink: Bool
+        if case .privateLink(let link) = server {
+            isUnresolvedShareLink = RobloxLaunchURLBuilder.privateShareCode(from: link) != nil
+        } else {
+            isUnresolvedShareLink = false
+        }
+        guard isUnresolvedShareLink || (enteredPlaceID ?? 0) > 0 else {
             notice = Notice(title: "Check the place ID", message: RobloxLaunchError.invalidPlaceID.localizedDescription)
             return
         }
+        let placeID = enteredPlaceID ?? 0
         var launchServer = server
         if case .publicInstance(let jobID, _, _) = server {
             let verification = await verifyPublicServer(
@@ -1138,7 +1380,7 @@ final class AccountStore: ObservableObject {
             if case .privateLink = launchServer {
                 launchStatus = "Resolving the private server"
             }
-            let target = try await makeServerTarget(
+            let resolved = try await resolveServerTarget(
                 launchServer,
                 placeID: placeID,
                 cookie: cookie,
@@ -1147,7 +1389,11 @@ final class AccountStore: ObservableObject {
 
             launchStatus = "Requesting a launch ticket"
             let ticket = try await api.authenticationTicket(cookie: cookie)
-            let url = try builder.makeURL(ticket: ticket, placeID: placeID, target: target)
+            let url = try builder.makeURL(
+                ticket: ticket,
+                placeID: resolved.placeID,
+                target: resolved.target
+            )
             switch launchMode {
             case .unmodifiedParallel:
                 launchStatus = "Preparing a separate Roblox copy"
@@ -1167,17 +1413,17 @@ final class AccountStore: ObservableObject {
             var updated = account
             updated.lastUsed = Date()
             if rememberSelection {
-                updated.savedPlaceID = placeText.trimmingCharacters(in: .whitespacesAndNewlines)
+                updated.savedPlaceID = String(resolved.placeID)
                 updated.savedServer = launchServer.persistedValue
             }
             update(updated)
             recordLaunchTarget(
                 accountID: account.id,
                 processIdentifier: instance.processIdentifier,
-                placeID: placeID,
+                placeID: resolved.placeID,
                 server: launchServer
             )
-            recordExperienceLaunch(placeID: placeID)
+            recordExperienceLaunch(placeID: resolved.placeID)
             switch launchMode {
             case .unmodifiedParallel:
                 launchStatus = "Running @\(account.username) with the recommended method"
@@ -1203,13 +1449,15 @@ final class AccountStore: ObservableObject {
         skipHealthPreflight: Bool = false,
         rememberSelection: Bool = true
     ) async {
-        guard !isWorking, !isBatchLaunching else { return }
+        guard !isWorking, !isBatchLaunching, appOpeningAccountIDs.isEmpty else { return }
         guard let placeID = Int64(placeText.trimmingCharacters(in: .whitespacesAndNewlines)), placeID > 0 else {
             notice = Notice(title: "Check the shared place ID", message: RobloxLaunchError.invalidPlaceID.localizedDescription)
             return
         }
 
-        let selectedAccounts = accounts.filter { batchSelectedIDs.contains($0.id) && !isRunning($0) }
+        let selectedAccounts = accounts.filter {
+            batchSelectedIDs.contains($0.id) && !isRunning($0) && !isOpeningApp($0)
+        }
         guard !selectedAccounts.isEmpty else {
             batchSelectedIDs.removeAll()
             batchStates.removeAll()
@@ -1259,23 +1507,14 @@ final class AccountStore: ObservableObject {
             launchServer = .publicInstance(jobID: current.id, playing: current.playing, maxPlayers: current.maxPlayers)
         }
 
-        if case .privateLink(let link) = launchServer {
-            guard RobloxLaunchURLBuilder.privateShareCode(from: link) == nil else {
-                notice = Notice(
-                    title: "This private link needs the Roblox website",
-                    message: "Open the private link in each selected account's Roblox Website window. This app does not share one account's access code with another account."
-                )
-                return
-            }
-            guard let linkCode = RobloxLaunchURLBuilder.privateLinkCode(from: link) else {
-                notice = Notice(title: "Check the private server link", message: RobloxLaunchError.invalidServer.localizedDescription)
-                return
-            }
-            let denied = await privateAccessFailures(
+        var preparedPrivateTargets: [UUID: ResolvedServerTarget] = [:]
+        if case .privateLink = launchServer {
+            let prepared = await privateServerTargets(
                 accounts: selectedAccounts,
                 placeID: placeID,
-                linkCode: linkCode
+                selection: launchServer
             )
+            let denied = prepared.failures
             if !denied.isEmpty {
                 let deniedIDs = Set(denied.keys)
                 batchSelectedIDs.subtract(deniedIDs)
@@ -1287,6 +1526,7 @@ final class AccountStore: ObservableObject {
                 )
                 return
             }
+            preparedPrivateTargets = prepared.targets
         }
 
         let vault = self.vault
@@ -1294,6 +1534,7 @@ final class AccountStore: ObservableObject {
         let builder = self.builder
         let launcher = self.launcher
         let launchMode = self.launchMode
+        let privateTargets = preparedPrivateTargets
         let total = selectedAccounts.count
 
         isWorking = true
@@ -1315,20 +1556,29 @@ final class AccountStore: ObservableObject {
                             throw RobloxAPIError.invalidSession
                         }
 
-                        let target = try await makeServerTarget(
-                            launchServer,
-                            placeID: placeID,
-                            cookie: cookie,
-                            api: api
-                        )
+                        let resolved = if let prepared = privateTargets[account.id] {
+                            prepared
+                        } else {
+                            try await resolveServerTarget(
+                                launchServer,
+                                placeID: placeID,
+                                cookie: cookie,
+                                api: api
+                            )
+                        }
 
                         let ticket = try await api.authenticationTicket(cookie: cookie)
-                        let url = try builder.makeURL(ticket: ticket, placeID: placeID, target: target)
+                        let url = try builder.makeURL(
+                            ticket: ticket,
+                            placeID: resolved.placeID,
+                            target: resolved.target
+                        )
                         let instance = try await launcher.launch(url, for: account.id, mode: launchMode)
                         return BatchOutcome(
                             accountID: account.id,
                             username: account.username,
                             processIdentifier: instance.processIdentifier,
+                            placeID: resolved.placeID,
                             errorMessage: nil
                         )
                     } catch {
@@ -1336,6 +1586,7 @@ final class AccountStore: ObservableObject {
                             accountID: account.id,
                             username: account.username,
                             processIdentifier: nil,
+                            placeID: nil,
                             errorMessage: error.localizedDescription
                         )
                     }
@@ -1365,14 +1616,16 @@ final class AccountStore: ObservableObject {
                 accountID: outcome.accountID,
                 username: outcome.username,
                 processIdentifier: outcome.processIdentifier,
+                placeID: outcome.placeID,
                 errorMessage: message
             )
         }
         for outcome in outcomes where outcome.errorMessage == nil {
+            let launchedPlaceID = outcome.placeID ?? placeID
             if let index = accounts.firstIndex(where: { $0.id == outcome.accountID }) {
                 accounts[index].lastUsed = Date()
                 if rememberSelection {
-                    accounts[index].savedPlaceID = String(placeID)
+                    accounts[index].savedPlaceID = String(launchedPlaceID)
                     accounts[index].savedServer = launchServer.persistedValue
                 }
             }
@@ -1380,12 +1633,13 @@ final class AccountStore: ObservableObject {
                 recordLaunchTarget(
                     accountID: outcome.accountID,
                     processIdentifier: processIdentifier,
-                    placeID: placeID,
+                    placeID: launchedPlaceID,
                     server: launchServer
                 )
             }
         }
-        if outcomes.contains(where: { $0.errorMessage == nil }) { recordExperienceLaunch(placeID: placeID) }
+        let launchedPlaceIDs = Set(outcomes.compactMap { $0.errorMessage == nil ? $0.placeID : nil })
+        for launchedPlaceID in launchedPlaceIDs { recordExperienceLaunch(placeID: launchedPlaceID) }
         do {
             try repository.save(accounts)
         } catch {
@@ -1455,24 +1709,19 @@ final class AccountStore: ObservableObject {
     ) {
         let kind: ActiveLaunchTargetKind
         let jobID: String?
-        let privateReference: String?
         switch server {
         case .automatic:
             kind = .automatic
             jobID = nil
-            privateReference = nil
         case .publicInstance(let value, _, _):
             kind = .verifiedPublicJob
             jobID = value
-            privateReference = nil
         case .player(_, _, let value), .manualJob(let value):
             kind = .publicJob
             jobID = value
-            privateReference = nil
-        case .privateLink(let link):
+        case .privateLink:
             kind = .privateServer
             jobID = nil
-            privateReference = link
         }
         activeLaunchTargets[accountID] = ActiveLaunchTargetRecord(
             accountID: accountID,
@@ -1480,42 +1729,45 @@ final class AccountStore: ObservableObject {
             placeID: placeID,
             targetKind: kind,
             jobID: jobID,
-            privateServerReference: privateReference
+            privateServerReference: nil
         )
         try? activeLaunchRepository.save(Array(activeLaunchTargets.values))
     }
 
-    private func privateAccessFailures(
+    private func privateServerTargets(
         accounts: [ManagedAccount],
         placeID: Int64,
-        linkCode: String
-    ) async -> [UUID: String] {
+        selection: RobloxServerSelection
+    ) async -> (targets: [UUID: ResolvedServerTarget], failures: [UUID: String]) {
         let vault = self.vault
         let api = self.api
+        var targets: [UUID: ResolvedServerTarget] = [:]
         var failures: [UUID: String] = [:]
-        await withTaskGroup(of: (UUID, String?).self) { group in
+        await withTaskGroup(of: (UUID, ResolvedServerTarget?, String?).self) { group in
             for account in accounts {
                 group.addTask {
                     do {
                         guard let cookie = try vault.read(for: account.id), !cookie.isEmpty else {
                             throw RobloxAPIError.invalidSession
                         }
-                        _ = try await api.privateServerAccessCode(
+                        let target = try await resolveServerTarget(
+                            selection,
                             placeID: placeID,
-                            linkCode: linkCode,
-                            cookie: cookie
+                            cookie: cookie,
+                            api: api
                         )
-                        return (account.id, nil)
+                        return (account.id, target, nil)
                     } catch {
-                        return (account.id, error.localizedDescription)
+                        return (account.id, nil, error.localizedDescription)
                     }
                 }
             }
-            for await (accountID, message) in group {
+            for await (accountID, target, message) in group {
+                if let target { targets[accountID] = target }
                 if let message { failures[accountID] = message }
             }
         }
-        return failures
+        return (targets, failures)
     }
 
     private func recordExperienceLaunch(placeID: Int64) {
@@ -1560,8 +1812,11 @@ final class AccountStore: ObservableObject {
     }
 
     private func privateServerKey(placeID: Int64, link: String) -> String? {
+        if let code = RobloxLaunchURLBuilder.privateShareCode(from: link) {
+            return "share|\(code.lowercased())"
+        }
         guard let code = RobloxLaunchURLBuilder.privateLinkCode(from: link) else { return nil }
-        return "\(placeID)|\(code)"
+        return "legacy|\(placeID)|\(code)"
     }
 
     private func sortedPrivateServers(_ servers: [SavedPrivateServer]) -> [SavedPrivateServer] {
@@ -1589,24 +1844,50 @@ final class AccountStore: ObservableObject {
         }
         return shown.joined(separator: "\n")
     }
+
+    private func appLaunchFailureMessage(_ failures: [AppLaunchOutcome]) -> String {
+        let shown = failures.prefix(5).map { "@\($0.username): \($0.errorMessage ?? "Unknown error")" }
+        let remaining = failures.count - shown.count
+        if remaining > 0 {
+            return (shown + ["\(remaining) more failed."]).joined(separator: "\n")
+        }
+        return shown.joined(separator: "\n")
+    }
 }
 
-private func makeServerTarget(
+private struct ResolvedServerTarget: Sendable {
+    let placeID: Int64
+    let target: RobloxServerTarget
+}
+
+private func resolveServerTarget(
     _ selection: RobloxServerSelection,
     placeID: Int64,
     cookie: String,
     api: any RobloxAPIProviding
-) async throws -> RobloxServerTarget {
+) async throws -> ResolvedServerTarget {
     switch selection {
     case .automatic:
-        return .publicServer
+        return ResolvedServerTarget(placeID: placeID, target: .publicServer)
     case .publicInstance(let jobID, _, _), .player(_, _, let jobID), .manualJob(let jobID):
         let clean = jobID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard UUID(uuidString: clean) != nil else { throw RobloxLaunchError.invalidServer }
-        return .job(clean)
+        return ResolvedServerTarget(placeID: placeID, target: .job(clean))
     case .privateLink(let link):
-        if RobloxLaunchURLBuilder.privateShareCode(from: link) != nil {
-            throw RobloxLaunchError.unsupportedPrivateServerLink
+        if let shareCode = RobloxLaunchURLBuilder.privateShareCode(from: link) {
+            let resolution = try await api.privateShareLinkResolution(
+                shareCode: shareCode,
+                cookie: cookie
+            )
+            let accessCode = try await api.privateServerAccessCode(
+                placeID: resolution.placeID,
+                linkCode: resolution.linkCode,
+                cookie: cookie
+            )
+            return ResolvedServerTarget(
+                placeID: resolution.placeID,
+                target: .privateServer(accessCode: accessCode, linkCode: resolution.linkCode)
+            )
         }
         guard let linkCode = RobloxLaunchURLBuilder.privateLinkCode(from: link) else {
             throw RobloxLaunchError.invalidServer
@@ -1616,6 +1897,9 @@ private func makeServerTarget(
             linkCode: linkCode,
             cookie: cookie
         )
-        return .privateServer(accessCode: accessCode, linkCode: linkCode)
+        return ResolvedServerTarget(
+            placeID: placeID,
+            target: .privateServer(accessCode: accessCode, linkCode: linkCode)
+        )
     }
 }

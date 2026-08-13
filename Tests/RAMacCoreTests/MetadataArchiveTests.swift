@@ -2,6 +2,25 @@ import XCTest
 @testable import RAMacCore
 
 final class MetadataArchiveTests: XCTestCase {
+    func testManagedAccountAcceptsOnlyRobloxCDNAvatarURLs() {
+        let allowed = ManagedAccount(
+            userID: 1,
+            username: "user",
+            displayName: "User",
+            avatarURLString: "https://tr.rbxcdn.com/avatar.png"
+        )
+        let blocked = ManagedAccount(
+            userID: 2,
+            username: "other",
+            displayName: "Other",
+            avatarURLString: "https://localhost/avatar.png"
+        )
+
+        XCTAssertEqual(allowed.avatarURL?.host, "tr.rbxcdn.com")
+        XCTAssertNil(blocked.avatarURL)
+        XCTAssertNil(blocked.avatarURLString)
+    }
+
     func testDefaultExportContainsNoSessionsOrPrivateLinks() throws {
         let account = ManagedAccount(
             userID: 1,

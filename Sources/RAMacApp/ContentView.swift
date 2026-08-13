@@ -158,7 +158,7 @@ struct ContentView: View {
                         isRunning: store.isRunning(account),
                         isBatchSelected: store.isBatchSelected(account),
                         batchState: store.batchStates[account.id],
-                        isSelectionDisabled: store.isBatchLaunching,
+                        isSelectionDisabled: store.isBatchLaunching || store.isOpeningSelectedApps,
                         onToggleBatch: {
                             store.toggleBatchSelection(account)
                         }
@@ -171,6 +171,16 @@ struct ContentView: View {
                         }
                     )
                     .contextMenu {
+                        Button("Open Roblox App") {
+                            Task { await store.launchApp(account: account) }
+                        }
+                        .disabled(
+                            store.isRunning(account)
+                                || store.isOpeningApp(account)
+                                || store.isWorking
+                                || store.isBatchLaunching
+                                || store.isOpeningSelectedApps
+                        )
                         Menu("Open Roblox Website") {
                             Button("Home") { openWebsite(account, .home) }
                             Button("My Profile") { openWebsite(account, .profile) }
@@ -253,7 +263,7 @@ struct ContentView: View {
             HStack(spacing: 10) {
                 Text(store.batchSelectedIDs.isEmpty
                      ? "Select accounts"
-                     : "\(store.batchSelectedIDs.count) selected to launch")
+                     : "\(store.batchSelectedIDs.count) selected")
                     .fontWeight(.medium)
                 Spacer()
                 Menu("Select a Group") {
@@ -265,12 +275,12 @@ struct ContentView: View {
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .disabled(store.isBatchLaunching || store.groupNames.isEmpty)
+                .disabled(store.isBatchLaunching || store.isOpeningSelectedApps || store.groupNames.isEmpty)
 
                 if !store.batchSelectedIDs.isEmpty {
                     Button("Clear") { store.clearBatchSelection() }
                         .buttonStyle(.plain)
-                        .disabled(store.isBatchLaunching)
+                        .disabled(store.isBatchLaunching || store.isOpeningSelectedApps)
                 }
             }
 
@@ -281,7 +291,12 @@ struct ContentView: View {
                     Task { await store.stopAll() }
                 }
                 .buttonStyle(.bordered)
-                .disabled(store.runningAccountIDs.isEmpty || store.isWorking || store.isBatchLaunching)
+                .disabled(
+                    store.runningAccountIDs.isEmpty
+                        || store.isWorking
+                        || store.isBatchLaunching
+                        || !store.appOpeningAccountIDs.isEmpty
+                )
                 .help(store.runningAccountIDs.isEmpty
                     ? "No managed Roblox clients are running"
                     : "Stop every Roblox client started by this manager")

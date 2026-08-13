@@ -9,7 +9,11 @@ final class LoginBrowserModel: ObservableObject {
 
     func updateSessionState() {
         webView?.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
-            let found = cookies.contains { $0.name == ".ROBLOSECURITY" && !$0.value.isEmpty }
+            let found = cookies.contains {
+                $0.name == ".ROBLOSECURITY"
+                    && !$0.value.isEmpty
+                    && Self.isRobloxCookieDomain($0.domain)
+            }
             Task { @MainActor in self.hasSession = found }
         }
     }
@@ -18,9 +22,24 @@ final class LoginBrowserModel: ObservableObject {
         guard let store = webView?.configuration.websiteDataStore.httpCookieStore else { return nil }
         return await withCheckedContinuation { continuation in
             store.getAllCookies { cookies in
-                continuation.resume(returning: cookies.first(where: { $0.name == ".ROBLOSECURITY" })?.value)
+                continuation.resume(returning: cookies.first(where: {
+                    $0.name == ".ROBLOSECURITY"
+                        && Self.isRobloxCookieDomain($0.domain)
+                })?.value)
             }
         }
+    }
+
+    nonisolated static func isRobloxCookieDomain(_ domain: String) -> Bool {
+        let host = domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        return host == "roblox.com" || host.hasSuffix(".roblox.com")
+    }
+
+    nonisolated static func allowsMainFrameNavigation(to url: URL?) -> Bool {
+        guard let url,
+              url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased() else { return false }
+        return host == "roblox.com" || host.hasSuffix(".roblox.com")
     }
 }
 
@@ -46,6 +65,22 @@ struct RobloxLoginWebView: NSViewRepresentable {
         let model: LoginBrowserModel
 
         init(model: LoginBrowserModel) { self.model = model }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            if navigationAction.targetFrame?.isMainFrame == false {
+                decisionHandler(.allow)
+                return
+            }
+            decisionHandler(
+                LoginBrowserModel.allowsMainFrameNavigation(to: navigationAction.request.url)
+                    ? .allow
+                    : .cancel
+            )
+        }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             Task { @MainActor in model.isLoading = true }

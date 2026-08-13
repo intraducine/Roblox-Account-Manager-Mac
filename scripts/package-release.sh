@@ -1,5 +1,6 @@
 #!/bin/zsh
 set -euo pipefail
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 
 script_dir=${0:A:h}
 project_dir=${script_dir:h}
@@ -15,7 +16,7 @@ cd "$project_dir"
 /usr/bin/lipo "$app_path/Contents/MacOS/RobloxAccountManager" -verify_arch arm64 x86_64
 
 /bin/rm -f "$archive_path" "$checksum_path"
-/usr/bin/ditto -c -k --keepParent "$app_path" "$archive_path"
+COPYFILE_DISABLE=1 /usr/bin/ditto -c -k --keepParent --norsrc --noextattr "$app_path" "$archive_path"
 (
     cd "$project_dir/dist"
     /usr/bin/shasum -a 256 "${archive_path:t}"

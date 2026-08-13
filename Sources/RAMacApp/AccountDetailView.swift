@@ -48,8 +48,24 @@ struct AccountDetailView: View {
                     AccountHealthRow(store: store, account: account)
                 }
 
-                Section("Roblox Website") {
+                Section("Roblox App and Website") {
                     HStack {
+                        Button(store.isOpeningApp(account) ? "Opening Roblox" : "Open Roblox App") {
+                            Task { await store.launchApp(account: draft) }
+                        }
+                        .disabled(
+                            store.isWorking
+                                || store.isBatchLaunching
+                                || store.isOpeningSelectedApps
+                                || store.isRunning(account)
+                                || store.isOpeningApp(account)
+                        )
+                        Text("Starts this account without joining a game.")
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("Website")
+                            .foregroundStyle(.secondary)
                         Button("Home") { openWebsite(.home) }
                         Button("My Profile") { openWebsite(.profile) }
                         Button("Settings") { openWebsite(.settings) }

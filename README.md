@@ -60,10 +60,10 @@ To create the optional ZIP file and SHA-256 checksum:
 
 ```sh
 ./scripts/package-release.sh
-(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-1.0.3.zip.sha256")
+(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-1.0.4.zip.sha256")
 ```
 
-A downloaded build is not notarized. macOS can show a warning when you open it. Building from source gives you the clearest local trust boundary. This project does not use an automatic updater or paid Apple services.
+A downloaded build is not notarized. macOS can show a warning when you open it. Building from source gives you the clearest local trust boundary. The in-app updater accepts only a release with the same signing requirement as the installed app.
 
 ## Add accounts
 
@@ -73,13 +73,13 @@ The app never sees or saves your Roblox password. The advanced paste option acce
 
 The app stores all saved Roblox sessions inside one Keychain item. Version 1.0.2 uses a new item because older ad hoc builds could lose access after an app update and show error `-25293`. If macOS allows access to the old item, the app moves every session automatically. If macOS blocks the old item, account names and settings remain, but each affected account must sign in once. Version 1.0.2 and later release builds use a stable Apple signing identity so later updates keep access to the new item.
 
-The managed Roblox website window keeps top-level browsing on `roblox.com`. Secure frames used inside Roblox pages can load without an external-link warning, and they do not receive the Roblox session cookie. A real link to another site asks before it opens in the default browser and names the destination.
+The managed Roblox website window keeps top-level browsing on `roblox.com`. Its temporary Roblox session cookie is secure and HTTP-only. Secure frames used inside Roblox pages can load without an external-link warning, and they do not receive the Roblox session cookie. A real link to another site asks before it opens in the default browser and names the destination.
 
 You can give one account an alias, notes, and several groups. These fields do not change the Roblox account.
 
 ## Update the app
 
-Version 1.0.3 adds the in-app updater. Choose **Roblox Account Manager > Check for Updates** or open **About > Check for Updates**.
+Version 1.0.3 and later include the in-app updater. Choose **Roblox Account Manager > Check for Updates** or open **About > Check for Updates**.
 
 The app checks only final releases from this project's public GitHub page. When a newer version exists, it downloads the release ZIP and checksum, checks GitHub's file fingerprint, and confirms that the downloaded app has the same signing identity as the installed app. It also checks the app name, version, bundle identifier, and Intel and Apple silicon support before showing **Install and Restart**.
 
@@ -91,7 +91,11 @@ Version 1.0.2 and older do not have the updater. Install version 1.0.3 once with
 
 Every managed launch uses a separate copy of `/Applications/Roblox.app`. This includes the first account. You can start another account later without closing the first one.
 
-The normal copy stays unchanged. Every file must match the installed Roblox app. It keeps Roblox Corporation's original signature. The manager stops the launch if the copy or signature check fails. It never edits `/Applications/Roblox.app`.
+The normal copy stays unchanged. Every file must match the installed Roblox app. It keeps Roblox Corporation's original Apple-anchored signature. The manager stops the launch if the copy or signature check fails. It never edits `/Applications/Roblox.app`. Each managed account also gets separate Roblox app data and a small child-process environment that excludes unrelated parent secrets. Leaving a game and using the Roblox app does not switch the other managed copies to the same account.
+
+Select one account and choose **Open Roblox App** to open that account's Roblox home screen without joining a game. You can also right-click an account and choose **Open Roblox App**. You do not need to wait for that app to finish opening before you start a different account.
+
+To open several account apps without joining a game, select their checkboxes in the sidebar. Then choose **Open Roblox Apps** in the selected-accounts bar. The manager requests their account sessions and starts their Roblox copies together.
 
 To launch:
 
@@ -102,7 +106,7 @@ To launch:
 
 A Place ID is the number after `/games/` in a Roblox experience link. A Job ID identifies one current server. Job IDs stop working when that server closes, so the app never saves them as a future launch choice. Choosing or typing a different Place ID returns the server choice to **Let Roblox choose**.
 
-Open **Choose Server > Private Servers** to save a private-server link with a clear name. The app reads the Place ID from the link. Select the saved name later to reuse both the link and its Place ID. Links that were already saved to accounts or Launch Sets appear in this list after the app loads them.
+Open **Choose Server > Private Servers** to save a private-server link with a clear name. Current Roblox `roblox.com/share` links and older `/games/` private-server links both work. For a current share link, the app checks the link through one saved account to find its Place ID. Roblox then checks each launched account's access separately. The same account-specific check runs when you open a current private-server share link in the built-in Roblox website window. Select the saved name later to reuse the link and its Place ID. Links that were already saved to accounts or Launch Sets appear in this list after the app loads them.
 
 The bottom **Advanced fallback** changes copied app settings and applies a different signature. Roblox can detect that change. Use it only for recovery tests. Normal managed launches use unchanged copies.
 
@@ -135,9 +139,10 @@ Right-click an account or use its detail view to open Roblox Home, Profile, Sett
 - Clears web data when it closes.
 - Saves a changed session only after Roblox confirms the same user ID.
 - Opens non-Roblox links in the normal browser only after confirmation.
-- Sends Roblox Play and Join actions back to the manager for this account.
+- Accepts Roblox Play and Join actions only from the main page.
+- Asks before it starts a native Roblox client for this account.
 
-When you select Play or Join on the Roblox website, the manager reads only the Place ID and server choice. It does not reuse the website's launch ticket. It requests a new ticket for the account shown at the top of the window, then starts that account in a separate unchanged Roblox copy. It does not open the normal Roblox app. If that account already has a managed client running, the manager stops the second launch and tells you why.
+When you select Play or Join on the Roblox website, the manager reads only the Place ID and server choice. It does not reuse the website's launch ticket. After you confirm the launch, it requests a new ticket for the account shown at the top of the window, then starts that account in a separate unchanged Roblox copy. It does not open the normal Roblox app. If that account already has a managed client running, the manager stops the second launch and tells you why.
 
 Use this window when you want to browse as one saved account, start a game from its page, or use a friend's Join button when that account is allowed to join them.
 

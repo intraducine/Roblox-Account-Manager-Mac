@@ -40,7 +40,7 @@ public struct ManagedAccount: Codable, Hashable, Identifiable, Sendable {
         self.lastUsed = lastUsed
         self.savedPlaceID = savedPlaceID
         self.savedServer = savedServer
-        self.avatarURLString = avatarURLString
+        self.avatarURLString = Self.validatedAvatarURL(from: avatarURLString)?.absoluteString
     }
 
     public var title: String {
@@ -49,7 +49,19 @@ public struct ManagedAccount: Codable, Hashable, Identifiable, Sendable {
     }
 
     public var avatarURL: URL? {
-        avatarURLString.flatMap(URL.init(string:))
+        Self.validatedAvatarURL(from: avatarURLString)
+    }
+
+    public static func validatedAvatarURL(from value: String?) -> URL? {
+        guard let value,
+              let components = URLComponents(string: value),
+              components.scheme?.lowercased() == "https",
+              components.user == nil,
+              components.password == nil,
+              components.port == nil || components.port == 443,
+              let host = components.host?.lowercased(),
+              host == "rbxcdn.com" || host.hasSuffix(".rbxcdn.com") else { return nil }
+        return components.url
     }
 
     public func belongs(to group: String) -> Bool {
@@ -102,7 +114,9 @@ public struct ManagedAccount: Codable, Hashable, Identifiable, Sendable {
         lastUsed = try values.decodeIfPresent(Date.self, forKey: .lastUsed)
         savedPlaceID = try values.decodeIfPresent(String.self, forKey: .savedPlaceID) ?? ""
         savedServer = try values.decodeIfPresent(String.self, forKey: .savedServer) ?? ""
-        avatarURLString = try values.decodeIfPresent(String.self, forKey: .avatarURLString)
+        avatarURLString = Self.validatedAvatarURL(
+            from: try values.decodeIfPresent(String.self, forKey: .avatarURLString)
+        )?.absoluteString
     }
 
     public func encode(to encoder: Encoder) throws {

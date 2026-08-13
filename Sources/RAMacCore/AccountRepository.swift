@@ -22,7 +22,12 @@ public final class AccountRepository: @unchecked Sendable {
     public func load() throws -> [ManagedAccount] {
         let file = dataDirectory.appendingPathComponent("Accounts.json")
         guard fileManager.fileExists(atPath: file.path) else { return [] }
-        return try decoder.decode([ManagedAccount].self, from: Data(contentsOf: file))
+        let accounts = try decoder.decode([ManagedAccount].self, from: Data(contentsOf: file))
+        guard Set(accounts.map(\.id)).count == accounts.count,
+              Set(accounts.map(\.userID)).count == accounts.count else {
+            throw RepositoryError.duplicateAccount
+        }
+        return accounts
     }
 
     public func save(_ accounts: [ManagedAccount]) throws {
@@ -58,5 +63,13 @@ public final class AccountRepository: @unchecked Sendable {
     public static func defaultDataDirectory(fileManager: FileManager = .default) -> URL {
         let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return root.appendingPathComponent("Roblox Account Manager", isDirectory: true)
+    }
+
+    public enum RepositoryError: LocalizedError {
+        case duplicateAccount
+
+        public var errorDescription: String? {
+            "Accounts.json contains a duplicate account. Restore Accounts.backup.json or remove the duplicate record."
+        }
     }
 }

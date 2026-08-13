@@ -47,12 +47,20 @@ public protocol RobloxAPIProviding: Sendable {
     func avatarURL(userID: Int64) async -> URL?
     func authenticationTicket(cookie rawCookie: String) async throws -> String
     func privateServerAccessCode(placeID: Int64, linkCode: String, cookie rawCookie: String) async throws -> String
+    func privateShareLinkResolution(shareCode: String, cookie rawCookie: String) async throws -> RobloxPrivateShareLinkResolution
     func publicServers(placeID: Int64, cursor: String?) async throws -> RobloxPublicServerPage
     func user(named username: String) async throws -> RobloxUserSearchResult
     func presence(userID: Int64) async throws -> RobloxUserPresence
 }
 
 public extension RobloxAPIProviding {
+    func privateShareLinkResolution(
+        shareCode: String,
+        cookie rawCookie: String
+    ) async throws -> RobloxPrivateShareLinkResolution {
+        throw RobloxAPIError.privateServerUnavailable
+    }
+
     func publicServers(placeID: Int64, cursor: String?) async throws -> RobloxPublicServerPage {
         throw RobloxAPIError.invalidResponse
     }
@@ -129,7 +137,7 @@ public struct RobloxAPIClient: Sendable {
               http.statusCode == 200,
               let payload = try? decoder.decode(RobloxThumbnailResponse.self, from: data),
               let image = payload.data.first?.imageUrl else { return nil }
-        return URL(string: image)
+        return ManagedAccount.validatedAvatarURL(from: image)
     }
 
     public func publicServers(placeID: Int64, cursor: String? = nil) async throws -> RobloxPublicServerPage {
@@ -182,7 +190,11 @@ public struct RobloxAPIClient: Sendable {
         let http = try httpResponse(response)
         try checkDiscoveryStatus(http, data: data)
         do {
-            guard let user = try decoder.decode(RobloxUserSearchResponse.self, from: data).data.first else {
+            let users = try decoder.decode(RobloxUserSearchResponse.self, from: data).data.filter {
+                $0.requestedUsername?.caseInsensitiveCompare(clean) == .orderedSame
+                    || $0.name.caseInsensitiveCompare(clean) == .orderedSame
+            }
+            guard users.count == 1, let user = users.first else {
                 throw RobloxAPIError.userNotFound
             }
             return user
@@ -203,7 +215,10 @@ public struct RobloxAPIClient: Sendable {
         let http = try httpResponse(response)
         try checkDiscoveryStatus(http, data: data)
         do {
-            guard let presence = try decoder.decode(RobloxPresenceResponse.self, from: data).userPresences.first else {
+            let presences = try decoder.decode(RobloxPresenceResponse.self, from: data).userPresences.filter {
+                $0.userId == userID
+            }
+            guard presences.count == 1, let presence = presences.first else {
                 throw RobloxAPIError.invalidResponse
             }
             return presence
@@ -276,16 +291,82 @@ public struct RobloxAPIClient: Sendable {
         return String(html[range])
     }
 
+    public func privateShareLinkResolution(
+        shareCode: String,
+        cookie rawCookie: String
+    ) async throws -> RobloxPrivateShareLinkResolution {
+        let cleanCode = shareCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cookie = Self.normalizedCookie(from: rawCookie)
+        guard !cleanCode.isEmpty, cleanCode.count <= 256 else {
+            throw RobloxAPIError.privateServerUnavailable
+        }
+        guard !cookie.isEmpty else { throw RobloxAPIError.invalidSession }
+
+        let endpoint = URL(string: "https://apis.roblox.com/sharelinks/v1/resolve-link")!
+        let body = try JSONSerialization.data(withJSONObject: [
+            "linkId": cleanCode,
+            "linkType": "Server"
+        ], options: [.sortedKeys])
+
+        func makeRequest(csrf: String? = nil) -> URLRequest {
+            var request = URLRequest(url: endpoint)
+            request.httpMethod = "POST"
+            request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let csrf { request.setValue(csrf, forHTTPHeaderField: "x-csrf-token") }
+            applyHeaders(cookie: cookie, to: &request)
+            return request
+        }
+
+        let (challengeData, challengeResponse) = try await session.data(for: makeRequest())
+        let first = try httpResponse(challengeResponse)
+        let data: Data
+        let response: HTTPURLResponse
+        if first.statusCode == 403,
+           let csrf = first.value(forHTTPHeaderField: "x-csrf-token"),
+           !csrf.isEmpty {
+            let retried = try await session.data(for: makeRequest(csrf: csrf))
+            data = retried.0
+            response = try httpResponse(retried.1)
+        } else {
+            data = challengeData
+            response = first
+        }
+
+        guard (200...299).contains(response.statusCode) else {
+            if response.statusCode == 401 { throw RobloxAPIError.invalidSession }
+            if response.statusCode == 400 || response.statusCode == 403 || response.statusCode == 404 {
+                throw RobloxAPIError.privateServerUnavailable
+            }
+            if response.statusCode == 429 {
+                let retry = response.value(forHTTPHeaderField: "retry-after").flatMap(Int.init)
+                throw RobloxAPIError.rateLimited(retry)
+            }
+            throw RobloxAPIError.server(response.statusCode, serverMessage(from: data))
+        }
+
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let invite = object["privateServerInviteData"] as? [String: Any],
+              (invite["status"] as? String)?.caseInsensitiveCompare("Valid") == .orderedSame,
+              let placeID = Self.int64Value(invite["placeId"]),
+              placeID > 0,
+              let linkCode = invite["linkCode"] as? String,
+              !linkCode.isEmpty else {
+            throw RobloxAPIError.privateServerUnavailable
+        }
+        return RobloxPrivateShareLinkResolution(placeID: placeID, linkCode: linkCode)
+    }
+
     private func applyHeaders(cookie: String, to request: inout URLRequest) {
         request.setValue(".ROBLOSECURITY=\(cookie)", forHTTPHeaderField: "Cookie")
         request.setValue("https://www.roblox.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.roblox.com/", forHTTPHeaderField: "Referer")
-        request.setValue("Roblox Account Manager for Mac/1.0.3", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox Account Manager for Mac/1.0.4", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 
     private func applyPublicHeaders(to request: inout URLRequest) {
-        request.setValue("Roblox Account Manager for Mac/1.0.3", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox Account Manager for Mac/1.0.4", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
     }
 
@@ -317,6 +398,22 @@ public struct RobloxAPIClient: Sendable {
             let message = errors.first?["message"] as? String
         else { return "Request failed" }
         return message
+    }
+
+    private static func int64Value(_ value: Any?) -> Int64? {
+        if let value = value as? NSNumber { return value.int64Value }
+        if let value = value as? String { return Int64(value) }
+        return nil
+    }
+}
+
+public struct RobloxPrivateShareLinkResolution: Equatable, Sendable {
+    public let placeID: Int64
+    public let linkCode: String
+
+    public init(placeID: Int64, linkCode: String) {
+        self.placeID = placeID
+        self.linkCode = linkCode
     }
 }
 

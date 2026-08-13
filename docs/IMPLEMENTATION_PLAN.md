@@ -29,7 +29,7 @@ The app uses standard macOS structure and controls. It follows the system appear
 - Saved Roblox sessions use the `sessions-v2` Keychain item.
 - Release builds use an installed stable Apple signing identity when one is available. This keeps Keychain access after app updates.
 - If macOS blocks the older ad hoc Keychain item, the app keeps all non-secret account details and lets each affected account sign in once.
-- Version 1.0.3 can check final public GitHub releases, verify the ZIP and app identity, install an approved update, and restart.
+- Version 1.0.4 can check final public GitHub releases, verify the ZIP and app identity, install an approved update, and restart.
 
 ## Development history
 
@@ -123,7 +123,7 @@ The phases below record how the product was built. They are not current usage in
 - Cache public server results for one minute to respect Roblox request limits.
 - Keep discovered Job IDs temporary because running servers can close.
 - Keep manual Job ID entry under Advanced.
-- Detect newer private-server share links and explain the current account-selection limit.
+- Resolve current private-server share links separately for each saved account before launch.
 
 ### Phase 10: complete in version 1.0.2
 
@@ -146,6 +146,24 @@ The phases below record how the product was built. They are not current usage in
 - Keep one hidden previous-version backup and restore it after a failed replacement.
 - Require one explicit Install and Restart action.
 - Keep draft releases, prereleases, GitHub credentials, and background installation outside the updater.
+
+### Phase 12: complete in version 1.0.4
+
+- Give every managed Roblox process a separate macOS home-data directory.
+- Keep exact-copy app files and Roblox Corporation's original signature unchanged.
+- Add an app-only account launch that uses an authentication ticket without a game target.
+- Handle current `roblox://navigation/share_links` private-server requests from the built-in browser.
+- Resolve the current share code with the selected account before launch.
+- Track app-only startup by account instead of using one global launch lock.
+- Open the Roblox app without a game for every account selected in the sidebar.
+- Require a user confirmation for web-page Play and Join requests.
+- Keep sign-in main-page navigation on secure Roblox domains.
+- Mark managed session cookies as HTTP-only.
+- Give Roblox children a minimal environment without parent-process secrets.
+- Require an Apple-anchored Roblox Corporation signature before copying or launching Roblox.
+- Rebuild the optional modified fallback before every use.
+- Restrict account avatar requests to secure Roblox CDN addresses.
+- Use fixed trusted command paths in release scripts.
 
 ### Suitable follow-up work
 

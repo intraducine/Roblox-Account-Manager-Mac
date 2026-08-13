@@ -58,6 +58,62 @@ final class RobloxAPIClientTests: XCTestCase {
         XCTAssertEqual(call, 2)
     }
 
+    func testResolvesCurrentPrivateServerShareLinkForTheAccount() async throws {
+        var call = 0
+        let client = makeClient { request in
+            call += 1
+            XCTAssertEqual(request.url?.absoluteString, "https://apis.roblox.com/sharelinks/v1/resolve-link")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), ".ROBLOSECURITY=secret")
+            let body = try XCTUnwrap(Self.bodyData(from: request))
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
+            XCTAssertEqual(object, ["linkId": "share-code", "linkType": "Server"])
+            if call == 1 {
+                return Self.response(
+                    request: request,
+                    status: 403,
+                    headers: ["x-csrf-token": "csrf"]
+                )
+            }
+            XCTAssertEqual(request.value(forHTTPHeaderField: "x-csrf-token"), "csrf")
+            return Self.response(
+                request: request,
+                status: 200,
+                body: #"{"privateServerInviteData":{"status":"Valid","placeId":17625359962,"linkCode":"resolved-private-code","ownerUserId":1,"privateServerId":2,"universeId":3}}"#
+            )
+        }
+
+        let resolution = try await client.privateShareLinkResolution(
+            shareCode: "share-code",
+            cookie: "secret"
+        )
+
+        XCTAssertEqual(
+            resolution,
+            RobloxPrivateShareLinkResolution(placeID: 17_625_359_962, linkCode: "resolved-private-code")
+        )
+        XCTAssertEqual(call, 2)
+    }
+
+    func testInvalidPrivateServerShareLinkHasClearError() async {
+        let client = makeClient { request in
+            Self.response(
+                request: request,
+                status: 200,
+                body: #"{"privateServerInviteData":{"status":"Expired","placeId":null,"linkCode":null}}"#
+            )
+        }
+
+        do {
+            _ = try await client.privateShareLinkResolution(shareCode: "expired", cookie: "secret")
+            XCTFail("Expected unavailable private server")
+        } catch let error as RobloxAPIError {
+            XCTAssertEqual(error, .privateServerUnavailable)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testLoadsAvatarURL() async {
         let client = makeClient { request in
             XCTAssertEqual(request.url?.host, "thumbnails.roblox.com")
@@ -69,6 +125,56 @@ final class RobloxAPIClientTests: XCTestCase {
         }
         let avatar = await client.avatarURL(userID: 42)
         XCTAssertEqual(avatar?.absoluteString, "https://tr.rbxcdn.com/avatar.png")
+    }
+
+    func testRejectsAvatarOutsideRobloxCDN() async {
+        let client = makeClient { request in
+            Self.response(
+                request: request,
+                status: 200,
+                body: #"{"data":[{"state":"Completed","imageUrl":"https://127.0.0.1/avatar.png"}]}"#
+            )
+        }
+        let avatar = await client.avatarURL(userID: 42)
+        XCTAssertNil(avatar)
+    }
+
+    func testRejectsUsernameResponseForAnotherIdentity() async {
+        let client = makeClient { request in
+            Self.response(
+                request: request,
+                status: 200,
+                body: #"{"data":[{"requestedUsername":"someone-else","id":156,"name":"someone-else","displayName":"Someone"}]}"#
+            )
+        }
+
+        do {
+            _ = try await client.user(named: "builderman")
+            XCTFail("Expected a mismatched identity to be rejected")
+        } catch let error as RobloxAPIError {
+            XCTAssertEqual(error, .userNotFound)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testRejectsPresenceResponseForAnotherUser() async {
+        let client = makeClient { request in
+            Self.response(
+                request: request,
+                status: 200,
+                body: #"{"userPresences":[{"userPresenceType":2,"placeId":1818,"gameId":"11111111-2222-3333-4444-555555555555","userId":999}]}"#
+            )
+        }
+
+        do {
+            _ = try await client.presence(userID: 156)
+            XCTFail("Expected a mismatched presence to be rejected")
+        } catch let error as RobloxAPIError {
+            XCTAssertEqual(error, .invalidResponse)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
     }
 
     func testInvalidSessionHasDirectError() async {

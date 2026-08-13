@@ -1,8 +1,19 @@
-# Version 1.0.3 live test report
+# Release verification report
 
-Date: August 10-11, 2026
+Latest update: August 13, 2026
 
 This report uses saved account labels only. It does not contain usernames, cookies, private links, launch tickets, or personal account IDs.
+
+## Version 1.0.4 release verification
+
+- The complete source suite passed 124 tests with zero failures. Three tests stayed opt-in because they start installed Roblox clients or install a published update.
+- A complete static security review covered all 70 repository files. It found no live Roblox cookie, launch ticket, private key, API token, GitHub token, or saved account data.
+- Ten source-backed security issues were fixed before packaging. The fixes cover the managed browser cookie, sign-in origin, web launch confirmation, Roblox app trust, modified-copy reuse, child environment, avatar URLs, response identity checks, private-link process records, and release command paths.
+- The release app reports version 1.0.4 build 104. It contains Apple silicon and Intel code and passes strict deep code-signature checks.
+- The app uses the same Apple Development signing identity as version 1.0.3 so the in-app updater and Keychain access can recognize it. The public code signature includes the certificate identity. It does not include a password, token, or Roblox session.
+- `Roblox-Account-Manager-for-Mac-1.0.4.zip` matches its SHA-256 sidecar. Its SHA-256 value is `4e11c585344e48d26ddad4816fe4ce7c62ea408ee7c80e7ad7b7c1ebed7e4dc2`.
+- The ZIP contains only the app bundle and its required files. It contains no `.DS_Store`, AppleDouble `._` file, repository source, local account data, or user home path.
+- No real Roblox account launch ran during this release check. The account-launch and updater integration tests remain opt-in. The earlier live results below still describe the tested platform boundaries.
 
 ## Version 1.0.3 updater
 

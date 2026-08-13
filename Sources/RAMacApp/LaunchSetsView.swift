@@ -171,7 +171,9 @@ private struct LaunchSetEditor: View {
     private var isValid: Bool {
         !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && (Int64(placeText) ?? 0) > 0
-            && (strategyKind != "private" || RobloxLaunchURLBuilder.privateLinkCode(from: privateLink) != nil)
+            && (strategyKind != "private"
+                || RobloxLaunchURLBuilder.privateLinkCode(from: privateLink) != nil
+                || RobloxLaunchURLBuilder.privateShareCode(from: privateLink) != nil)
     }
 
     private func applyFields() {

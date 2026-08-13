@@ -72,6 +72,21 @@ Version 1.0.3 and later must:
 
 The updater must explain when the app location is not writable and provide the GitHub Releases page as a manual fallback. Version 1.0.2 and older need one manual installation of version 1.0.3 before this flow exists.
 
+### Version 1.0.4 release hardening contract
+
+Version 1.0.4 and later must:
+
+- Require an Apple-anchored Roblox Corporation code-signing requirement before it copies or launches `/Applications/Roblox.app`.
+- Rebuild the optional modified fallback copy before every use.
+- Give each Roblox child a minimal allowlisted environment with an isolated home and temporary directory.
+- Mark a managed website session cookie as Secure and HttpOnly.
+- Accept native Play and Join requests only from the managed website's main page and ask the user before launch.
+- Keep the embedded sign-in main page on secure Roblox domains.
+- Accept account avatar images only from secure Roblox CDN addresses.
+- Match username and presence responses to the requested identity.
+- Keep reusable private-server links out of active process records.
+- Use a fixed minimal command path and absolute security-tool paths for release builds.
+
 ## 3. Version 1.0 scope
 
 ### Required features

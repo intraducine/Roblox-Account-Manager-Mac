@@ -26,7 +26,7 @@ public struct DiagnosticReport: Codable, Equatable, Sendable {
     public let appVersion: String
     public let checks: [DiagnosticCheck]
 
-    public init(createdAt: Date = Date(), appVersion: String = "1.0.3", checks: [DiagnosticCheck]) {
+    public init(createdAt: Date = Date(), appVersion: String = "1.0.4", checks: [DiagnosticCheck]) {
         self.createdAt = createdAt
         self.appVersion = appVersion
         self.checks = checks
