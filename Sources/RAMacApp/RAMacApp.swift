@@ -1,8 +1,15 @@
 import AppKit
 import SwiftUI
 
+final class ApplicationLifecycleDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+}
+
 @main
 struct RAMacApp: App {
+    @NSApplicationDelegateAdaptor(ApplicationLifecycleDelegate.self) private var lifecycleDelegate
     @StateObject private var store = AccountStore()
     @StateObject private var updater = SoftwareUpdateController()
 
