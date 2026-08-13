@@ -95,6 +95,7 @@ final class AccountStore: ObservableObject {
     private let experienceLibrary = ExperienceLibrary()
     private var serverPageCache: [String: PublicServerSnapshot] = [:]
     private let serverCacheLifetime: TimeInterval = 60
+    private var didStartInitialAccountCheck = false
 
     init(
         repository: AccountRepository = AccountRepository(),
@@ -465,6 +466,12 @@ final class AccountStore: ObservableObject {
             }
             for await (accountID, health) in group { accountHealth[accountID] = health }
         }
+    }
+
+    func checkAccountsOnStartup() async {
+        guard !didStartInitialAccountCheck else { return }
+        didStartInitialAccountCheck = true
+        await checkAccounts(Set(accounts.map(\.id)))
     }
 
     func discoverPlayers(sourceAccounts: [ManagedAccount]) async {

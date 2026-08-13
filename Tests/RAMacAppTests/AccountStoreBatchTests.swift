@@ -5,6 +5,35 @@ import XCTest
 
 @MainActor
 final class AccountStoreBatchTests: XCTestCase {
+    func testStartupChecksEverySavedAccountOnlyOnce() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-startup-health-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let accounts = [
+            ManagedAccount(userID: 1, username: "first", displayName: "First"),
+            ManagedAccount(userID: 2, username: "second", displayName: "Second")
+        ]
+        try repository.save(accounts)
+        let checker = CountingHealthChecker()
+        let store = AccountStore(
+            repository: repository,
+            vault: MemoryVault(),
+            api: BatchMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil),
+            healthChecker: checker
+        )
+
+        await store.checkAccountsOnStartup()
+        await store.checkAccountsOnStartup()
+
+        let checkedAccountIDs = await checker.checkedAccountIDs()
+        let checkCount = await checker.checkCount()
+        XCTAssertEqual(checkedAccountIDs, Set(accounts.map(\.id)))
+        XCTAssertEqual(checkCount, accounts.count)
+        XCTAssertTrue(accounts.allSatisfy { store.accountHealth[$0.id]?.isReady == true })
+    }
+
     func testLaunchModeDefaultsToUnmodifiedAndFallbackIsSessionOnly() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-mode-tests-\(UUID().uuidString)", isDirectory: true)
@@ -792,6 +821,23 @@ final class AccountStoreBatchTests: XCTestCase {
             launcher: launcher,
             store: store
         )
+    }
+}
+
+private actor CountingHealthChecker: AccountHealthChecking {
+    private var checkedIDs: [UUID] = []
+
+    func check(_ account: ManagedAccount) async -> AccountHealth {
+        checkedIDs.append(account.id)
+        return .ready(lastChecked: Date())
+    }
+
+    func checkedAccountIDs() -> Set<UUID> {
+        Set(checkedIDs)
+    }
+
+    func checkCount() -> Int {
+        checkedIDs.count
     }
 }
 

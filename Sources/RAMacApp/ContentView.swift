@@ -139,6 +139,9 @@ struct ContentView: View {
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
             Task { await store.refreshRunningInstances() }
         }
+        .task {
+            await store.checkAccountsOnStartup()
+        }
         .onChange(of: store.batchSelectedIDs) { selectedIDs in
             guard !selectedIDs.isEmpty,
                   batchPlaceID.isEmpty,
