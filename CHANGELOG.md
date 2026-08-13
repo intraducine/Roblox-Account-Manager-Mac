@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added group deletion to every group menu while keeping the accounts in that group.
 - Ran saved Launch Sets from a right-click action or by double-clicking their list row.
 - Quit the account manager automatically after its final window closes.
 - Checked all saved accounts automatically when the account manager opens.

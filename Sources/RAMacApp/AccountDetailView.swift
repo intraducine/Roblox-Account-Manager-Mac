@@ -18,6 +18,7 @@ struct AccountDetailView: View {
     @State private var showsAccountSettings = false
     @State private var showsNewGroup = false
     @State private var newGroupName = ""
+    @State private var pendingGroupDeletion: String?
     @FocusState private var focusedProfileField: ProfileField?
 
     init(
@@ -74,6 +75,23 @@ struct AccountDetailView: View {
                     showsNewGroup = false
                 }
             )
+        }
+        .confirmationDialog(
+            "Delete \(pendingGroupDeletion ?? "this group")?",
+            isPresented: Binding(
+                get: { pendingGroupDeletion != nil },
+                set: { if !$0 { pendingGroupDeletion = nil } }
+            )
+        ) {
+            Button("Delete Group", role: .destructive) {
+                if let pendingGroupDeletion {
+                    store.deleteGroup(pendingGroupDeletion)
+                }
+                pendingGroupDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { pendingGroupDeletion = nil }
+        } message: {
+            Text("The accounts will stay saved. This only removes the group name from the accounts and Launch Sets that use it.")
         }
         .onChange(of: account.savedServer) { savedServer in
             serverSelection = .savedValue(savedServer)
@@ -193,6 +211,7 @@ struct AccountDetailView: View {
                             newGroupName = ""
                             showsNewGroup = true
                         }
+                        groupDeletionMenu
                     } label: {
                         Text(groupSummary)
                             .lineLimit(1)
@@ -359,6 +378,19 @@ struct AccountDetailView: View {
 
     private var groupSummary: String {
         draft.groups.isEmpty ? "No groups" : draft.groups.joined(separator: ", ")
+    }
+
+    @ViewBuilder
+    private var groupDeletionMenu: some View {
+        if !store.groupNames.isEmpty {
+            Menu("Delete Group") {
+                ForEach(store.groupNames, id: \.self) { group in
+                    Button(group, role: .destructive) {
+                        pendingGroupDeletion = group
+                    }
+                }
+            }
+        }
     }
 
     private var launchSummary: String {

@@ -226,6 +226,7 @@ struct ContentView: View {
                             }
                             Divider()
                             Button("New Group…") { beginNewGroup(for: account.id) }
+                            groupDeletionMenu
                         }
                         Button("Remove Account", role: .destructive) {
                             pendingRemoval = account
@@ -261,15 +262,7 @@ struct ContentView: View {
                 }
                 Divider()
                 Button("New Group…") { beginNewGroup(for: nil) }
-                if !store.groupNames.isEmpty {
-                    Menu("Delete Group") {
-                        ForEach(store.groupNames, id: \.self) { group in
-                            Button(group, role: .destructive) {
-                                pendingGroupDeletion = group
-                            }
-                        }
-                    }
-                }
+                groupDeletionMenu
             } label: {
                 Label(selectedGroupFilter ?? "All Accounts", systemImage: "folder")
             }
@@ -304,6 +297,8 @@ struct ContentView: View {
                             store.toggleBatchGroup(group)
                         }
                     }
+                    Divider()
+                    groupDeletionMenu
                 }
                 .disabled(store.isBatchLaunching || store.isOpeningSelectedApps || store.groupNames.isEmpty)
 
@@ -341,6 +336,19 @@ struct ContentView: View {
     private var visibleAccounts: [ManagedAccount] {
         guard let selectedGroupFilter else { return store.filteredAccounts }
         return store.filteredAccounts.filter { $0.belongs(to: selectedGroupFilter) }
+    }
+
+    @ViewBuilder
+    private var groupDeletionMenu: some View {
+        if !store.groupNames.isEmpty {
+            Menu("Delete Group") {
+                ForEach(store.groupNames, id: \.self) { group in
+                    Button(group, role: .destructive) {
+                        pendingGroupDeletion = group
+                    }
+                }
+            }
+        }
     }
 
     private func beginNewGroup(for accountID: UUID?) {

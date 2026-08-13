@@ -14,6 +14,7 @@ struct JoinablePlayersView: View {
     @State private var pendingVerifiedAction = "Launch Ready Accounts"
     @State private var pendingVerifiedMessage = ""
     @State private var pendingUnconfirmedPlayer: DiscoveredPlayer?
+    @State private var pendingGroupDeletion: String?
     @State private var discoveryTask: Task<Void, Never>?
 
     var body: some View {
@@ -43,6 +44,13 @@ struct JoinablePlayersView: View {
         .onChange(of: store.runningAccountIDs) { runningAccountIDs in
             selectedAccountIDs.subtract(runningAccountIDs)
             assessments.removeAll { runningAccountIDs.contains($0.accountID) }
+        }
+        .onChange(of: store.groupNames) { groupNames in
+            guard sourceKey.hasPrefix("group:") else { return }
+            let selectedGroup = String(sourceKey.dropFirst("group:".count))
+            if !groupNames.contains(where: { $0.caseInsensitiveCompare(selectedGroup) == .orderedSame }) {
+                sourceKey = "all"
+            }
         }
         .task {
             await store.refreshRunningInstances()
@@ -89,6 +97,23 @@ struct JoinablePlayersView: View {
         } message: {
             Text("Roblox has not confirmed that this server is public. Roblox may reject some or all selected accounts. The app will not call this server private.")
         }
+        .confirmationDialog(
+            "Delete \(pendingGroupDeletion ?? "this group")?",
+            isPresented: Binding(
+                get: { pendingGroupDeletion != nil },
+                set: { if !$0 { pendingGroupDeletion = nil } }
+            )
+        ) {
+            Button("Delete Group", role: .destructive) {
+                if let pendingGroupDeletion {
+                    store.deleteGroup(pendingGroupDeletion)
+                }
+                pendingGroupDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { pendingGroupDeletion = nil }
+        } message: {
+            Text("The accounts will stay saved. This only removes the group name from the accounts and Launch Sets that use it.")
+        }
         .alert(item: $store.notice) { notice in
             Alert(title: Text(notice.title), message: Text(notice.message), dismissButton: .default(Text("OK")))
         }
@@ -96,12 +121,35 @@ struct JoinablePlayersView: View {
 
     private var controls: some View {
         HStack(spacing: 12) {
-            Picker("Check friends for", selection: $sourceKey) {
-                Text("All Accounts").tag("all")
-                Text("Selected Accounts").tag("selected")
-                ForEach(store.groupNames, id: \.self) { Text($0).tag("group:\($0)") }
+            HStack(spacing: 8) {
+                Text("Check friends for")
+                Menu {
+                    Button {
+                        sourceKey = "all"
+                    } label: {
+                        Label("All Accounts", systemImage: sourceKey == "all" ? "checkmark" : "person.2")
+                    }
+                    Button {
+                        sourceKey = "selected"
+                    } label: {
+                        Label("Selected Accounts", systemImage: sourceKey == "selected" ? "checkmark" : "checklist")
+                    }
+                    ForEach(store.groupNames, id: \.self) { group in
+                        Button {
+                            sourceKey = "group:\(group)"
+                        } label: {
+                            Label(group, systemImage: sourceKey == "group:\(group)" ? "checkmark" : "folder")
+                        }
+                    }
+                    Divider()
+                    groupDeletionMenu
+                } label: {
+                    Text(sourceSelectionTitle)
+                        .lineLimit(1)
+                        .frame(width: 145, alignment: .leading)
+                }
             }
-            .frame(width: 220)
+            .fixedSize(horizontal: true, vertical: false)
             TextField("Search players", text: $search)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 280)
@@ -118,6 +166,25 @@ struct JoinablePlayersView: View {
         }
         .padding(12)
         .background(.bar)
+    }
+
+    private var sourceSelectionTitle: String {
+        if sourceKey == "selected" { return "Selected Accounts" }
+        if sourceKey.hasPrefix("group:") { return String(sourceKey.dropFirst("group:".count)) }
+        return "All Accounts"
+    }
+
+    @ViewBuilder
+    private var groupDeletionMenu: some View {
+        if !store.groupNames.isEmpty {
+            Menu("Delete Group") {
+                ForEach(store.groupNames, id: \.self) { group in
+                    Button(group, role: .destructive) {
+                        pendingGroupDeletion = group
+                    }
+                }
+            }
+        }
     }
 
     private func startDiscovery() {
