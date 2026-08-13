@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Prevented a saved game icon from briefly disappearing when switching between accounts.
 - Fixed the Roblox Keychain Not Found alert by giving each isolated account app its own temporary-password Keychain.
 - Made Stop All close managed Roblox processes in one batch instead of repeating a full process scan for each account.
 - Added group deletion without deleting accounts, and removed deleted group references from saved Launch Sets.

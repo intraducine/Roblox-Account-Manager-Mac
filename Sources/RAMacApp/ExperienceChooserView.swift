@@ -1,3 +1,4 @@
+import AppKit
 import RAMacCore
 import SwiftUI
 
@@ -199,15 +200,27 @@ private struct ExperienceIcon: View {
     let experience: ExperienceRecord
     let size: CGFloat
     var showsProgress = false
+    @State private var image: NSImage?
+    @State private var loadedURL: URL?
+
+    init(experience: ExperienceRecord, size: CGFloat, showsProgress: Bool = false) {
+        self.experience = experience
+        self.size = size
+        self.showsProgress = showsProgress
+        let cachedImage = RemoteImageCache.image(for: experience.thumbnailURL)
+        _image = State(initialValue: cachedImage)
+        _loadedURL = State(initialValue: cachedImage == nil ? nil : experience.thumbnailURL)
+    }
 
     var body: some View {
-        AsyncImage(url: experience.thumbnailURL) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().scaledToFill()
-            case .empty where showsProgress:
+        Group {
+            if let displayedImage {
+                Image(nsImage: displayedImage)
+                    .resizable()
+                    .scaledToFill()
+            } else if showsProgress {
                 ProgressView().controlSize(.small)
-            default:
+            } else {
                 Image(systemName: "gamecontroller")
                     .foregroundStyle(.secondary)
             }
@@ -215,6 +228,27 @@ private struct ExperienceIcon: View {
         .frame(width: size, height: size)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: max(5, size * 0.15), style: .continuous))
+        .task(id: experience.thumbnailURL) {
+            let url = experience.thumbnailURL
+            image = RemoteImageCache.image(for: url)
+            loadedURL = image == nil ? nil : url
+            guard image == nil, let url else { return }
+            guard let (data, response) = try? await URLSession.shared.data(from: url),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let loadedImage = NSImage(data: data) else { return }
+            RemoteImageCache.insert(loadedImage, for: url)
+            guard experience.thumbnailURL == url else { return }
+            image = loadedImage
+            loadedURL = url
+        }
         .accessibilityHidden(true)
+    }
+
+    private var displayedImage: NSImage? {
+        let url = experience.thumbnailURL
+        if loadedURL == url {
+            return image
+        }
+        return RemoteImageCache.image(for: url)
     }
 }

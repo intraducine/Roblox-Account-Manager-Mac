@@ -2,8 +2,6 @@ import AppKit
 import SwiftUI
 
 struct AccountAvatarView: View {
-    private static let cache = NSCache<NSURL, NSImage>()
-
     let url: URL?
     let size: CGFloat
     let cornerRadius: CGFloat
@@ -14,7 +12,7 @@ struct AccountAvatarView: View {
         self.url = url
         self.size = size
         self.cornerRadius = cornerRadius
-        let cachedImage = url.flatMap { Self.cache.object(forKey: $0 as NSURL) }
+        let cachedImage = RemoteImageCache.image(for: url)
         _image = State(initialValue: cachedImage)
         _loadedURL = State(initialValue: cachedImage == nil ? nil : url)
     }
@@ -34,13 +32,13 @@ struct AccountAvatarView: View {
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .task(id: url) {
-            image = url.flatMap { Self.cache.object(forKey: $0 as NSURL) }
+            image = RemoteImageCache.image(for: url)
             loadedURL = image == nil ? nil : url
             guard image == nil, let url else { return }
             guard let (data, response) = try? await URLSession.shared.data(from: url),
                   (response as? HTTPURLResponse)?.statusCode == 200,
                   let loadedImage = NSImage(data: data) else { return }
-            Self.cache.setObject(loadedImage, forKey: url as NSURL)
+            RemoteImageCache.insert(loadedImage, for: url)
             guard self.url == url else { return }
             image = loadedImage
             loadedURL = url
@@ -52,6 +50,6 @@ struct AccountAvatarView: View {
         if loadedURL == url {
             return image
         }
-        return url.flatMap { Self.cache.object(forKey: $0 as NSURL) }
+        return RemoteImageCache.image(for: url)
     }
 }
