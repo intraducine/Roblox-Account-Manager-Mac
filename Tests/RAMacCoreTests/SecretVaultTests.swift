@@ -38,6 +38,20 @@ final class SecretVaultTests: XCTestCase {
         XCTAssertEqual(try keychainAccounts(service: service), ["sessions-v2"])
     }
 
+    func testProfileNotesUseTheirOwnKeychainContainer() throws {
+        let service = "com.intraducine.RobloxAccountManager.notes-tests.\(UUID().uuidString)"
+        let accountID = UUID()
+        let vault = KeychainProfileNoteVault(service: service)
+        defer { deleteAll(service: service) }
+
+        try vault.saveNote("encrypted test note", for: accountID)
+        XCTAssertEqual(try vault.readNote(for: accountID), "encrypted test note")
+        XCTAssertEqual(try keychainAccounts(service: service), ["notes-v1"])
+        try vault.deleteNote(for: accountID)
+        XCTAssertNil(try vault.readNote(for: accountID))
+        XCTAssertTrue(try keychainAccounts(service: service).isEmpty)
+    }
+
     func testLegacyContainerMigratesIntoCurrentContainer() throws {
         let service = "com.intraducine.RobloxAccountManager.tests.\(UUID().uuidString)"
         let accountID = UUID()

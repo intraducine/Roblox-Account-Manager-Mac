@@ -55,4 +55,56 @@ final class AccountRepositoryTests: XCTestCase {
         try repository.saveGroups(["Second", "First", "first"])
         XCTAssertEqual(try repository.loadGroups(), ["First", "Second"])
     }
+
+    func testProfileNotesAreNotWrittenToAccountMetadataOrBackup() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let account = ManagedAccount(
+            userID: 17,
+            username: "private-notes",
+            displayName: "Private Notes",
+            notes: "This note must stay encrypted"
+        )
+
+        try repository.save([account])
+        var changed = account
+        changed.alias = "Updated"
+        try repository.save([changed])
+
+        let metadata = String(decoding: try Data(
+            contentsOf: directory.appendingPathComponent("Accounts.json")
+        ), as: UTF8.self)
+        let backup = String(decoding: try Data(
+            contentsOf: directory.appendingPathComponent("Accounts.backup.json")
+        ), as: UTF8.self)
+        XCTAssertFalse(metadata.contains(account.notes))
+        XCTAssertFalse(backup.contains(account.notes))
+    }
+
+    func testLoadScrubsAPlainTextNoteLeftOnlyInTheOldBackup() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let repository = AccountRepository(dataDirectory: directory)
+        let account = ManagedAccount(userID: 18, username: "backup", displayName: "Backup")
+        try repository.save([account])
+
+        var backupObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode([account])) as? [[String: Any]]
+        )
+        backupObject[0]["notes"] = "stale private note"
+        try JSONSerialization.data(withJSONObject: backupObject).write(
+            to: directory.appendingPathComponent("Accounts.backup.json")
+        )
+
+        _ = try repository.load()
+
+        let backup = String(decoding: try Data(
+            contentsOf: directory.appendingPathComponent("Accounts.backup.json")
+        ), as: UTF8.self)
+        XCTAssertFalse(backup.contains("stale private note"))
+    }
 }

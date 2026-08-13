@@ -2,6 +2,26 @@ import AppKit
 import RAMacCore
 import SwiftUI
 
+enum ReleaseNotesMarkdown {
+    static func parse(_ source: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .full,
+            failurePolicy: .returnPartiallyParsedIfPossible
+        )
+        var rendered = (try? AttributedString(markdown: source, options: options))
+            ?? AttributedString(source)
+        for run in rendered.runs {
+            guard let link = run.link else { continue }
+            let components = URLComponents(url: link, resolvingAgainstBaseURL: false)
+            let allowed = components?.scheme?.lowercased() == "https"
+                && components?.user == nil
+                && components?.password == nil
+            if !allowed { rendered[run.range].link = nil }
+        }
+        return rendered
+    }
+}
+
 @MainActor
 final class SoftwareUpdateController: ObservableObject {
     enum State {
@@ -135,16 +155,16 @@ struct SoftwareUpdateView: View {
                 Text("Checking GitHub for a newer release")
             }
         case .upToDate(let version):
-            Label("No newer final release was found. You have version \(version).", systemImage: "checkmark.circle.fill")
+            Label("You're up to date. Version \(version) is installed.", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
             Button("Check Again") { controller.check() }
         case .available(let release):
             Label("Version \(release.version.description) is available.", systemImage: "arrow.down.circle.fill")
                 .fontWeight(.semibold)
             if !release.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                DisclosureGroup("What Changed") {
+                DisclosureGroup("What's New") {
                     ScrollView {
-                        Text(release.notes)
+                        Text(ReleaseNotesMarkdown.parse(release.notes))
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }

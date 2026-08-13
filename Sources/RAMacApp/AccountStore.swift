@@ -79,6 +79,7 @@ final class AccountStore: ObservableObject {
 
     private let repository: AccountRepository
     private let vault: any SecretVault
+    private let profileNoteVault: any ProfileNoteVault
     private let api: any RobloxAPIProviding
     private let builder: RobloxLaunchURLBuilder
     private let launcher: any ParallelRobloxLaunching
@@ -98,6 +99,7 @@ final class AccountStore: ObservableObject {
     init(
         repository: AccountRepository = AccountRepository(),
         vault: any SecretVault = KeychainVault(),
+        profileNoteVault: (any ProfileNoteVault)? = nil,
         api: any RobloxAPIProviding = RobloxAPIClient(),
         builder: RobloxLaunchURLBuilder = RobloxLaunchURLBuilder(),
         launcher: (any ParallelRobloxLaunching)? = nil,
@@ -113,6 +115,9 @@ final class AccountStore: ObservableObject {
     ) {
         self.repository = repository
         self.vault = vault
+        self.profileNoteVault = profileNoteVault
+            ?? (vault as? any ProfileNoteVault)
+            ?? KeychainProfileNoteVault()
         self.api = api
         self.builder = builder
         self.launcher = launcher ?? ParallelRobloxLauncher()
@@ -234,7 +239,7 @@ final class AccountStore: ObservableObject {
     func load() {
         do {
             accounts = try repository.load()
-            var removedTemporaryServer = false
+            var metadataNeedsSave = try loadSecureProfileNotes()
             for index in accounts.indices {
                 guard case .manualJob = RobloxServerSelection.savedValue(accounts[index].savedServer) else {
                     continue
@@ -243,9 +248,9 @@ final class AccountStore: ObservableObject {
                     continue
                 }
                 accounts[index].savedServer = ""
-                removedTemporaryServer = true
+                metadataNeedsSave = true
             }
-            if removedTemporaryServer {
+            if metadataNeedsSave {
                 try repository.save(accounts)
             }
             groups = ManagedAccount.normalizedGroups(
@@ -926,6 +931,9 @@ final class AccountStore: ObservableObject {
             existingExperiences: experiences,
             existingLaunchSets: launchSets
         )
+        for account in result.accounts where !account.notes.isEmpty {
+            try profileNoteVault.saveNote(account.notes, for: account.id)
+        }
         try repository.save(result.accounts)
         try repository.saveGroups(result.groups)
         try experienceRepository.save(result.experiences)
@@ -998,18 +1006,24 @@ final class AccountStore: ObservableObject {
 
     func update(_ account: ManagedAccount) {
         guard let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
+        let previous = accounts[index]
         var updated = account
         updated.groups = ManagedAccount.normalizedGroups(updated.groups)
         if updated.avatarURLString == nil {
             updated.avatarURLString = accounts[index].avatarURLString
         }
-        accounts[index] = updated
-        groups = ManagedAccount.normalizedGroups(groups + updated.groups)
+        var updatedAccounts = accounts
+        updatedAccounts[index] = updated
+        let updatedGroups = ManagedAccount.normalizedGroups(groups + updated.groups)
         do {
-            try repository.save(accounts)
-            try repository.saveGroups(groups)
+            try saveSecureProfileNote(updated.notes, for: updated.id)
+            try repository.save(updatedAccounts)
+            try repository.saveGroups(updatedGroups)
+            accounts = updatedAccounts
+            groups = updatedGroups
             launchStatus = "Saved"
         } catch {
+            try? saveSecureProfileNote(previous.notes, for: previous.id)
             notice = Notice(title: "Changes were not saved", message: error.localizedDescription)
         }
     }
@@ -1022,6 +1036,7 @@ final class AccountStore: ObservableObject {
         let original = accounts
         let updated = accounts.filter { $0.id != account.id }
         do {
+            try profileNoteVault.deleteNote(for: account.id)
             try repository.save(updated)
             try vault.delete(for: account.id)
             accounts = updated
@@ -1036,8 +1051,31 @@ final class AccountStore: ObservableObject {
             }
             try? activeLaunchRepository.save(Array(activeLaunchTargets.values))
         } catch {
+            try? saveSecureProfileNote(account.notes, for: account.id)
             try? repository.save(original)
             notice = Notice(title: "Account was not removed", message: error.localizedDescription)
+        }
+    }
+
+    private func loadSecureProfileNotes() throws -> Bool {
+        var removedPlainTextNote = false
+        for index in accounts.indices {
+            let legacyNote = accounts[index].notes
+            if let savedNote = try profileNoteVault.readNote(for: accounts[index].id) {
+                accounts[index].notes = savedNote
+            } else if !legacyNote.isEmpty {
+                try profileNoteVault.saveNote(legacyNote, for: accounts[index].id)
+            }
+            if !legacyNote.isEmpty { removedPlainTextNote = true }
+        }
+        return removedPlainTextNote
+    }
+
+    private func saveSecureProfileNote(_ note: String, for accountID: UUID) throws {
+        if note.isEmpty {
+            try profileNoteVault.deleteNote(for: accountID)
+        } else {
+            try profileNoteVault.saveNote(note, for: accountID)
         }
     }
 

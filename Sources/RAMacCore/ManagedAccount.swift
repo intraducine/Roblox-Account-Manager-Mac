@@ -127,7 +127,6 @@ public struct ManagedAccount: Codable, Hashable, Identifiable, Sendable {
         try values.encode(displayName, forKey: .displayName)
         try values.encode(alias, forKey: .alias)
         try values.encode(Self.normalizedGroups(groups), forKey: .groups)
-        try values.encode(notes, forKey: .notes)
         try values.encode(createdAt, forKey: .createdAt)
         try values.encodeIfPresent(lastUsed, forKey: .lastUsed)
         try values.encode(savedPlaceID, forKey: .savedPlaceID)

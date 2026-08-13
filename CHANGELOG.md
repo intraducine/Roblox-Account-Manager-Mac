@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Rendered GitHub release notes as Markdown in the **What's New** update section.
+- Replaced the technical no-release result with a direct **You're up to date** message.
+- Moved profile notes from account JSON into a separate encrypted macOS Keychain item.
+- Migrated existing profile notes and removed their plain-text values from account files and backups.
+- Excluded profile notes from normal metadata exports.
+
 ## 1.0.4 - 2026-08-13
 
 - Added **Open Roblox App** for an account-only launch with no game target.

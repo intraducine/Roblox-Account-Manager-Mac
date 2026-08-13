@@ -659,6 +659,50 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(try PrivateServerRepository(dataDirectory: directory).load(), store.privateServers)
     }
 
+    func testLegacyPlainTextProfileNoteMovesToKeychainAndIsScrubbedFromDisk() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-note-migration-tests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let account = ManagedAccount(userID: 71, username: "notes", displayName: "Notes")
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode([account])) as? [[String: Any]]
+        )
+        object[0]["notes"] = "legacy private note"
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+        try legacyData.write(to: directory.appendingPathComponent("Accounts.json"))
+        try legacyData.write(to: directory.appendingPathComponent("Accounts.backup.json"))
+        let repository = AccountRepository(dataDirectory: directory)
+        let vault = MemoryVault()
+
+        let store = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: BatchMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil)
+        )
+
+        XCTAssertEqual(store.accounts.first?.notes, "legacy private note")
+        XCTAssertEqual(try vault.readNote(for: account.id), "legacy private note")
+        for name in ["Accounts.json", "Accounts.backup.json"] {
+            let text = String(decoding: try Data(
+                contentsOf: directory.appendingPathComponent(name)
+            ), as: UTF8.self)
+            XCTAssertFalse(text.contains("legacy private note"))
+        }
+
+        var updated = try XCTUnwrap(store.accounts.first)
+        updated.notes = "new encrypted note"
+        store.update(updated)
+        let reloaded = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: BatchMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil)
+        )
+        XCTAssertEqual(reloaded.accounts.first?.notes, "new encrypted note")
+    }
+
     private func makeFixture(
         failingIndex: Int? = nil,
         launchDelayNanoseconds: UInt64 = 0
@@ -762,9 +806,10 @@ private struct Fixture {
     let store: AccountStore
 }
 
-private final class MemoryVault: SecretVault, @unchecked Sendable {
+private final class MemoryVault: SecretVault, ProfileNoteVault, @unchecked Sendable {
     private let lock = NSLock()
     private var values: [UUID: String] = [:]
+    private var notes: [UUID: String] = [:]
 
     func save(_ secret: String, for accountID: UUID) throws {
         lock.lock()
@@ -782,6 +827,24 @@ private final class MemoryVault: SecretVault, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         values[accountID] = nil
+    }
+
+    func saveNote(_ note: String, for accountID: UUID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        notes[accountID] = note
+    }
+
+    func readNote(for accountID: UUID) throws -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return notes[accountID]
+    }
+
+    func deleteNote(for accountID: UUID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        notes[accountID] = nil
     }
 }
 

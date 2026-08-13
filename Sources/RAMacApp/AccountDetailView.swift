@@ -99,11 +99,14 @@ struct AccountDetailView: View {
                     TextEditor(text: $draft.notes)
                         .font(.body)
                         .frame(minHeight: 110)
+                    Text("Notes are encrypted in macOS Keychain and stay out of normal backups.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section {
                     HStack {
-                        Text("Saves alias, group memberships, and notes.")
+                        Text("Saves account details and the encrypted note.")
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button("Save Changes") { store.update(draft) }

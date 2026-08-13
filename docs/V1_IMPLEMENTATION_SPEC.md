@@ -87,6 +87,14 @@ Version 1.0.4 and later must:
 - Keep reusable private-server links out of active process records.
 - Use a fixed minimal command path and absolute security-tool paths for release builds.
 
+### Post-1.0.4 update and note-storage changes
+
+- Parse the trusted GitHub release body as Markdown in the update window. Keep only HTTPS links without embedded credentials.
+- Use direct user text when no update is available: **You're up to date**.
+- Keep profile notes in a separate macOS Keychain item instead of account JSON.
+- Move a legacy plain-text note into Keychain before the account file and its backup are scrubbed.
+- Keep profile notes out of normal metadata exports and preserve the local encrypted note during import.
+
 ## 3. Version 1.0 scope
 
 ### Required features

@@ -10,7 +10,7 @@ This project is independent. Roblox Corporation does not make or approve it. Use
 - Run several saved accounts at the same time in separate Roblox windows.
 - Start one account, several selected accounts, or every account in a group.
 - Stop one managed Roblox window or close all managed windows with **Stop All**.
-- Give accounts easy-to-read names, notes, and membership in more than one group.
+- Give accounts easy-to-read names, encrypted profile notes, and membership in more than one group.
 - Search saved accounts and show only the accounts in one group.
 - Save common account and game choices as **Launch Sets** so you can reuse them later.
 - Keep a list of recently played games and mark games as favorites.
@@ -21,7 +21,7 @@ This project is independent. Roblox Corporation does not make or approve it. Use
 - Open Roblox Home, Profile, Settings, or Security as one saved account without signing the other accounts out.
 - Use Roblox Play and Join buttons in that account's website window. The correct saved account opens in its own managed Roblox window.
 - Check whether a saved account is still signed in and sign in again without losing its name, groups, notes, favorites, or Launch Sets.
-- Export and import account names, groups, notes, games, and Launch Sets without copying Roblox sign-ins.
+- Export and import account names, groups, games, and Launch Sets without copying Roblox sign-ins or profile notes.
 - Check the Roblox installation, saved data, Keychain storage, managed copies, running processes, and Roblox services for common problems.
 - Offer an optional advanced recovery method if unchanged Roblox copies stop working. This method changes the copy and warns you before it runs.
 
@@ -75,7 +75,7 @@ The app stores all saved Roblox sessions inside one Keychain item. Version 1.0.2
 
 The managed Roblox website window keeps top-level browsing on `roblox.com`. Its temporary Roblox session cookie is secure and HTTP-only. Secure frames used inside Roblox pages can load without an external-link warning, and they do not receive the Roblox session cookie. A real link to another site asks before it opens in the default browser and names the destination.
 
-You can give one account an alias, notes, and several groups. These fields do not change the Roblox account.
+You can give one account an alias, an encrypted profile note, and several groups. These fields do not change the Roblox account. Profile notes use a separate macOS Keychain item. Existing plain-text notes move into Keychain and are removed from the account file and its backup when the updated app first loads them.
 
 ## Update the app
 
@@ -156,7 +156,7 @@ The experience chooser records recent Place IDs and launch counts. It also saves
 
 Open **Tools > Diagnostics and Backup**.
 
-Normal backups can include account IDs, usernames, aliases, groups, notes, favorites, recent experiences, and Launch Sets. They exclude sessions, launch tickets, access codes, active process IDs, raw network responses, and private server links. Import matches accounts by Roblox user ID and never replaces a Keychain session.
+Normal backups can include account IDs, usernames, aliases, groups, favorites, recent experiences, and Launch Sets. They exclude profile notes, sessions, launch tickets, access codes, active process IDs, raw network responses, and private server links. Import matches accounts by Roblox user ID and never replaces a Keychain session or encrypted profile note.
 
 The redacted diagnostic report contains only plain check results. It does not include cookies, tickets, private links, private access codes, or complete launch URLs.
 
@@ -177,8 +177,9 @@ The optional modified fallback does not meet the unchanged-copy rule. Roblox sta
 - Launch Sets, experiences, saved private servers, and active target records: the same local data folder
 - Managed copies: `~/Library/Application Support/Roblox Account Manager/Instances`
 - Roblox sign-ins: one encrypted macOS Keychain item named `sessions-v2`
+- Profile notes: one separate encrypted macOS Keychain item named `notes-v1`
 
-Removing an account deletes its Roblox sign-in from the current Keychain item and removes its local account details.
+Removing an account deletes its Roblox sign-in and encrypted profile note from Keychain, then removes its local account details.
 
 ## Development notes
 

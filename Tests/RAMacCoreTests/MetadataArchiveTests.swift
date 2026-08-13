@@ -26,6 +26,7 @@ final class MetadataArchiveTests: XCTestCase {
             userID: 1,
             username: "user",
             displayName: "User",
+            notes: "private profile note",
             savedServer: "https://www.roblox.com/games/1?privateServerLinkCode=secret-link"
         )
         let launchSet = LaunchSet(
@@ -43,11 +44,26 @@ final class MetadataArchiveTests: XCTestCase {
         XCTAssertFalse(text.contains("secret-link"))
         XCTAssertFalse(text.contains(".ROBLOSECURITY"))
         XCTAssertFalse(text.localizedCaseInsensitiveContains("authentication-ticket"))
+        XCTAssertFalse(text.contains("private profile note"))
     }
 
     func testImportMatchesExistingAccountByRobloxUserIDAndKeepsLocalID() throws {
-        let existing = ManagedAccount(id: UUID(), userID: 5, username: "old", displayName: "Old", alias: "Local")
-        let imported = ManagedAccount(id: UUID(), userID: 5, username: "new", displayName: "New", alias: "Backup")
+        let existing = ManagedAccount(
+            id: UUID(),
+            userID: 5,
+            username: "old",
+            displayName: "Old",
+            alias: "Local",
+            notes: "local encrypted note"
+        )
+        let imported = ManagedAccount(
+            id: UUID(),
+            userID: 5,
+            username: "new",
+            displayName: "New",
+            alias: "Backup",
+            notes: "old backup note"
+        )
         let data = try MetadataArchiveService().exportData(
             accounts: [imported], groups: ["Wave"], experiences: [], launchSets: []
         )
@@ -61,6 +77,7 @@ final class MetadataArchiveTests: XCTestCase {
         XCTAssertEqual(result.accounts.count, 1)
         XCTAssertEqual(result.accounts[0].id, existing.id)
         XCTAssertEqual(result.accounts[0].username, "new")
+        XCTAssertEqual(result.accounts[0].notes, "local encrypted note")
         XCTAssertEqual(result.importedAccountCount, 0)
     }
 

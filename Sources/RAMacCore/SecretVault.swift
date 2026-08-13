@@ -7,6 +7,27 @@ public protocol SecretVault: Sendable {
     func delete(for accountID: UUID) throws
 }
 
+public protocol ProfileNoteVault: Sendable {
+    func saveNote(_ note: String, for accountID: UUID) throws
+    func readNote(for accountID: UUID) throws -> String?
+    func deleteNote(for accountID: UUID) throws
+}
+
+public enum ProfileNoteVaultError: LocalizedError {
+    case unexpectedStatus(OSStatus)
+    case invalidData
+
+    public var errorDescription: String? {
+        switch self {
+        case .unexpectedStatus(let status):
+            let detail = SecCopyErrorMessageString(status, nil) as String? ?? "Unknown Keychain error"
+            return "macOS Keychain could not protect the profile note. \(detail) (\(status))"
+        case .invalidData:
+            return "The encrypted profile note could not be read from macOS Keychain."
+        }
+    }
+}
+
 public enum SecretVaultError: LocalizedError {
     case unexpectedStatus(OSStatus)
     case invalidData
@@ -194,5 +215,111 @@ public final class KeychainVault: SecretVault, @unchecked Sendable {
         return status == errSecAuthFailed
             || status == errSecInteractionNotAllowed
             || status == errSecUserCanceled
+    }
+}
+
+public final class KeychainProfileNoteVault: ProfileNoteVault, @unchecked Sendable {
+    private struct NoteContainer: Codable {
+        let version: Int
+        var notes: [String: String]
+
+        init(notes: [String: String]) {
+            version = 1
+            self.notes = notes
+        }
+    }
+
+    private static let containerAccount = "notes-v1"
+    private let service: String
+    private let lock = NSLock()
+    private var cachedNotes: [String: String]?
+
+    public init(service: String = "com.intraducine.RobloxAccountManager.profile-notes") {
+        self.service = service
+    }
+
+    public func saveNote(_ note: String, for accountID: UUID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        var notes = try loadNotesLocked()
+        notes[accountID.uuidString] = note
+        try saveNotesLocked(notes)
+    }
+
+    public func readNote(for accountID: UUID) throws -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return try loadNotesLocked()[accountID.uuidString]
+    }
+
+    public func deleteNote(for accountID: UUID) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        var notes = try loadNotesLocked()
+        notes[accountID.uuidString] = nil
+        if notes.isEmpty {
+            let status = SecItemDelete(itemQuery() as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw ProfileNoteVaultError.unexpectedStatus(status)
+            }
+            cachedNotes = [:]
+        } else {
+            try saveNotesLocked(notes)
+        }
+    }
+
+    private func loadNotesLocked() throws -> [String: String] {
+        if let cachedNotes { return cachedNotes }
+        var query = itemQuery()
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            cachedNotes = [:]
+            return [:]
+        }
+        guard status == errSecSuccess else {
+            throw ProfileNoteVaultError.unexpectedStatus(status)
+        }
+        guard let data = result as? Data,
+              let container = try? JSONDecoder().decode(NoteContainer.self, from: data),
+              container.version == 1 else {
+            throw ProfileNoteVaultError.invalidData
+        }
+        cachedNotes = container.notes
+        return container.notes
+    }
+
+    private func saveNotesLocked(_ notes: [String: String]) throws {
+        let data = try JSONEncoder().encode(NoteContainer(notes: notes))
+        let base = itemQuery()
+        let status = SecItemUpdate(
+            base as CFDictionary,
+            [kSecValueData as String: data] as CFDictionary
+        )
+        if status == errSecSuccess {
+            cachedNotes = notes
+            return
+        }
+        guard status == errSecItemNotFound else {
+            throw ProfileNoteVaultError.unexpectedStatus(status)
+        }
+        var add = base
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        let addStatus = SecItemAdd(add as CFDictionary, nil)
+        guard addStatus == errSecSuccess else {
+            throw ProfileNoteVaultError.unexpectedStatus(addStatus)
+        }
+        cachedNotes = notes
+    }
+
+    private func itemQuery() -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: Self.containerAccount
+        ]
     }
 }

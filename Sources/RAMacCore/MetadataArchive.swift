@@ -57,6 +57,7 @@ public struct MetadataArchiveService: Sendable {
     ) throws -> Data {
         let safeAccounts = accounts.map { account -> ManagedAccount in
             var safe = account
+            safe.notes = ""
             if !includePrivateLinks,
                RobloxLaunchURLBuilder.privateLinkCode(from: safe.savedServer) != nil
                 || RobloxLaunchURLBuilder.privateShareCode(from: safe.savedServer) != nil {
@@ -101,9 +102,11 @@ public struct MetadataArchiveService: Sendable {
             if let index = accounts.firstIndex(where: { $0.userID == imported.userID }) {
                 let id = accounts[index].id
                 let createdAt = accounts[index].createdAt
+                let localNotes = accounts[index].notes
                 var merged = imported
                 merged.id = id
                 merged.createdAt = createdAt
+                merged.notes = localNotes
                 accounts[index] = merged
                 accountIDMap[imported.id] = id
             } else {

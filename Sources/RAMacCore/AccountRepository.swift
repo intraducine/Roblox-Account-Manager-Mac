@@ -27,6 +27,7 @@ public final class AccountRepository: @unchecked Sendable {
               Set(accounts.map(\.userID)).count == accounts.count else {
             throw RepositoryError.duplicateAccount
         }
+        try scrubLegacyNotesFromBackup()
         return accounts
     }
 
@@ -37,7 +38,15 @@ public final class AccountRepository: @unchecked Sendable {
 
         if fileManager.fileExists(atPath: file.path) {
             try? fileManager.removeItem(at: backup)
-            try fileManager.copyItem(at: file, to: backup)
+            if let previousAccounts = try? decoder.decode(
+                [ManagedAccount].self,
+                from: Data(contentsOf: file)
+            ) {
+                try encoder.encode(previousAccounts).write(
+                    to: backup,
+                    options: [.atomic, .completeFileProtection]
+                )
+            }
         }
 
         try encoder.encode(accounts).write(to: file, options: [.atomic, .completeFileProtection])
@@ -63,6 +72,26 @@ public final class AccountRepository: @unchecked Sendable {
     public static func defaultDataDirectory(fileManager: FileManager = .default) -> URL {
         let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return root.appendingPathComponent("Roblox Account Manager", isDirectory: true)
+    }
+
+    private func scrubLegacyNotesFromBackup() throws {
+        let backup = dataDirectory.appendingPathComponent("Accounts.backup.json")
+        guard fileManager.fileExists(atPath: backup.path) else { return }
+        do {
+            let data = try Data(contentsOf: backup)
+            let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+            guard rows?.contains(where: { $0["notes"] != nil }) == true else { return }
+            let accounts = try decoder.decode(
+                [ManagedAccount].self,
+                from: data
+            )
+            try encoder.encode(accounts).write(
+                to: backup,
+                options: [.atomic, .completeFileProtection]
+            )
+        } catch {
+            try fileManager.removeItem(at: backup)
+        }
     }
 
     public enum RepositoryError: LocalizedError {
