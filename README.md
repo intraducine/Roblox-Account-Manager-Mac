@@ -37,12 +37,12 @@ The app does not store passwords. It does not solve captchas, inject code, autom
 
 1. Open **Add Account** and sign in on the Roblox page.
 2. Repeat this for every account that you want to run.
-3. Use the checkboxes in the account list to select the accounts that should open together.
-4. Enter a Place ID or select **Choose Game** to reuse a recent game.
+3. Use the checkboxes beside the account names to choose the accounts that should open together.
+4. Select **Choose Game**, paste the Roblox game link, and confirm its name and icon. You can also reuse a recent game.
 5. Keep **Let Roblox choose** or select another server option.
-6. Select **Launch Accounts**. Each selected account opens in its own Roblox window.
+6. Select the blue launch button. Each selected account opens in its own Roblox window.
 
-A Place ID is the number after `/games/` in a Roblox game link. Most users do not need a Job ID. A Job ID is an advanced, temporary code for one server that is already running.
+The app fills the Place ID after you choose a game. The number remains available as an advanced field. Most users do not need a Job ID. A Job ID is an advanced, temporary code for one server that is already running.
 
 ## Build from source
 
@@ -75,7 +75,7 @@ The app stores all saved Roblox sessions inside one Keychain item. Version 1.0.2
 
 The managed Roblox website window keeps top-level browsing on `roblox.com`. Its temporary Roblox session cookie is secure and HTTP-only. Secure frames used inside Roblox pages can load without an external-link warning, and they do not receive the Roblox session cookie. A real link to another site asks before it opens in the default browser and names the destination.
 
-You can give one account an alias, an encrypted profile note, and several groups. These fields do not change the Roblox account. Profile notes use a separate macOS Keychain item. Existing plain-text notes move into Keychain and are removed from the account file and its backup when the updated app first loads them.
+You can give one account an alias, an encrypted profile note, and several groups. These fields do not change the Roblox account. Delete a group from the group menu when you no longer need it. The accounts in that group stay saved. Profile notes use a separate macOS Keychain item. Existing plain-text notes move into Keychain and are removed from the account file and its backup when the updated app first loads them.
 
 ## Update the app
 
@@ -95,16 +95,16 @@ The normal copy stays unchanged. Every file must match the installed Roblox app.
 
 Select one account and choose **Open Roblox App** to open that account's Roblox home screen without joining a game. You can also right-click an account and choose **Open Roblox App**. You do not need to wait for that app to finish opening before you start a different account.
 
-To open several account apps without joining a game, select their checkboxes in the sidebar. Then choose **Open Roblox Apps** in the selected-accounts bar. The manager requests their account sessions and starts their Roblox copies together.
+To open several account apps without joining a game, use the checkboxes in the sidebar. The main view changes to **Launch Multiple Accounts** and lists each selected account handle. Select **Open Roblox Apps** there. The manager requests their account sessions and starts their Roblox copies together.
 
 To launch:
 
-1. Select accounts from the account list or select a group.
-2. Enter a Place ID or choose a recent or favorite experience.
+1. Use the checkboxes to choose accounts from the list, or use **Select Group**.
+2. Select **Choose Game**. Paste a Roblox game link, or choose a recent or favorite game. Confirm the name and icon.
 3. Let Roblox choose a server, browse public servers, find a player, or enter a supported private server link.
-4. Select **Launch Accounts**.
+4. Select the blue launch button.
 
-A Place ID is the number after `/games/` in a Roblox experience link. A Job ID identifies one current server. Job IDs stop working when that server closes, so the app never saves them as a future launch choice. Choosing or typing a different Place ID returns the server choice to **Let Roblox choose**.
+A Place ID is the number after `/games/` in a Roblox experience link. **Choose Game** fills it automatically, so most people do not need to find or type it. A Job ID identifies one current server. Job IDs stop working when that server closes, so the app never saves them as a future launch choice. Choosing or typing a different Place ID returns the server choice to **Let Roblox choose**.
 
 Open **Choose Server > Private Servers** to save a private-server link with a clear name. Current Roblox `roblox.com/share` links and older `/games/` private-server links both work. For a current share link, the app checks the link through one saved account to find its Place ID. Roblox then checks each launched account's access separately. The same account-specific check runs when you open a current private-server share link in the built-in Roblox website window. Select the saved name later to reuse the link and its Place ID. Links that were already saved to accounts or Launch Sets appear in this list after the app loads them.
 
@@ -156,7 +156,7 @@ The experience chooser records recent Place IDs and launch counts. It also saves
 
 Open **Tools > Diagnostics and Backup**.
 
-Normal backups can include account IDs, usernames, aliases, groups, favorites, recent experiences, and Launch Sets. They exclude profile notes, sessions, launch tickets, access codes, active process IDs, raw network responses, and private server links. Import matches accounts by Roblox user ID and never replaces a Keychain session or encrypted profile note.
+Normal backups can include account IDs, usernames, aliases, groups, favorites, recent experiences, and Launch Sets. They exclude encrypted profile notes, sessions, launch tickets, access codes, active process IDs, raw network responses, and private server links. Import matches accounts by Roblox user ID and keeps the Keychain session and encrypted profile note already stored on this Mac.
 
 The redacted diagnostic report contains only plain check results. It does not include cookies, tickets, private links, private access codes, or complete launch URLs.
 

@@ -89,6 +89,14 @@ Version 1.0.4 and later must:
 
 ### Post-1.0.4 update and note-storage changes
 
+- Let users paste a normal Roblox game link, then show the trusted game name and icon before selection. Keep direct Place ID entry as an advanced fallback.
+- Keep alias, encrypted notes, and multi-group editing visible on the main account page.
+- Keep multi-account checkboxes visible. Show a dedicated launch view with every selected account handle.
+- Keep direct Place ID entry in a full-width advanced section with a whole-row disclosure control.
+- Keep Find Players and Launch Sets directly available from the main toolbar.
+- Let users delete a group without deleting its accounts. Remove the deleted group from account memberships and Launch Sets.
+- Give every isolated Roblox account home its own default Keychain so Roblox does not show a missing-Keychain alert or share its duplicate Studio cookie across accounts.
+- Stop several managed Roblox processes with one batched process scan and signal pass.
 - Parse the trusted GitHub release body as Markdown in the update window. Keep only HTTPS links without embedded credentials.
 - Use direct user text when no update is available: **You're up to date**.
 - Keep profile notes in a separate macOS Keychain item instead of account JSON.
@@ -549,9 +557,9 @@ Store:
 - Launch count
 - Favorite state
 
-Add one native game chooser beside the Place ID field.
+Use a native game chooser as the normal control. Show the selected game's name and icon.
 
-The user must still be able to paste a Place ID directly.
+Keep direct Place ID entry inside a collapsed advanced section.
 
 Do not depend on an experience name lookup for launching. The numeric Place ID remains the source of truth.
 

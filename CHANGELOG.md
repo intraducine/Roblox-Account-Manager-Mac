@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Fixed the Roblox Keychain Not Found alert by giving each isolated account app its own temporary-password Keychain.
+- Made Stop All close managed Roblox processes in one batch instead of repeating a full process scan for each account.
+- Added group deletion without deleting accounts, and removed deleted group references from saved Launch Sets.
+- Prevented account avatars from showing the previous account while the next avatar loads.
+- Applied the full-row Advanced options control to the Launch Set editor.
+- Clarified that backups exclude encrypted profile notes and that import preserves local Keychain notes.
+- Corrected account-health spacing and shortened the empty Notes prompt.
+- Fixed a false invalid-signature error on current macOS versions when starting unchanged Roblox copies.
+- Fixed control hit areas and spacing in the game chooser, server row, advanced options, group controls, and multi-account launch screen.
+- Kept multi-account checkboxes visible and listed every selected account handle before launch.
+- Restored alias, encrypted notes, and multi-group editing to the main account page.
+- Added group membership checkmarks to account menus and kept Find Players and Launch Sets visible in the toolbar.
+- Opened Add Account in its own window and added Command-N as a second direct way to open it.
+- Replaced the unclear Ready label with a direct description of what Launch Game will do.
+- Simplified the main window around the two common tasks: opening an account app and launching a game.
+- Kept direct Place ID entry inside a clearer full-row advanced options control.
+- Added game lookup by normal Roblox link with a verified game name and icon before selection.
+- Showed the selected game's name and icon on launch controls instead of relying on a Place ID alone.
 - Rendered GitHub release notes as Markdown in the **What's New** update section.
 - Replaced the technical no-release result with a direct **You're up to date** message.
 - Moved profile notes from account JSON into a separate encrypted macOS Keychain item.

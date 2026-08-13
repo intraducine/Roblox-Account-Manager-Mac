@@ -12,7 +12,7 @@ struct LaunchSetsView: View {
                 List(store.launchSets, selection: $selectedID) { launchSet in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(launchSet.name).fontWeight(.medium)
-                        Text("Place \(launchSet.placeID) · \(launchSet.serverStrategy.title)")
+                        Text("\(launchSet.experienceName ?? (launchSet.placeID > 0 ? "Saved game" : "No game chosen")) · \(launchSet.serverStrategy.title)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -109,25 +109,17 @@ private struct LaunchSetEditor: View {
             }
             Section("Launch Set") {
                 TextField("Name", text: $draft.name)
-                TextField("Experience name (optional)", text: Binding(
-                    get: { draft.experienceName ?? "" },
-                    set: { draft.experienceName = $0.isEmpty ? nil : $0 }
-                ))
-                TextField("Place ID", text: $placeText)
             }
-            Section("Accounts") {
-                ForEach(store.accounts) { account in
-                    Toggle(account.title, isOn: membership(account.id, in: $draft.accountIDs))
-                        .toggleStyle(.checkbox)
+            Section("Launch") {
+                LabeledContent("Game") {
+                    ExperienceChooserButton(
+                        store: store,
+                        placeID: gamePlaceID,
+                        knownName: draft.experienceName
+                    ) { experience in
+                        draft.experienceName = experience.experienceName
+                    }
                 }
-            }
-            Section("Groups") {
-                ForEach(store.groupNames, id: \.self) { group in
-                    Toggle(group, isOn: groupMembership(group))
-                        .toggleStyle(.checkbox)
-                }
-            }
-            Section("Server") {
                 Picker("Server choice", selection: $strategyKind) {
                     Text("Let Roblox choose").tag("automatic")
                     Text("Browse public servers when run").tag("browse")
@@ -141,13 +133,38 @@ private struct LaunchSetEditor: View {
                             ForEach(store.privateServers) { server in
                                 Button(server.name) {
                                     privateLink = server.link
-                                    placeText = String(server.placeID)
+                                    gamePlaceID.wrappedValue = String(server.placeID)
                                 }
                             }
                         }
                     }
                     Text("Private links stay on this Mac and are excluded from normal backups.")
                         .font(.caption).foregroundStyle(.secondary)
+                }
+                AdvancedOptionsDisclosure {
+                    VStack(alignment: .leading, spacing: 12) {
+                        LabeledContent("Place ID") {
+                            TextField("Place ID", text: gamePlaceID)
+                                .labelsHidden()
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 240)
+                        }
+                        Text("Choose Game fills this number automatically.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Section("Accounts") {
+                ForEach(store.accounts) { account in
+                    Toggle(account.title, isOn: membership(account.id, in: $draft.accountIDs))
+                        .toggleStyle(.checkbox)
+                }
+            }
+            Section("Groups") {
+                ForEach(store.groupNames, id: \.self) { group in
+                    Toggle(group, isOn: groupMembership(group))
+                        .toggleStyle(.checkbox)
                 }
             }
             Section {
@@ -174,6 +191,16 @@ private struct LaunchSetEditor: View {
             && (strategyKind != "private"
                 || RobloxLaunchURLBuilder.privateLinkCode(from: privateLink) != nil
                 || RobloxLaunchURLBuilder.privateShareCode(from: privateLink) != nil)
+    }
+
+    private var gamePlaceID: Binding<String> {
+        Binding(
+            get: { placeText },
+            set: { newValue in
+                placeText = newValue
+                draft.experienceName = nil
+            }
+        )
     }
 
     private func applyFields() {

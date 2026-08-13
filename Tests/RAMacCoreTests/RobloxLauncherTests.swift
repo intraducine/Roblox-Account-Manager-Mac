@@ -6,6 +6,15 @@ import XCTest
 final class RobloxLauncherTests: XCTestCase {
     private let builder = RobloxLaunchURLBuilder()
 
+    func testOfficialSignatureRequirementUsesCodesignInlineArgument() {
+        let appURL = URL(fileURLWithPath: "/Applications/Roblox.app", isDirectory: true)
+        let arguments = ParallelRobloxLauncher.officialVerificationArguments(for: appURL)
+
+        XCTAssertTrue(arguments.contains("-R=\(ParallelRobloxLauncher.officialCodeRequirement)"))
+        XCTAssertFalse(arguments.contains("-R"))
+        XCTAssertEqual(arguments.last, appURL.path)
+    }
+
     func testCommandOutputLargerThanAPipeBufferDoesNotDeadlock() throws {
         let output = try ParallelRobloxLauncher.collectCommandOutput(
             executable: URL(fileURLWithPath: "/usr/bin/jot"),
@@ -337,6 +346,93 @@ final class RobloxLauncherTests: XCTestCase {
                 "FFlagEnableMacMenuBar9": false
             ]
         )
+    }
+
+    func testIsolatedEnvironmentHasItsOwnUsableDefaultKeychain() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-keychain-environment-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let accountID = UUID()
+        let launcher = ParallelRobloxLauncher(instancesRoot: root)
+
+        let environment = try await launcher.prepareIsolatedEnvironment(for: accountID)
+        let home = try XCTUnwrap(environment["HOME"])
+        let keychain = URL(fileURLWithPath: home)
+            .appendingPathComponent("Library/Keychains/login.keychain-db")
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: keychain.path))
+        XCTAssertNotEqual(
+            keychain.standardizedFileURL.path,
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Keychains/login.keychain-db")
+                .standardizedFileURL.path
+        )
+
+        let probe = Process()
+        probe.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        probe.arguments = [
+            "add-generic-password",
+            "-a", "Roblox test",
+            "-s", "https://www.roblox.com/:SharedROBLOSECURITYForStudio",
+            "-w", "test-value"
+        ]
+        probe.environment = environment
+        probe.standardOutput = FileHandle.nullDevice
+        probe.standardError = FileHandle.nullDevice
+        try probe.run()
+        probe.waitUntilExit()
+        XCTAssertEqual(probe.terminationStatus, 0)
+    }
+
+    func testBatchStopClosesSeveralRecordedProcessesPromptly() async throws {
+        struct TestProcessRecord: Codable {
+            let processIdentifier: Int32
+            let applicationPath: String
+        }
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-batch-stop-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let launcher = ParallelRobloxLauncher(instancesRoot: root)
+        let accountIDs = [UUID(), UUID(), UUID()]
+        var processes: [Process] = []
+        defer {
+            for process in processes where process.isRunning { process.terminate() }
+        }
+
+        for accountID in accountIDs {
+            let accountRoot = root.appendingPathComponent(accountID.uuidString, isDirectory: true)
+            let app = accountRoot.appendingPathComponent("Unmodified/Roblox.app", isDirectory: true)
+            let executable = app.appendingPathComponent("Contents/MacOS/RobloxPlayer")
+            try FileManager.default.createDirectory(
+                at: executable.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.copyItem(atPath: "/bin/sleep", toPath: executable.path)
+
+            let process = Process()
+            process.executableURL = executable
+            process.arguments = ["60"]
+            try process.run()
+            processes.append(process)
+            let record = TestProcessRecord(
+                processIdentifier: process.processIdentifier,
+                applicationPath: app.standardizedFileURL.path
+            )
+            try JSONEncoder().encode(record).write(
+                to: accountRoot.appendingPathComponent("Process.json"),
+                options: .atomic
+            )
+        }
+
+        let startedAt = Date()
+        let stopped = await launcher.stop(accountIDs: accountIDs)
+        let elapsed = Date().timeIntervalSince(startedAt)
+
+        XCTAssertEqual(stopped, Set(accountIDs))
+        XCTAssertLessThan(elapsed, 5)
+        for process in processes { process.waitUntilExit() }
+        XCTAssertTrue(processes.allSatisfy { !$0.isRunning })
     }
 
     func testUnmodifiedParallelModeDescribesExactOriginalSignatureCopies() {

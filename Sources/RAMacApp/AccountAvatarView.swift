@@ -1,0 +1,57 @@
+import AppKit
+import SwiftUI
+
+struct AccountAvatarView: View {
+    private static let cache = NSCache<NSURL, NSImage>()
+
+    let url: URL?
+    let size: CGFloat
+    let cornerRadius: CGFloat
+    @State private var image: NSImage?
+    @State private var loadedURL: URL?
+
+    init(url: URL?, size: CGFloat, cornerRadius: CGFloat) {
+        self.url = url
+        self.size = size
+        self.cornerRadius = cornerRadius
+        let cachedImage = url.flatMap { Self.cache.object(forKey: $0 as NSURL) }
+        _image = State(initialValue: cachedImage)
+        _loadedURL = State(initialValue: cachedImage == nil ? nil : url)
+    }
+
+    var body: some View {
+        Group {
+            if let displayedImage {
+                Image(nsImage: displayedImage)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: size * 0.76))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .task(id: url) {
+            image = url.flatMap { Self.cache.object(forKey: $0 as NSURL) }
+            loadedURL = image == nil ? nil : url
+            guard image == nil, let url else { return }
+            guard let (data, response) = try? await URLSession.shared.data(from: url),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let loadedImage = NSImage(data: data) else { return }
+            Self.cache.setObject(loadedImage, forKey: url as NSURL)
+            guard self.url == url else { return }
+            image = loadedImage
+            loadedURL = url
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var displayedImage: NSImage? {
+        if loadedURL == url {
+            return image
+        }
+        return url.flatMap { Self.cache.object(forKey: $0 as NSURL) }
+    }
+}

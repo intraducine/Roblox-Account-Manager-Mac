@@ -56,6 +56,27 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(fixture.store.batchSelectedIDs, [fixture.accounts[0].id])
     }
 
+    func testDeletingGroupKeepsAccountsAndRemovesOnlyMembershipReferences() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        _ = fixture.store.createGroup("Favorites", addingTo: fixture.accounts[0].id)
+        fixture.store.saveLaunchSet(LaunchSet(
+            name: "Favorites Set",
+            groupNames: ["Favorites", "Wave"],
+            placeID: 12345
+        ))
+
+        fixture.store.deleteGroup("Favorites")
+
+        XCTAssertEqual(fixture.store.accounts.count, fixture.accounts.count)
+        XCTAssertFalse(fixture.store.groupNames.contains("Favorites"))
+        XCTAssertTrue(fixture.store.accounts.allSatisfy { !$0.belongs(to: "Favorites") })
+        XCTAssertEqual(fixture.store.launchSets.first?.groupNames, ["Wave"])
+        XCTAssertEqual(try fixture.repository.load().count, fixture.accounts.count)
+        XCTAssertFalse(try fixture.repository.loadGroups().contains("Favorites"))
+    }
+
     func testIndividualBatchSelectionSelectsAndDeselectsOnlyTheTargetAccount() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -108,7 +129,9 @@ final class AccountStoreBatchTests: XCTestCase {
 
         await fixture.store.stopAll()
 
+        let batchStopRequestCount = await fixture.launcher.batchStopRequestCount()
         XCTAssertTrue(fixture.store.runningAccountIDs.isEmpty)
+        XCTAssertEqual(batchStopRequestCount, 1)
         XCTAssertEqual(fixture.store.launchStatus, "Stopped all Roblox clients")
         XCTAssertEqual(fixture.store.batchStatus, "All Roblox clients stopped")
     }
@@ -151,6 +174,30 @@ final class AccountStoreBatchTests: XCTestCase {
         let saved = try experienceRepository.load()
         XCTAssertEqual(saved.first?.experienceName, "Classic: Crossroads")
         XCTAssertEqual(saved.first?.thumbnailURLString, "https://tr.rbxcdn.com/crossroads.png")
+    }
+
+    func testGameLookupRefreshesARecordThatHasNoIcon() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-experience-lookup-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let experienceRepository = ExperienceLibraryRepository(dataDirectory: directory)
+        try experienceRepository.save([
+            ExperienceRecord(placeID: 1818, experienceName: "Saved game without an icon")
+        ])
+        let store = AccountStore(
+            repository: repository,
+            vault: MemoryVault(),
+            api: BatchMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil),
+            experienceRepository: experienceRepository,
+            experienceMetadataProvider: ExperienceMetadataMock()
+        )
+
+        let experience = try await store.findExperience(placeID: 1818)
+
+        XCTAssertEqual(experience.experienceName, "Classic: Crossroads")
+        XCTAssertEqual(experience.thumbnailURLString, "https://tr.rbxcdn.com/crossroads.png")
     }
 
     func testJoinablePlayerServerUsesPublicPresence() async throws {
@@ -919,6 +966,7 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     private var modes = Set<RobloxLaunchMode>()
     private var running = Set<UUID>()
     private var urls: [URL] = []
+    private var batchStopRequests: [[UUID]] = []
 
     init(failingAccountID: UUID?, launchDelayNanoseconds: UInt64 = 0) {
         self.failingAccountID = failingAccountID
@@ -955,6 +1003,13 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
         return true
     }
 
+    func stop(accountIDs: [UUID]) async -> Set<UUID> {
+        batchStopRequests.append(accountIDs)
+        let stopped = running.intersection(accountIDs)
+        running.subtract(stopped)
+        return stopped
+    }
+
     func removeStaleCopies() async {}
 
     func removePreparedCopy(accountID: UUID) async {}
@@ -974,4 +1029,6 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     }
 
     func attemptedURLs() -> [URL] { urls }
+
+    func batchStopRequestCount() -> Int { batchStopRequests.count }
 }

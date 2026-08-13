@@ -6,7 +6,6 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var store: AccountStore
     @ObservedObject var updater: SoftwareUpdateController
-    @State private var showsAddAccount = false
     @State private var showsLicense = false
     @State private var pendingRemoval: ManagedAccount?
     @State private var batchPlaceID = ""
@@ -16,31 +15,27 @@ struct ContentView: View {
     @State private var newGroupName = ""
     @State private var newGroupAccountID: UUID?
     @State private var selectedGroupFilter: String?
+    @State private var pendingGroupDeletion: String?
 
     var body: some View {
         NavigationSplitView {
             accountSidebar
                 .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 380)
         } detail: {
-            if let account = store.selectedAccount {
-                VStack(spacing: 0) {
-                    AccountDetailView(
-                        store: store,
-                        account: account,
-                        showsLaunchBar: store.batchSelectedIDs.isEmpty,
-                        onRequestModifiedFallback: { showsFallbackWarning = true }
-                    )
-                    .id(account.id)
-
-                    if !store.batchSelectedIDs.isEmpty {
-                        BatchLaunchBar(
-                            store: store,
-                            placeID: $batchPlaceID,
-                            serverSelection: $batchServerSelection,
-                            onRequestModifiedFallback: { showsFallbackWarning = true }
-                        )
-                    }
-                }
+            if !store.batchSelectedIDs.isEmpty {
+                BatchLaunchBar(
+                    store: store,
+                    placeID: $batchPlaceID,
+                    serverSelection: $batchServerSelection,
+                    onRequestModifiedFallback: { showsFallbackWarning = true }
+                )
+            } else if let account = store.selectedAccount {
+                AccountDetailView(
+                    store: store,
+                    account: account,
+                    onRequestModifiedFallback: { showsFallbackWarning = true }
+                )
+                .id(account.id)
             } else {
                 emptyState
             }
@@ -50,33 +45,28 @@ struct ContentView: View {
                 Button {
                     openWindow(id: "joinable-players")
                 } label: {
-                    Label("Find Players", systemImage: "person.2.wave.2")
+                    Label("Find Players", systemImage: "person.2")
+                        .labelStyle(.titleAndIcon)
                 }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
+                .help("Find players that your saved accounts can join")
+
+                Button {
+                    openWindow(id: "launch-sets")
+                } label: {
+                    Label("Launch Sets", systemImage: "square.stack.3d.up")
+                        .labelStyle(.titleAndIcon)
+                }
+                .help("Open saved account and game combinations")
 
                 Menu {
-                    Button("Launch Sets") { openWindow(id: "launch-sets") }
                     Button("Diagnostics and Backup") { openWindow(id: "diagnostics") }
+                    Divider()
+                    Button("About") { showsLicense = true }
                 } label: {
-                    Label("Tools", systemImage: "wrench.and.screwdriver")
-                }
-
-                Button {
-                    showsAddAccount = true
-                } label: {
-                    Label("Add Account", systemImage: "plus")
-                }
-                .keyboardShortcut("n", modifiers: .command)
-
-                Button {
-                    showsLicense = true
-                } label: {
-                    Label("About", systemImage: "info.circle")
+                    Label("More", systemImage: "ellipsis.circle")
                 }
             }
-        }
-        .sheet(isPresented: $showsAddAccount) {
-            AddAccountView(store: store)
         }
         .sheet(isPresented: $showsLicense) {
             LicenseNoticeView(updater: updater)
@@ -110,6 +100,23 @@ struct ContentView: View {
         } message: {
             Text("This option changes each Roblox app copy so macOS can open it separately. Roblox does not allow modified clients and may restrict accounts that use them. The app never turns this option on by itself.")
         }
+        .confirmationDialog(
+            "Delete \(pendingGroupDeletion ?? "this group")?",
+            isPresented: Binding(
+                get: { pendingGroupDeletion != nil },
+                set: { if !$0 { pendingGroupDeletion = nil } }
+            )
+        ) {
+            Button("Delete Group", role: .destructive) {
+                if let pendingGroupDeletion {
+                    store.deleteGroup(pendingGroupDeletion)
+                }
+                pendingGroupDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { pendingGroupDeletion = nil }
+        } message: {
+            Text("The accounts will stay saved. This only removes the group name from the accounts and Launch Sets that use it.")
+        }
         .sheet(isPresented: $showsNewGroup) {
             NewGroupSheet(
                 name: $newGroupName,
@@ -117,14 +124,14 @@ struct ContentView: View {
                     ? "Create a group. You can add each account to one or more groups."
                     : "Create a group and add this account to it.",
                 onCreate: {
-                _ = store.createGroup(newGroupName, addingTo: newGroupAccountID)
-                newGroupName = ""
-                newGroupAccountID = nil
+                    _ = store.createGroup(newGroupName, addingTo: newGroupAccountID)
+                    newGroupName = ""
+                    newGroupAccountID = nil
                     showsNewGroup = false
                 },
                 onCancel: {
-                newGroupName = ""
-                newGroupAccountID = nil
+                    newGroupName = ""
+                    newGroupAccountID = nil
                     showsNewGroup = false
                 }
             )
@@ -147,9 +154,23 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
     private var accountSidebar: some View {
+        if store.accounts.isEmpty {
+            accountSidebarContents
+                .navigationTitle("Accounts")
+        } else {
+            accountSidebarContents
+                .navigationTitle("Accounts")
+                .searchable(text: $store.search, placement: .sidebar, prompt: "Search accounts")
+        }
+    }
+
+    private var accountSidebarContents: some View {
         VStack(spacing: 0) {
-            groupFilterBar
+            if !store.accounts.isEmpty {
+                groupFilterBar
+            }
 
             List(selection: $store.selectedID) {
                 ForEach(visibleAccounts) { account in
@@ -158,6 +179,7 @@ struct ContentView: View {
                         isRunning: store.isRunning(account),
                         isBatchSelected: store.isBatchSelected(account),
                         batchState: store.batchStates[account.id],
+                        showsBatchSelection: true,
                         isSelectionDisabled: store.isBatchLaunching || store.isOpeningSelectedApps,
                         onToggleBatch: {
                             store.toggleBatchSelection(account)
@@ -189,19 +211,15 @@ struct ContentView: View {
                         }
                         Menu("Groups") {
                             ForEach(store.groupNames, id: \.self) { group in
-                                Button {
-                                    store.setMembership(
-                                        of: account,
-                                        in: group,
-                                        isMember: !account.belongs(to: group)
+                                Toggle(
+                                    group,
+                                    isOn: Binding(
+                                        get: { account.belongs(to: group) },
+                                        set: { isMember in
+                                            store.setMembership(of: account, in: group, isMember: isMember)
+                                        }
                                     )
-                                } label: {
-                                    if account.belongs(to: group) {
-                                        Label(group, systemImage: "checkmark")
-                                    } else {
-                                        Text(group)
-                                    }
-                                }
+                                )
                             }
                             Divider()
                             Button("New Group…") { beginNewGroup(for: account.id) }
@@ -214,10 +232,10 @@ struct ContentView: View {
             }
             .listStyle(.sidebar)
 
-            sidebarStatus
+            if !store.accounts.isEmpty {
+                sidebarStatus
+            }
         }
-        .navigationTitle("Accounts")
-        .searchable(text: $store.search, placement: .sidebar, prompt: "Search accounts")
     }
 
     private var groupFilterBar: some View {
@@ -238,20 +256,23 @@ struct ContentView: View {
                         )
                     }
                 }
+                Divider()
+                Button("New Group…") { beginNewGroup(for: nil) }
+                if !store.groupNames.isEmpty {
+                    Menu("Delete Group") {
+                        ForEach(store.groupNames, id: \.self) { group in
+                            Button(group, role: .destructive) {
+                                pendingGroupDeletion = group
+                            }
+                        }
+                    }
+                }
             } label: {
                 Label(selectedGroupFilter ?? "All Accounts", systemImage: "folder")
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-
             Spacer()
-
-            Button {
-                beginNewGroup(for: nil)
-            } label: {
-                Label("New Group", systemImage: "plus")
-            }
-            .buttonStyle(.borderless)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -259,50 +280,53 @@ struct ContentView: View {
     }
 
     private var sidebarStatus: some View {
-        VStack(spacing: 9) {
+        VStack(spacing: 8) {
             HStack(spacing: 10) {
                 Text(store.batchSelectedIDs.isEmpty
-                     ? "Select accounts"
+                     ? "Select accounts to open together"
                      : "\(store.batchSelectedIDs.count) selected")
-                    .fontWeight(.medium)
+                    .foregroundStyle(store.batchSelectedIDs.isEmpty ? .secondary : .primary)
+                    .fontWeight(store.batchSelectedIDs.isEmpty ? .regular : .medium)
                 Spacer()
-                Menu("Select a Group") {
+                if !store.batchSelectedIDs.isEmpty {
+                    Button("Clear") { store.clearBatchSelection() }
+                        .disabled(store.isBatchLaunching || store.isOpeningSelectedApps)
+                }
+            }
+
+            HStack(spacing: 10) {
+                Menu("Select Group") {
                     ForEach(store.groupNames, id: \.self) { group in
                         Button(store.isBatchGroupSelected(group) ? "Clear \(group)" : "Select \(group)") {
                             store.toggleBatchGroup(group)
                         }
                     }
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
                 .disabled(store.isBatchLaunching || store.isOpeningSelectedApps || store.groupNames.isEmpty)
 
-                if !store.batchSelectedIDs.isEmpty {
-                    Button("Clear") { store.clearBatchSelection() }
-                        .buttonStyle(.plain)
-                        .disabled(store.isBatchLaunching || store.isOpeningSelectedApps)
+                Spacer()
+
+                Button("Add Account", systemImage: "plus") {
+                    openWindow(id: "add-account")
                 }
+                .disabled(store.isWorking || store.isBatchLaunching || store.isOpeningSelectedApps)
             }
 
-            HStack {
-                Text("\(store.runningAccountIDs.count) running")
-                    .foregroundStyle(.secondary)
-                Button(store.isStoppingAll ? "Stopping" : "Stop All", role: .destructive) {
-                    Task { await store.stopAll() }
+            if !store.runningAccountIDs.isEmpty {
+                HStack(spacing: 10) {
+                    Text("\(store.runningAccountIDs.count) running")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button(store.isStoppingAll ? "Stopping" : "Stop All", role: .destructive) {
+                        Task { await store.stopAll() }
+                    }
+                    .disabled(
+                        store.isWorking
+                            || store.isBatchLaunching
+                            || !store.appOpeningAccountIDs.isEmpty
+                    )
+                    .help("Stop every Roblox client started by this manager")
                 }
-                .buttonStyle(.bordered)
-                .disabled(
-                    store.runningAccountIDs.isEmpty
-                        || store.isWorking
-                        || store.isBatchLaunching
-                        || !store.appOpeningAccountIDs.isEmpty
-                )
-                .help(store.runningAccountIDs.isEmpty
-                    ? "No managed Roblox clients are running"
-                    : "Stop every Roblox client started by this manager")
-                Spacer()
-                Text("\(store.accounts.count) account\(store.accounts.count == 1 ? "" : "s")")
-                    .foregroundStyle(.secondary)
             }
         }
         .font(.caption)
@@ -339,7 +363,7 @@ struct ContentView: View {
             Text("Add the Roblox accounts that you want to run together. You will sign in on Roblox, and this app will not save your password.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Add Account") { showsAddAccount = true }
+            Button("Add Account") { openWindow(id: "add-account") }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
         }
@@ -354,34 +378,29 @@ private struct AccountRow: View {
     let isRunning: Bool
     let isBatchSelected: Bool
     let batchState: AccountStore.BatchLaunchState?
+    let showsBatchSelection: Bool
     let isSelectionDisabled: Bool
     let onToggleBatch: () -> Void
 
     var body: some View {
         HStack(spacing: 9) {
-            Toggle(
-                "Select @\(account.username) for batch launch",
-                isOn: Binding(
-                    get: { isBatchSelected },
-                    set: { _ in
-                        guard !NSEvent.modifierFlags.contains(.shift) else { return }
-                        onToggleBatch()
-                    }
+            if showsBatchSelection {
+                Toggle(
+                    "Select @\(account.username) for batch launch",
+                    isOn: Binding(
+                        get: { isBatchSelected },
+                        set: { _ in
+                            guard !NSEvent.modifierFlags.contains(.shift) else { return }
+                            onToggleBatch()
+                        }
+                    )
                 )
-            )
-            .labelsHidden()
-            .toggleStyle(.checkbox)
-            .disabled(isRunning || isSelectionDisabled)
-
-            AsyncImage(url: account.avatarURL) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                Image(systemName: "person.crop.circle")
-                    .font(.system(size: 30))
-                    .foregroundStyle(.secondary)
+                .labelsHidden()
+                .toggleStyle(.checkbox)
+                .disabled(isRunning || isSelectionDisabled)
             }
-            .frame(width: 34, height: 34)
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            AccountAvatarView(url: account.avatarURL, size: 34, cornerRadius: 7)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(account.title)
@@ -391,12 +410,6 @@ private struct AccountRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if !account.groups.isEmpty {
-                    Text(account.groups.joined(separator: ", "))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
             }
             Spacer(minLength: 4)
 

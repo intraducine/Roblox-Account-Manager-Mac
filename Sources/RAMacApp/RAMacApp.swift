@@ -21,9 +21,14 @@ struct RAMacApp: App {
         .windowToolbarStyle(.unified)
         .defaultSize(width: 1120, height: 720)
         .commands {
-            CommandGroup(replacing: .newItem) { }
             V1ViewCommands()
         }
+
+        Window("Add Roblox Account", id: "add-account") {
+            AddAccountView(store: store)
+                .dismissTextInputOnOutsideClick()
+        }
+        .defaultSize(width: 860, height: 660)
 
         Window("Joinable Players", id: "joinable-players") {
             JoinablePlayersView(store: store)
@@ -62,6 +67,10 @@ private struct V1ViewCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("Add Account") { openWindow(id: "add-account") }
+                .keyboardShortcut("n", modifiers: .command)
+        }
         CommandGroup(after: .sidebar) {
             Button("Joinable Players") { openWindow(id: "joinable-players") }
                 .keyboardShortcut("f", modifiers: [.command, .shift])

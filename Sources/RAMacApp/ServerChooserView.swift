@@ -12,7 +12,7 @@ struct ServerSelectionControl: View {
         Button(selection.controlTitle) {
             showsChooser = true
         }
-        .frame(minWidth: 210)
+        .frame(minWidth: 210, alignment: .trailing)
         .help("Choose where the selected account or accounts will join")
         .accessibilityLabel("Choose server. \(selection.accessibilitySummary)")
         .sheet(isPresented: $showsChooser) {

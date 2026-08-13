@@ -175,8 +175,24 @@ public protocol ParallelRobloxLaunching: Sendable {
     func launch(_ url: URL, for accountID: UUID, mode: RobloxLaunchMode) async throws -> ParallelRobloxInstance
     func runningAccountIDs(from accountIDs: [UUID]) async -> Set<UUID>
     func stop(accountID: UUID) async -> Bool
+    func stop(accountIDs: [UUID]) async -> Set<UUID>
     func removeStaleCopies() async
     func removePreparedCopy(accountID: UUID) async
+}
+
+public extension ParallelRobloxLaunching {
+    func stop(accountIDs: [UUID]) async -> Set<UUID> {
+        await withTaskGroup(of: (UUID, Bool).self) { group in
+            for accountID in accountIDs {
+                group.addTask { (accountID, await stop(accountID: accountID)) }
+            }
+            var stopped = Set<UUID>()
+            for await (accountID, didStop) in group where didStop {
+                stopped.insert(accountID)
+            }
+            return stopped
+        }
+    }
 }
 
 private struct CommandFailure: LocalizedError {
@@ -202,6 +218,14 @@ public actor ParallelRobloxLauncher {
     public static let parallelBundleIdentifier = "com.intraducine.RobloxAccountManager.player"
     public static let preparationVersion = 5
     public static let unmodifiedPreparationVersion = 1
+
+    static func officialVerificationArguments(for applicationURL: URL) -> [String] {
+        [
+            "--verify", "--deep", "--strict", "--verbose=4",
+            "-R=\(officialCodeRequirement)",
+            applicationURL.path
+        ]
+    }
 
     public static let managedClientSettings: [String: Bool] = [
         "DFFlagEnableMacDesktopNotifications2": false,
@@ -340,39 +364,70 @@ public actor ParallelRobloxLauncher {
     }
 
     public func stop(accountID: UUID) async -> Bool {
-        if readProcessRecord(for: accountID)?.applicationPath
-            == Self.officialApplicationURL.standardizedFileURL.path {
-            let stopped = await stopOfficialApplications()
-            if stopped {
+        await stop(accountIDs: [accountID]).contains(accountID)
+    }
+
+    public func stop(accountIDs: [UUID]) async -> Set<UUID> {
+        let requested = Set(accountIDs)
+        guard !requested.isEmpty else { return [] }
+
+        let officialPath = Self.officialApplicationURL.standardizedFileURL.path
+        var officialAccountIDs = Set<UUID>()
+        var mainPathByAccount: [UUID: String] = [:]
+        var helperPathsByAccount: [UUID: Set<String>] = [:]
+
+        for accountID in requested {
+            if readProcessRecord(for: accountID)?.applicationPath == officialPath {
+                officialAccountIDs.insert(accountID)
+                continue
+            }
+            if let record = validProcessRecord(for: accountID) {
+                mainPathByAccount[accountID] = canonicalPath(
+                    URL(fileURLWithPath: record.applicationPath, isDirectory: true)
+                        .appendingPathComponent("Contents/MacOS/RobloxPlayer")
+                        .path
+                )
+            } else {
                 try? fileManager.removeItem(at: processRecordURL(for: accountID))
             }
-            return stopped
+            helperPathsByAccount[accountID] = managedHelperExecutablePaths(for: accountID)
         }
-        guard let record = validProcessRecord(for: accountID) else {
-            try? fileManager.removeItem(at: processRecordURL(for: accountID))
-            return await stopManagedHelpers(for: accountID)
+
+        let officialStopped: Bool
+        if officialAccountIDs.isEmpty {
+            officialStopped = true
+        } else {
+            officialStopped = await stopOfficialApplications()
         }
-        let mainExecutablePath = canonicalPath(
-            URL(fileURLWithPath: record.applicationPath, isDirectory: true)
-                .appendingPathComponent("Contents/MacOS/RobloxPlayer")
-                .path
-        )
-        for attempt in 0..<8 {
-            _ = await stopManagedHelpers(for: accountID)
-            let matchingProcesses = runningProcessTable().filter { $0.value == mainExecutablePath }
-            if matchingProcesses.isEmpty {
-                try? fileManager.removeItem(at: processRecordURL(for: accountID))
-                return await stopManagedHelpers(for: accountID)
-            }
-            let signal = attempt < 4 ? SIGTERM : SIGKILL
-            for processIdentifier in matchingProcesses.keys {
+        let managedPaths = Set(mainPathByAccount.values)
+            .union(helperPathsByAccount.values.flatMap { $0 })
+
+        for attempt in 0..<6 where !managedPaths.isEmpty {
+            let matching = runningProcessTable().filter { managedPaths.contains($0.value) }
+            if matching.isEmpty { break }
+            let signal = attempt < 2 ? SIGTERM : SIGKILL
+            for processIdentifier in matching.keys {
                 _ = kill(processIdentifier, signal)
             }
-            try? await Task.sleep(nanoseconds: 400_000_000)
+            try? await Task.sleep(nanoseconds: attempt < 2 ? 250_000_000 : 100_000_000)
         }
-        let mainStopped = runningProcessTable().values.allSatisfy { $0 != mainExecutablePath }
-        let helpersStopped = await stopManagedHelpers(for: accountID)
-        return mainStopped && helpersStopped
+
+        let remainingPaths = Set(runningProcessTable().values)
+        var stopped = officialStopped ? officialAccountIDs : []
+        for accountID in requested.subtracting(officialAccountIDs) {
+            let mainStopped = mainPathByAccount[accountID].map { !remainingPaths.contains($0) } ?? true
+            let helpersStopped = helperPathsByAccount[accountID, default: []].isDisjoint(with: remainingPaths)
+            if mainStopped && helpersStopped {
+                stopped.insert(accountID)
+                try? fileManager.removeItem(at: processRecordURL(for: accountID))
+            }
+        }
+        if officialStopped {
+            for accountID in officialAccountIDs {
+                try? fileManager.removeItem(at: processRecordURL(for: accountID))
+            }
+        }
+        return stopped
     }
 
     private func stopOfficialApplications() async -> Bool {
@@ -464,13 +519,15 @@ public actor ParallelRobloxLauncher {
     private func runningProcessTable() -> [Int32: String] {
         guard let output = try? run(
             executable: URL(fileURLWithPath: "/bin/ps"),
-            arguments: ["-axo", "pid=,comm="]
+            arguments: ["-axo", "pid=,stat=,comm="]
         ) else { return [:] }
         var table: [Int32: String] = [:]
         for line in output.split(separator: "\n") {
-            let fields = line.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })
-            guard fields.count == 2, let processIdentifier = Int32(fields[0]) else { continue }
-            let path = String(fields[1]).trimmingCharacters(in: .whitespaces)
+            let fields = line.split(maxSplits: 2, whereSeparator: { $0.isWhitespace })
+            guard fields.count == 3,
+                  let processIdentifier = Int32(fields[0]),
+                  !fields[1].hasPrefix("Z") else { continue }
+            let path = String(fields[2]).trimmingCharacters(in: .whitespaces)
             table[processIdentifier] = canonicalPath(path)
         }
         return table
@@ -658,11 +715,7 @@ public actor ParallelRobloxLauncher {
             )
             try run(
                 executable: URL(fileURLWithPath: "/usr/bin/codesign"),
-                arguments: [
-                    "--verify", "--deep", "--strict", "--verbose=4",
-                    "-R", Self.officialCodeRequirement,
-                    copyURL.path
-                ]
+                arguments: Self.officialVerificationArguments(for: copyURL)
             )
             let sourceHash = try codeDirectoryHash(at: Self.officialApplicationURL)
             let copyHash = try codeDirectoryHash(at: copyURL)
@@ -852,9 +905,10 @@ public actor ParallelRobloxLauncher {
             .appendingPathComponent("Home", isDirectory: true)
     }
 
-    private func prepareIsolatedEnvironment(for accountID: UUID) throws -> [String: String] {
+    func prepareIsolatedEnvironment(for accountID: UUID) throws -> [String: String] {
         let homeURL = Self.isolatedHomeURL(instancesRoot: instancesRoot, accountID: accountID)
         let temporaryURL = homeURL.appendingPathComponent("Library/Caches/TemporaryItems", isDirectory: true)
+        let keychainsURL = homeURL.appendingPathComponent("Library/Keychains", isDirectory: true)
         let requiredDirectories = [
             homeURL,
             homeURL.appendingPathComponent("Library", isDirectory: true),
@@ -865,17 +919,58 @@ public actor ParallelRobloxLauncher {
             homeURL.appendingPathComponent("Library/Preferences", isDirectory: true),
             homeURL.appendingPathComponent("Library/Roblox", isDirectory: true),
             homeURL.appendingPathComponent("Library/WebKit", isDirectory: true),
+            keychainsURL,
             temporaryURL
         ]
         for directory in requiredDirectories {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         }
 
-        return Self.sanitizedChildEnvironment(
+        let environment = Self.sanitizedChildEnvironment(
             parent: ProcessInfo.processInfo.environment,
             homeURL: homeURL,
             temporaryURL: temporaryURL
         )
+        try prepareIsolatedKeychain(at: keychainsURL, environment: environment)
+        return environment
+    }
+
+    private func prepareIsolatedKeychain(
+        at keychainsURL: URL,
+        environment: [String: String]
+    ) throws {
+        try? fileManager.removeItem(at: keychainsURL)
+        try fileManager.createDirectory(at: keychainsURL, withIntermediateDirectories: true)
+        let keychainURL = keychainsURL.appendingPathComponent("login.keychain-db")
+        let oneTimePassword = UUID().uuidString + UUID().uuidString
+        do {
+            try run(
+                executable: URL(fileURLWithPath: "/usr/bin/security"),
+                arguments: ["create-keychain", keychainURL.path],
+                environment: environment,
+                standardInput: "\(oneTimePassword)\n\(oneTimePassword)\n"
+            )
+            try run(
+                executable: URL(fileURLWithPath: "/usr/bin/security"),
+                arguments: ["set-keychain-settings", keychainURL.path],
+                environment: environment
+            )
+            for arguments in [
+                ["default-keychain", "-d", "user", "-s", keychainURL.path],
+                ["list-keychains", "-d", "user", "-s", keychainURL.path]
+            ] {
+                try run(
+                    executable: URL(fileURLWithPath: "/usr/bin/security"),
+                    arguments: arguments,
+                    environment: environment
+                )
+            }
+        } catch {
+            try? fileManager.removeItem(at: keychainsURL)
+            throw RobloxLaunchError.copyFailed(
+                "The private Keychain for this Roblox account could not be prepared. \(error.localizedDescription)"
+            )
+        }
     }
 
     static func sanitizedChildEnvironment(
@@ -935,11 +1030,7 @@ public actor ParallelRobloxLauncher {
         do {
             try run(
                 executable: URL(fileURLWithPath: "/usr/bin/codesign"),
-                arguments: [
-                    "--verify", "--deep", "--strict", "--verbose=4",
-                    "-R", Self.officialCodeRequirement,
-                    Self.officialApplicationURL.path
-                ]
+                arguments: Self.officialVerificationArguments(for: Self.officialApplicationURL)
             )
         } catch let error as RobloxLaunchError {
             throw error
@@ -964,16 +1055,7 @@ public actor ParallelRobloxLauncher {
     }
 
     private func stopManagedHelpers(for accountID: UUID) async -> Bool {
-        let helperExecutables = Set([
-            copyURL(for: accountID),
-            unmodifiedCopyURL(for: accountID)
-        ].map {
-            canonicalPath(
-                menuBarHelperURL(in: $0)
-                    .appendingPathComponent("Contents/MacOS/RobloxMenuBar")
-                    .path
-            )
-        })
+        let helperExecutables = managedHelperExecutablePaths(for: accountID)
         for attempt in 0..<6 {
             let matching = runningProcessTable().filter { helperExecutables.contains($0.value) }
             if matching.isEmpty { return true }
@@ -986,9 +1068,52 @@ public actor ParallelRobloxLauncher {
         return runningProcessTable().values.allSatisfy { !helperExecutables.contains($0) }
     }
 
+    private func managedHelperExecutablePaths(for accountID: UUID) -> Set<String> {
+        Set([
+            copyURL(for: accountID),
+            unmodifiedCopyURL(for: accountID)
+        ].map {
+            canonicalPath(
+                menuBarHelperURL(in: $0)
+                    .appendingPathComponent("Contents/MacOS/RobloxMenuBar")
+                    .path
+            )
+        })
+    }
+
     @discardableResult
     private func run(executable: URL, arguments: [String]) throws -> String {
         try Self.collectCommandOutput(executable: executable, arguments: arguments)
+    }
+
+    @discardableResult
+    private func run(
+        executable: URL,
+        arguments: [String],
+        environment: [String: String],
+        standardInput: String? = nil
+    ) throws -> String {
+        let process = Process()
+        let outputPipe = Pipe()
+        let inputPipe = standardInput == nil ? nil : Pipe()
+        process.executableURL = executable
+        process.arguments = arguments
+        process.environment = environment
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
+        process.standardInput = inputPipe
+        try process.run()
+        if let standardInput, let inputPipe {
+            inputPipe.fileHandleForWriting.write(Data(standardInput.utf8))
+            try? inputPipe.fileHandleForWriting.close()
+        }
+        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0 else {
+            throw CommandFailure(output: output.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return output
     }
 
     nonisolated static func collectCommandOutput(executable: URL, arguments: [String]) throws -> String {

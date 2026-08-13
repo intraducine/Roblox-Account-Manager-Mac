@@ -34,7 +34,7 @@ struct DiagnosticsView: View {
                     }
                 }
                 Section("Backup and Restore") {
-                    Text("Normal backups include account details, groups, recent games, favorites, and Launch Sets. They exclude Roblox sign-ins and private server links.")
+                    Text("Normal backups include account details, groups, recent games, favorites, and Launch Sets. They exclude encrypted profile notes, Roblox sign-ins, and private server links. Import keeps the notes and sign-ins already stored in Keychain on this Mac.")
                         .foregroundStyle(.secondary)
                     HStack {
                         Button("Export Backup") { exportBackup(includePrivateLinks: false) }
@@ -97,7 +97,7 @@ struct DiagnosticsView: View {
             let count = try store.importMetadata(Data(contentsOf: url))
             store.notice = .init(
                 title: "Backup imported",
-                message: count == 0 ? "Existing account details were updated. Saved sign-ins were not changed." : "Imported \(count) signed-out account\(count == 1 ? "" : "s"). Saved sign-ins were not changed."
+                message: count == 0 ? "Existing account details were updated. Saved sign-ins and encrypted profile notes were not changed." : "Imported \(count) signed-out account\(count == 1 ? "" : "s"). Saved sign-ins and encrypted profile notes were not changed."
             )
         } catch { store.notice = .init(title: "Backup could not be imported", message: error.localizedDescription) }
     }

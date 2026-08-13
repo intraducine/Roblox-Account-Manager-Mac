@@ -370,6 +370,33 @@ final class AccountStore: ObservableObject {
         update(updated)
     }
 
+    func deleteGroup(_ group: String) {
+        let originalGroups = groups
+        let originalAccounts = accounts
+        let originalLaunchSets = launchSets
+        groups.removeAll { $0.caseInsensitiveCompare(group) == .orderedSame }
+        for index in accounts.indices {
+            accounts[index].groups.removeAll { $0.caseInsensitiveCompare(group) == .orderedSame }
+        }
+        for index in launchSets.indices {
+            launchSets[index].groupNames.removeAll { $0.caseInsensitiveCompare(group) == .orderedSame }
+        }
+        do {
+            try repository.saveGroups(groups)
+            try repository.save(accounts)
+            try launchSetRepository.save(launchSets)
+            launchStatus = "Deleted group \(group)"
+        } catch {
+            groups = originalGroups
+            accounts = originalAccounts
+            launchSets = originalLaunchSets
+            try? repository.saveGroups(originalGroups)
+            try? repository.save(originalAccounts)
+            try? launchSetRepository.save(originalLaunchSets)
+            notice = Notice(title: "Group was not deleted", message: error.localizedDescription)
+        }
+    }
+
     func refreshRunningInstances() async {
         let previousIDs = runningAccountIDs
         let refreshedIDs = await launcher.runningAccountIDs(from: accounts.map(\.id))
@@ -913,6 +940,22 @@ final class AccountStore: ObservableObject {
         if changed { try? experienceRepository.save(experiences) }
     }
 
+    func findExperience(placeID: Int64) async throws -> ExperienceRecord {
+        if let saved = experiences.first(where: {
+            $0.placeID == placeID
+                && $0.experienceName != nil
+                && $0.thumbnailURLString != nil
+        }) {
+            return saved
+        }
+        let metadata = try await experienceMetadataProvider.metadata(placeID: placeID)
+        return ExperienceRecord(
+            placeID: metadata.placeID,
+            experienceName: metadata.name,
+            thumbnailURLString: metadata.thumbnailURLString
+        )
+    }
+
     func exportMetadata(includePrivateLinks: Bool = false) throws -> Data {
         try archiveService.exportData(
             accounts: accounts,
@@ -1110,18 +1153,8 @@ final class AccountStore: ObservableObject {
             isStoppingAll = false
         }
 
-        let launcher = self.launcher
-        var failedAccountIDs = Set<UUID>()
-        await withTaskGroup(of: (UUID, Bool).self) { group in
-            for accountID in accountIDs {
-                group.addTask {
-                    (accountID, await launcher.stop(accountID: accountID))
-                }
-            }
-            for await (accountID, stopped) in group where !stopped {
-                failedAccountIDs.insert(accountID)
-            }
-        }
+        let stoppedAccountIDs = await launcher.stop(accountIDs: Array(accountIDs))
+        let failedAccountIDs = accountIDs.subtracting(stoppedAccountIDs)
 
         await refreshRunningInstances()
         if runningAccountIDs.isEmpty {

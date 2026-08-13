@@ -18,20 +18,78 @@ func placeIDBindingResettingServer(
     )
 }
 
+struct AdvancedLaunchOptions: View {
+    @ObservedObject var store: AccountStore
+    @Binding var placeID: String
+    let onRequestModifiedFallback: () -> Void
+
+    var body: some View {
+        AdvancedOptionsDisclosure {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Place ID")
+                    Spacer(minLength: 24)
+                    TextField("Place ID", text: $placeID)
+                        .labelsHidden()
+                        .frame(maxWidth: 240)
+                }
+                Text("Choose Game fills this number automatically. Most people do not need to change it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if store.launchMode != .modifiedParallel {
+                    LaunchClientNotice(
+                        store: store,
+                        onRequestModifiedFallback: onRequestModifiedFallback
+                    )
+                }
+            }
+        }
+    }
+}
+
+struct AdvancedOptionsDisclosure<Content: View>: View {
+    @State private var isExpanded = false
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                isExpanded.toggle()
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 10)
+                    Text("Advanced options")
+                    Spacer()
+                }
+                .frame(minHeight: 24)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+
+            if isExpanded {
+                content()
+                    .padding(.top, 12)
+            }
+        }
+    }
+}
+
 struct LaunchClientNotice: View {
     @ObservedObject var store: AccountStore
     let onRequestModifiedFallback: () -> Void
     @State private var showsDetails = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: isModified ? "exclamationmark.triangle" : "checkmark.shield")
-                .foregroundStyle(isModified ? Color.orange : .secondary)
-                .accessibilityHidden(true)
-
+        HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(isModified ? "Modified-copy fallback is active" : "Unchanged Roblox copies")
                     .fontWeight(.semibold)
+                    .foregroundStyle(isModified ? Color.orange : .primary)
                 Text(summary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
