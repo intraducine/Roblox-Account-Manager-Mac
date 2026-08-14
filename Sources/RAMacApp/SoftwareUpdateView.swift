@@ -796,7 +796,6 @@ struct SoftwareUpdateNotice: View {
         }
         .padding(AppGeometry.compactInset)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.bar)
         .overlay(alignment: .top) { Divider() }
         .overlay(alignment: .bottom) { Divider() }
     }

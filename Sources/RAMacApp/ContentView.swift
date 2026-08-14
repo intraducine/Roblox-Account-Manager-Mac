@@ -236,6 +236,7 @@ struct ContentView: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
 
             SoftwareUpdateNotice(controller: updater) {
                 openWindow(id: "software-update")
@@ -245,6 +246,7 @@ struct ContentView: View {
                 sidebarStatus
             }
         }
+        .background(.bar)
     }
 
     private var groupFilterBar: some View {
@@ -277,7 +279,6 @@ struct ContentView: View {
         }
         .padding(.horizontal, AppGeometry.windowEdgeControlInset)
         .padding(.vertical, AppGeometry.compactInset)
-        .background(.bar)
     }
 
     private var sidebarStatus: some View {
@@ -336,7 +337,6 @@ struct ContentView: View {
         .padding(.horizontal, AppGeometry.windowEdgeControlInset)
         .padding(.top, 5)
         .padding(.bottom, AppGeometry.windowEdgeControlInset)
-        .background(.bar)
     }
 
     private var visibleAccounts: [ManagedAccount] {

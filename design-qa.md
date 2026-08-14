@@ -7,6 +7,7 @@
 - Combined focused comparison: `/tmp/ramac-option1-final-comparison.png`
 - State tested: update available, downloading, and update ready for version 1.0.4
 - Final main-window capture: `/tmp/ramac-geometry-final-main.png`
+- Continuous sidebar capture: `/tmp/ramac-continuous-sidebar.png`
 - Final Add Account capture: `/tmp/ramac-geometry-final-add.png`
 - Additional window captures: `/tmp/ramac-geometry-players.png`, `/tmp/ramac-geometry-launchsets.png`, `/tmp/ramac-geometry-updates.png`, and `/tmp/ramac-geometry-diagnostics.png`
 
@@ -36,6 +37,13 @@
 - Native Form, List, GroupBox, toolbar, menu, popover, dialog, and sheet corners remain system-owned so macOS can keep its native concentric geometry.
 - The final main, Add Account, Joinable Players, Launch Sets, Updates, and Diagnostics captures show no clipped controls, uneven edge gaps, or conflicting corner radii.
 
+## Sidebar material
+
+- The group filter, account list, update notice, and bulk controls now share one parent `.bar` material.
+- The account list hides its separate scroll background, so it no longer creates a material boundary inside the sidebar.
+- The continuous sidebar capture shows one surface from the title area to the bottom window corners, with no opaque footer bands or material seams.
+- Selection, disabled, running, and secondary-text states remain readable against the shared material.
+
 ## Interaction checks
 
 - Clicked `Update available` and observed the downloading state.
@@ -50,6 +58,7 @@
 3. P2: The notice needed equal top, left, and bottom spacing. Fixed by applying one 8-point inset on all sides.
 4. P2: The equal bottom inset was not visually clear because the update row blended into the footer below it. Fixed by adding a separator at the row's exact bottom edge.
 5. P2: App-owned windows and panels used unrelated hard-coded radii and edge gaps. Fixed by routing every custom corner and edge-aligned control through shared concentric geometry.
+6. P2: Only the account list showed the expected sidebar translucency because adjacent bars drew separate materials. Fixed by moving one material to the full sidebar and clearing the nested list and bar surfaces.
 
 No open P0, P1, or P2 visual issues remain in the tested update flow or app-wide corner audit.
 

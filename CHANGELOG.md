@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Extended one continuous translucent material across the full account sidebar.
 - Standardized app-owned corners and edge controls with concentric radii and optical insets in every window.
 - Replaced the update notice with a compact single-line action rail and tighter sidebar spacing.
 - Added an update notice to the main sidebar when a newer final release is available.
