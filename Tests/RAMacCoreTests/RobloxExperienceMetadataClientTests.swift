@@ -11,6 +11,10 @@ final class RobloxExperienceMetadataClientTests: XCTestCase {
     func testLoadsPublicGameNameAndIconWithoutAccountCookie() async throws {
         ExperienceMetadataURLProtocol.handler = { request in
             XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+            XCTAssertEqual(
+                request.value(forHTTPHeaderField: "User-Agent"),
+                "Roblox Account Manager for Mac/1.1.2"
+            )
             switch request.url?.host {
             case "apis.roblox.com":
                 XCTAssertEqual(request.url?.path, "/universes/v1/places/1818/universe")

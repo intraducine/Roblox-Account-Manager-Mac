@@ -21,6 +21,10 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         SoftwareUpdateURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.host, "api.github.com")
             XCTAssertEqual(request.url?.path, "/repos/intraducine/Roblox-Account-Manager-Mac/releases")
+            XCTAssertEqual(
+                request.value(forHTTPHeaderField: "User-Agent"),
+                "Roblox-Account-Manager-Mac/1.1.2"
+            )
             return Self.response(request, "[\(Self.releaseJSON(version: "1.0.3"))]")
         }
 

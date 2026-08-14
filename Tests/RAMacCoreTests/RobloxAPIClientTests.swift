@@ -20,6 +20,10 @@ final class RobloxAPIClientTests: XCTestCase {
     func testValidatesAuthenticatedUser() async throws {
         let client = makeClient { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), ".ROBLOSECURITY=secret")
+            XCTAssertEqual(
+                request.value(forHTTPHeaderField: "User-Agent"),
+                "Roblox Account Manager for Mac/1.1.2"
+            )
             return Self.response(
                 request: request,
                 status: 200,

@@ -13,6 +13,10 @@ final class RobloxSocialAPIClientTests: XCTestCase {
         var call = 0
         let client = makeClient { request in
             call += 1
+            XCTAssertEqual(
+                request.value(forHTTPHeaderField: "User-Agent"),
+                "Roblox Account Manager for Mac/1.1.2"
+            )
             if call == 1 {
                 XCTAssertEqual(request.url?.path, "/v1/users/42/friends/online")
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), ".ROBLOSECURITY=secret")

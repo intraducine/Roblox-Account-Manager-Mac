@@ -60,14 +60,13 @@ Release maintainers create the ZIP, checksum, and project signature with:
 
 ```sh
 ./scripts/create-project-signing-identity.sh
-export RAM_BRIDGE_BASE_APP="/path/to/public-v1.1.0/Roblox Account Manager.app"
 ./scripts/package-release.sh
-(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-1.1.1.zip.sha256")
+(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-1.1.2.zip.sha256")
 ```
 
 Run the identity script only once on the release Mac. It creates a 20-year project certificate and non-exportable private key through a temporary memory disk, imports them into the user's Keychain, and leaves no private-key file in the repository or normal disk storage. The certificate subject contains the project name and no email address. Keychain can ask for approval when the release build uses this private key.
 
-Version 1.1.1 is the signing bridge. Its signed app stores the exact SHA-256 fingerprint of the project certificate that will sign version 1.1.2 and later. Packaging requires `RAM_BRIDGE_BASE_APP` and proves that the bridge and the public v1.1.0 app accept each other's existing signatures. The updater authorizes only the validated 1.1.2 code-signing requirement to read the existing Keychain items before it replaces 1.1.1. It validates the installed app again after replacement and restores the previous app if that check fails. Create the separate project update key once with `xcrun swift scripts/release-signature.swift create`. That key stays in the Mac Secure Enclave, and macOS requires user approval for each release signature.
+Version 1.1.1 is the signing bridge. Its signed app stores the exact SHA-256 fingerprint of the project certificate that will sign version 1.1.2 and later. Rebuilding version 1.1.1 requires `RAM_BRIDGE_BASE_APP` to point to the public version 1.1.0 app and proves that the two existing signatures accept each other. Version 1.1.2 and later do not use that bridge-base setting. The updater authorizes only the validated 1.1.2 code-signing requirement to read the existing Keychain items before it replaces 1.1.1. It validates the installed app again after replacement and restores the previous app if that check fails. Create the separate project update key once with `xcrun swift scripts/release-signature.swift create`. That key stays in the Mac Secure Enclave, and macOS requires user approval for each release signature.
 
 Version 1.1.2 and later must match the pinned project certificate and the separate project update signature. Packaging stops if the app, certificate, or signing metadata contains an email address or local user home path. This free signing path does not use Apple notarization. macOS can show an unidentified-developer warning after a manual download. Existing users who update through version 1.1.1 keep the verified in-app update path.
 
