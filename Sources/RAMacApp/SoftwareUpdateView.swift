@@ -755,30 +755,33 @@ struct SoftwareUpdateNotice: View {
         @ViewBuilder actions: () -> Actions,
         onDismiss: @escaping () -> Void = {}
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
                 Label(title, systemImage: "arrow.down.circle.fill")
                     .font(.caption.weight(.semibold))
-                Spacer(minLength: 4)
-                if canDismiss {
-                    Button(action: onDismiss) {
-                        Image(systemName: "xmark")
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Dismiss update notice")
-                    .help("Dismiss this update notice")
-                }
-            }
 
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 8) {
                 actions()
             }
             .controlSize(.small)
+            .fixedSize(horizontal: true, vertical: false)
+
+            if canDismiss {
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Dismiss update notice")
+                .help("Dismiss this update notice")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
