@@ -27,4 +27,21 @@ final class SoftwareUpdateMarkdownTests: XCTestCase {
         XCTAssertTrue(String(rendered.characters).contains("Unsafe"))
         XCTAssertTrue(String(rendered.characters).contains("Credentials"))
     }
+
+    func testReleaseNotesMarkdownPreservesBlockStructure() {
+        let blocks = ReleaseNotesMarkdown.blocks(in: """
+        ## What changed
+
+        - First item
+        - Second **item**
+
+        A final paragraph.
+        """)
+
+        XCTAssertEqual(blocks, [
+            .heading(level: 2, text: "What changed"),
+            .unorderedList(["First item", "Second **item**"]),
+            .paragraph("A final paragraph.")
+        ])
+    }
 }

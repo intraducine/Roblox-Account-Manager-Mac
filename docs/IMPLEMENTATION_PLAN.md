@@ -29,7 +29,8 @@ The app uses standard macOS structure and controls. It follows the system appear
 - Saved Roblox sessions use the `sessions-v2` Keychain item.
 - Release builds use an installed stable Apple signing identity when one is available. This keeps Keychain access after app updates.
 - If macOS blocks the older ad hoc Keychain item, the app keeps all non-secret account details and lets each affected account sign in once.
-- Version 1.0.4 can check final public GitHub releases, verify the ZIP and app identity, install an approved update, and restart.
+- The app checks for a newer final public GitHub release when it opens, shows an action notice, and lets users browse every final release description.
+- The updater can verify the ZIP and app identity, install an approved update, and restart.
 
 ## Development history
 

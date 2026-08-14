@@ -79,11 +79,13 @@ You can give one account an alias, an encrypted profile note, and several groups
 
 ## Update the app
 
-Version 1.0.3 and later include the in-app updater. Choose **Roblox Account Manager > Check for Updates** or open **About > Check for Updates**.
+Version 1.0.3 and later include the in-app updater. The app checks for a newer final release when it opens. If one is available, the main sidebar shows an update notice with **Update**, **Details**, and dismiss actions. You can also choose **Roblox Account Manager > Check for Updates** or open **About > Check for Updates**.
+
+The Update Center lists every published final release with its date and version. Select a release to read its full Markdown release notes. Opening the history does not download or install an update.
 
 The app checks only final releases from this project's public GitHub page. When a newer version exists, it downloads the release ZIP and checksum, checks GitHub's file fingerprint, and confirms that the downloaded app has the same signing identity as the installed app. It also checks the app name, version, bundle identifier, and Intel and Apple silicon support before showing **Install and Restart**.
 
-The updater never stores a GitHub login or token. It does not install a draft or prerelease. The current app must be in a location that your macOS account can change, such as an app that you copied to `/Applications`. A hidden copy of the previous version stays beside the app as a recovery backup.
+The updater never stores a GitHub login or token. It does not show or install a draft or prerelease. It downloads an update only after you select **Update**, and it replaces the app only after you select **Install and Restart**. The current app must be in a location that your macOS account can change, such as an app that you copied to `/Applications`. A hidden copy of the previous version stays beside the app as a recovery backup.
 
 Version 1.0.2 and older do not have the updater. Install version 1.0.3 once with the release ZIP. Later public releases can use the in-app button.
 

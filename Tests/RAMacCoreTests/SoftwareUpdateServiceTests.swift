@@ -28,8 +28,39 @@ final class SoftwareUpdateServiceTests: XCTestCase {
             return XCTFail("Expected an available update")
         }
         XCTAssertEqual(release.version, AppVersion("1.0.3"))
+        XCTAssertEqual(release.publishedAt, ISO8601DateFormatter().date(from: "2026-08-13T12:00:00Z"))
         XCTAssertEqual(release.archive.name, "Roblox-Account-Manager-for-Mac-1.0.3.zip")
         XCTAssertEqual(release.checksum.name, "Roblox-Account-Manager-for-Mac-1.0.3.zip.sha256")
+    }
+
+    func testReleaseHistoryListsOnlyFinalProjectReleasesNewestFirst() async throws {
+        SoftwareUpdateURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/repos/intraducine/Roblox-Account-Manager-Mac/releases")
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            XCTAssertEqual(components?.queryItems?.first(where: { $0.name == "per_page" })?.value, "100")
+            XCTAssertEqual(components?.queryItems?.first(where: { $0.name == "page" })?.value, "1")
+            let releases = [
+                Self.releaseJSON(version: "1.0.3", publishedAt: "2026-08-10T12:00:00Z"),
+                Self.releaseJSON(version: "1.0.5", prerelease: true),
+                Self.releaseJSON(version: "1.0.4", publishedAt: "2026-08-13T12:00:00Z"),
+                Self.releaseJSON(version: "1.0.6", draft: true),
+                Self.releaseJSON(
+                    version: "1.0.2",
+                    pageURL: "https://github.com/another-project/releases/tag/v1.0.2"
+                )
+            ].joined(separator: ",")
+            return Self.response(request, "[\(releases)]")
+        }
+
+        let history = try await makeService().releaseHistory()
+
+        XCTAssertEqual(history.map(\.version), [AppVersion("1.0.4")!, AppVersion("1.0.3")!])
+        XCTAssertEqual(history.first?.title, "Roblox Account Manager for Mac 1.0.4")
+        XCTAssertEqual(history.first?.notes, "Update notes")
+        XCTAssertEqual(
+            history.first?.publishedAt,
+            ISO8601DateFormatter().date(from: "2026-08-13T12:00:00Z")
+        )
     }
 
     func testUpdateCheckDoesNotInstallAnOlderRelease() async throws {
@@ -119,16 +150,25 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         return GitHubSoftwareUpdateService(session: URLSession(configuration: configuration))
     }
 
-    private static func releaseJSON(version: String, prerelease: Bool = false) -> String {
+    private static func releaseJSON(
+        version: String,
+        prerelease: Bool = false,
+        draft: Bool = false,
+        publishedAt: String = "2026-08-13T12:00:00Z",
+        pageURL: String? = nil
+    ) -> String {
         let archiveName = "Roblox-Account-Manager-for-Mac-\(version).zip"
         let digest = String(repeating: "a", count: 64)
+        let releasePageURL = pageURL
+            ?? "https://github.com/intraducine/Roblox-Account-Manager-Mac/releases/tag/v\(version)"
         return """
         {
           "tag_name": "v\(version)",
           "name": "Roblox Account Manager for Mac \(version)",
           "body": "Update notes",
-          "html_url": "https://github.com/intraducine/Roblox-Account-Manager-Mac/releases/tag/v\(version)",
-          "draft": false,
+          "html_url": "\(releasePageURL)",
+          "published_at": "\(publishedAt)",
+          "draft": \(draft),
           "prerelease": \(prerelease),
           "assets": [
             {

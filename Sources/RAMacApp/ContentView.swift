@@ -140,6 +140,7 @@ struct ContentView: View {
             Task { await store.refreshRunningInstances() }
         }
         .task {
+            updater.checkIfNeeded()
             await store.checkAccountsOnStartup()
         }
         .onChange(of: store.batchSelectedIDs) { selectedIDs in
@@ -235,6 +236,10 @@ struct ContentView: View {
                 }
             }
             .listStyle(.sidebar)
+
+            SoftwareUpdateNotice(controller: updater) {
+                openWindow(id: "software-update")
+            }
 
             if !store.accounts.isEmpty {
                 sidebarStatus

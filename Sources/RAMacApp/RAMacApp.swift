@@ -58,7 +58,7 @@ struct RAMacApp: App {
         Window("Software Update", id: "software-update") {
             SoftwareUpdateView(controller: updater)
         }
-        .defaultSize(width: 620, height: 480)
+        .defaultSize(width: 860, height: 640)
 
         WindowGroup(for: AccountWebsiteRequest.self) { $request in
             if let request {

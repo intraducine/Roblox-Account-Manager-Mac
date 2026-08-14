@@ -42,8 +42,19 @@ public struct SoftwareUpdateRelease: Equatable, Sendable {
     public let title: String
     public let notes: String
     public let pageURL: URL
+    public let publishedAt: Date?
     public let archive: SoftwareUpdateAsset
     public let checksum: SoftwareUpdateAsset
+}
+
+public struct SoftwareUpdateHistoryEntry: Identifiable, Equatable, Sendable {
+    public var id: String { version.description }
+
+    public let version: AppVersion
+    public let title: String
+    public let notes: String
+    public let pageURL: URL
+    public let publishedAt: Date?
 }
 
 public struct SoftwareUpdateAsset: Equatable, Sendable {
@@ -116,6 +127,9 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
     private static let latestReleaseURL = URL(
         string: "https://api.github.com/repos/\(repository)/releases/latest"
     )!
+    private static let releaseHistoryPageSize = 100
+    private static let maximumReleaseHistoryPages = 10
+    private static let maximumReleaseHistoryPageSize = 5 * 1_024 * 1_024
     private static let maximumArchiveSize = 100 * 1_024 * 1_024
     private static let maximumChecksumSize = 4 * 1_024
 
@@ -148,10 +162,7 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
         guard let installed = AppVersion(currentVersion) else {
             throw SoftwareUpdateError.invalidCurrentVersion
         }
-        var request = URLRequest(url: Self.latestReleaseURL)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("2026-03-10", forHTTPHeaderField: "X-GitHub-Api-Version")
-        request.setValue("Roblox-Account-Manager-Mac/1.0.4", forHTTPHeaderField: "User-Agent")
+        let request = releaseRequest(url: Self.latestReleaseURL)
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse,
               http.statusCode == 200,
@@ -164,9 +175,7 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
         guard !payload.draft,
               !payload.prerelease,
               let latest = AppVersion(payload.tagName),
-              let pageURL = URL(string: payload.pageURL),
-              pageURL.scheme == "https",
-              pageURL.host == "github.com" else {
+              let pageURL = Self.safeReleasePageURL(payload.pageURL) else {
             throw SoftwareUpdateError.invalidRelease
         }
         guard latest > installed else {
@@ -187,9 +196,52 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
                 ?? "Version \(latest)",
             notes: String((payload.body ?? "").prefix(50_000)),
             pageURL: pageURL,
+            publishedAt: Self.releaseDate(payload.publishedAt),
             archive: archive,
             checksum: checksum
         ))
+    }
+
+    public func releaseHistory() async throws -> [SoftwareUpdateHistoryEntry] {
+        var entries: [SoftwareUpdateHistoryEntry] = []
+        var seenVersions: Set<String> = []
+
+        for page in 1...Self.maximumReleaseHistoryPages {
+            var components = URLComponents(
+                string: "https://api.github.com/repos/\(Self.repository)/releases"
+            )!
+            components.queryItems = [
+                URLQueryItem(name: "per_page", value: String(Self.releaseHistoryPageSize)),
+                URLQueryItem(name: "page", value: String(page))
+            ]
+            guard let url = components.url else { throw SoftwareUpdateError.invalidRelease }
+            let (data, response) = try await session.data(for: releaseRequest(url: url))
+            guard let http = response as? HTTPURLResponse,
+                  http.statusCode == 200,
+                  data.count <= Self.maximumReleaseHistoryPageSize else {
+                throw SoftwareUpdateError.downloadFailed
+            }
+
+            let payloads: [GitHubReleasePayload]
+            do { payloads = try JSONDecoder().decode([GitHubReleasePayload].self, from: data) }
+            catch { throw SoftwareUpdateError.invalidRelease }
+
+            for payload in payloads {
+                guard let entry = Self.historyEntry(from: payload),
+                      seenVersions.insert(entry.id).inserted else { continue }
+                entries.append(entry)
+            }
+            if payloads.count < Self.releaseHistoryPageSize { break }
+        }
+
+        return entries.sorted {
+            switch ($0.publishedAt, $1.publishedAt) {
+            case let (left?, right?) where left != right:
+                return left > right
+            default:
+                return $0.version > $1.version
+            }
+        }
     }
 
     public func downloadAndPrepare(
@@ -296,6 +348,44 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
             byteCount: payload.size,
             digest: digest
         )
+    }
+
+    private func releaseRequest(url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("2026-03-10", forHTTPHeaderField: "X-GitHub-Api-Version")
+        request.setValue("Roblox-Account-Manager-Mac/1.0.4", forHTTPHeaderField: "User-Agent")
+        return request
+    }
+
+    private static func historyEntry(from payload: GitHubReleasePayload) -> SoftwareUpdateHistoryEntry? {
+        guard !payload.draft,
+              !payload.prerelease,
+              let version = AppVersion(payload.tagName),
+              let pageURL = safeReleasePageURL(payload.pageURL) else { return nil }
+        return SoftwareUpdateHistoryEntry(
+            version: version,
+            title: payload.name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                ?? "Version \(version)",
+            notes: String((payload.body ?? "").prefix(50_000)),
+            pageURL: pageURL,
+            publishedAt: releaseDate(payload.publishedAt)
+        )
+    }
+
+    private static func safeReleasePageURL(_ value: String) -> URL? {
+        guard let url = URL(string: value),
+              url.scheme == "https",
+              url.host == "github.com",
+              url.user == nil,
+              url.password == nil,
+              url.path.hasPrefix("/\(repository)/releases/") else { return nil }
+        return url
+    }
+
+    private static func releaseDate(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        return ISO8601DateFormatter().date(from: value)
     }
 
     private func download(_ asset: SoftwareUpdateAsset, maximumSize: Int) async throws -> Data {
@@ -475,12 +565,14 @@ private struct GitHubReleasePayload: Decodable {
     let pageURL: String
     let draft: Bool
     let prerelease: Bool
+    let publishedAt: String?
     let assets: [GitHubAssetPayload]
 
     enum CodingKeys: String, CodingKey {
         case tagName = "tag_name"
         case name, body, draft, prerelease, assets
         case pageURL = "html_url"
+        case publishedAt = "published_at"
     }
 }
 

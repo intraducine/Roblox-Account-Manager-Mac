@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added an update notice to the main sidebar when a newer final release is available.
+- Added a browsable release history with dates, versions, and full Markdown release notes.
+- Checked for a newer final release automatically when the account manager opens.
 - Added group deletion to every group menu while keeping the accounts in that group.
 - Ran saved Launch Sets from a right-click action or by double-clicking their list row.
 - Quit the account manager automatically after its final window closes.

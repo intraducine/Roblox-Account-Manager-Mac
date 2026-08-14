@@ -52,7 +52,10 @@ WebKit, Keychain, local files, and normal HTTPS requests do not require paid App
 
 Version 1.0.3 and later must:
 
-- Start only after the user chooses **Check for Updates**.
+- Check the latest final release when the app opens and when the user chooses **Check for Updates**.
+- Show a dismissible main-window notice only when a newer final release is available, downloading, or ready to install.
+- Load the paginated final-release history only when the Update Center opens.
+- List every valid final release by date and version, and show its full Markdown notes when selected.
 - Read the latest final release from `intraducine/Roblox-Account-Manager-Mac` on GitHub.
 - Ignore drafts and prereleases.
 - Compare numeric version components and never install the same or an older version.
@@ -67,6 +70,7 @@ Version 1.0.3 and later must:
 - Stage the verified app beside the installed app before replacement.
 - Keep one hidden previous-version backup and restore it after a failed replacement.
 - Replace the app only after the user selects **Install and Restart**.
+- Download an update only after the user selects **Update**.
 - Preserve Application Support data and Keychain items.
 - Store no GitHub token or account credential.
 
@@ -98,6 +102,8 @@ Version 1.0.4 and later must:
 - Give every isolated Roblox account home its own default Keychain so Roblox does not show a missing-Keychain alert or share its duplicate Studio cookie across accounts.
 - Stop several managed Roblox processes with one batched process scan and signal pass.
 - Parse the trusted GitHub release body as Markdown in the update window. Keep only HTTPS links without embedded credentials.
+- Let users browse all valid final release descriptions by date and version in the Update Center.
+- Show a dismissible main-window notice when a newer final release is available, and check automatically when the app opens.
 - Use direct user text when no update is available: **You're up to date**.
 - Keep profile notes in a separate macOS Keychain item instead of account JSON.
 - Move a legacy plain-text note into Keychain before the account file and its backup are scrubbed.
