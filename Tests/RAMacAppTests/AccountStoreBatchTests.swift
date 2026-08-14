@@ -381,6 +381,139 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(fixture.store.friendRelayStates[other.id], .joined(nil))
     }
 
+    func testFriendRelayReportsEveryAccountWhenAFullServerNeverConfirmsArrival() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let selectedIDs = Set(fixture.accounts.map(\.id))
+        for account in fixture.accounts {
+            await fixture.friendRelay.setArrival(.timedOut, for: account.id)
+        }
+        let player = DiscoveredPlayer(
+            candidate: PlayerCandidate(
+                userID: 900,
+                username: "target_friend",
+                displayName: "Target Friend",
+                sourceAccountIDs: [fixture.accounts[0].id]
+            ),
+            presence: PlayerPresenceSnapshot(
+                userID: 900,
+                presenceType: .inExperience,
+                placeID: 1818,
+                jobID: "11111111-2222-3333-4444-555555555555"
+            ),
+            verification: .friendTarget,
+            isPubliclyVisible: false
+        )
+
+        await fixture.store.launchFriendPlayer(player, accountIDs: selectedIDs)
+
+        XCTAssertEqual(fixture.store.batchStatus, "0 joined, 3 could not join")
+        XCTAssertEqual(fixture.store.batchSelectedIDs, selectedIDs)
+        XCTAssertEqual(fixture.store.notice?.title, "Some accounts could not join")
+        for account in fixture.accounts {
+            guard case .failed(let message) = fixture.store.friendRelayStates[account.id] else {
+                return XCTFail("Expected @\(account.username) to have a visible relay failure.")
+            }
+            XCTAssertTrue(message.contains("may be full, restricted, or changed"))
+            guard case .failed(let batchMessage) = fixture.store.batchStates[account.id] else {
+                return XCTFail("Expected @\(account.username) to remain selected for retry.")
+            }
+            XCTAssertEqual(batchMessage, message)
+        }
+    }
+
+    func testFriendRelayUsesAnotherConfirmedSourceWhenTheFirstSourceCannotJoin() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let first = fixture.accounts[0]
+        let second = fixture.accounts[1]
+        let third = fixture.accounts[2]
+        await fixture.friendRelay.setPlan(FriendRelayPlan(
+            sourceAccountIDs: [first.id, second.id],
+            friendAccountIDs: [
+                first.id: [third.id],
+                second.id: [third.id],
+                third.id: [first.id, second.id]
+            ],
+            levels: [first.id: 0, second.id: 0, third.id: 1]
+        ))
+        await fixture.friendRelay.setArrival(.timedOut, for: first.id)
+        let player = DiscoveredPlayer(
+            candidate: PlayerCandidate(
+                userID: 900,
+                username: "target_friend",
+                displayName: "Target Friend",
+                sourceAccountIDs: [first.id, second.id]
+            ),
+            presence: PlayerPresenceSnapshot(
+                userID: 900,
+                presenceType: .inExperience,
+                placeID: 1818,
+                jobID: "11111111-2222-3333-4444-555555555555"
+            ),
+            verification: .friendTarget,
+            isPubliclyVisible: false
+        )
+
+        await fixture.store.launchFriendPlayer(
+            player,
+            accountIDs: Set(fixture.accounts.map(\.id))
+        )
+
+        let urls = await fixture.launcher.attemptedURLs()
+        XCTAssertEqual(urls.count, 3)
+        XCTAssertTrue(urls[2].absoluteString.contains("userId%3D2"))
+        XCTAssertEqual(fixture.store.friendRelayStates[first.id]?.label, "Could not join")
+        XCTAssertEqual(fixture.store.friendRelayStates[second.id], .joined(nil))
+        XCTAssertEqual(fixture.store.friendRelayStates[third.id], .joined(second.username))
+        XCTAssertEqual(fixture.store.batchStatus, "2 joined, 1 could not join")
+    }
+
+    func testFriendRelayContinuesAnIndependentPathAfterOneClientFailsToOpen() async throws {
+        let fixture = try makeFixture(failingIndex: 0)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let first = fixture.accounts[0]
+        let second = fixture.accounts[1]
+        let third = fixture.accounts[2]
+        await fixture.friendRelay.setPlan(FriendRelayPlan(
+            sourceAccountIDs: [first.id, second.id],
+            friendAccountIDs: [
+                first.id: [],
+                second.id: [third.id],
+                third.id: [second.id]
+            ],
+            levels: [first.id: 0, second.id: 0, third.id: 1]
+        ))
+        let player = DiscoveredPlayer(
+            candidate: PlayerCandidate(
+                userID: 900,
+                username: "target_friend",
+                displayName: "Target Friend",
+                sourceAccountIDs: [first.id, second.id]
+            ),
+            presence: PlayerPresenceSnapshot(
+                userID: 900,
+                presenceType: .inExperience,
+                placeID: 1818,
+                jobID: "11111111-2222-3333-4444-555555555555"
+            ),
+            verification: .friendTarget,
+            isPubliclyVisible: false
+        )
+
+        await fixture.store.launchFriendPlayer(
+            player,
+            accountIDs: Set(fixture.accounts.map(\.id))
+        )
+
+        XCTAssertEqual(fixture.store.friendRelayStates[first.id]?.label, "Could not join")
+        XCTAssertEqual(fixture.store.friendRelayStates[second.id], .joined(nil))
+        XCTAssertEqual(fixture.store.friendRelayStates[third.id], .joined(second.username))
+        XCTAssertEqual(fixture.store.runningAccountIDs, [second.id, third.id])
+        XCTAssertEqual(fixture.store.batchSelectedIDs, [first.id])
+        XCTAssertEqual(fixture.store.batchStatus, "2 joined, 1 could not join")
+    }
+
     func testStoppingFriendRelayPreventsTheRemainingAccountsFromStarting() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }

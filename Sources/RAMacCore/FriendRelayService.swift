@@ -50,13 +50,16 @@ public protocol FriendRelayProviding: Sendable {
 public struct FriendRelayConfiguration: Equatable, Sendable {
     public var presenceAttempts: Int
     public var presencePollNanoseconds: UInt64
+    public var confirmationTimeoutNanoseconds: UInt64
 
     public init(
         presenceAttempts: Int = 15,
-        presencePollNanoseconds: UInt64 = 1_000_000_000
+        presencePollNanoseconds: UInt64 = 1_000_000_000,
+        confirmationTimeoutNanoseconds: UInt64 = 15_000_000_000
     ) {
         self.presenceAttempts = max(1, presenceAttempts)
         self.presencePollNanoseconds = presencePollNanoseconds
+        self.confirmationTimeoutNanoseconds = max(1, confirmationTimeoutNanoseconds)
     }
 }
 
@@ -127,6 +130,42 @@ public actor FriendRelayService: FriendRelayProviding {
         placeID: Int64,
         jobID: String
     ) async -> FriendRelayArrival {
+        let social = self.social
+        let configuration = self.configuration
+        return await withTaskGroup(of: FriendRelayArrival.self) { group in
+            group.addTask {
+                await Self.pollForServer(
+                    social: social,
+                    configuration: configuration,
+                    account: account,
+                    session: session,
+                    placeID: placeID,
+                    jobID: jobID
+                )
+            }
+            group.addTask {
+                do {
+                    try await Task.sleep(nanoseconds: configuration.confirmationTimeoutNanoseconds)
+                    return .timedOut
+                } catch {
+                    return .unavailable("The friend relay was stopped.")
+                }
+            }
+
+            let result = await group.next() ?? .timedOut
+            group.cancelAll()
+            return result
+        }
+    }
+
+    private static func pollForServer(
+        social: any RobloxSocialProviding,
+        configuration: FriendRelayConfiguration,
+        account: ManagedAccount,
+        session: String,
+        placeID: Int64,
+        jobID: String
+    ) async -> FriendRelayArrival {
         let cleanJobID = jobID.trimmingCharacters(in: .whitespacesAndNewlines)
         var lastError: Error?
 
@@ -139,6 +178,8 @@ public actor FriendRelayService: FriendRelayProviding {
                    presence?.gameId?.caseInsensitiveCompare(cleanJobID) == .orderedSame {
                     return .arrived
                 }
+            } catch is CancellationError {
+                return .unavailable("The friend relay was stopped.")
             } catch {
                 lastError = error
                 if error as? RobloxSocialAPIError == .signedOut {

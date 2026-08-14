@@ -34,6 +34,29 @@ final class FriendRelayServiceTests: XCTestCase {
         )
     }
 
+    func testPlanKeepsAFriendshipReportedByTheOtherAccountWhenOneLookupFails() async {
+        let first = ManagedAccount(userID: 1, username: "first", displayName: "First")
+        let second = ManagedAccount(userID: 2, username: "second", displayName: "Second")
+        let social = FriendRelaySocialMock(
+            friendsByUserID: [2: [1]],
+            friendErrorsByUserID: [1: .networkUnavailable]
+        )
+        let service = FriendRelayService(
+            social: social,
+            configuration: FriendRelayConfiguration(presenceAttempts: 1)
+        )
+
+        let plan = await service.plan(
+            accounts: [first, second],
+            sourceAccountIDs: [first.id]
+        )
+
+        XCTAssertEqual(plan.levels[second.id], 1)
+        XCTAssertEqual(plan.friendAccountIDs[first.id], [second.id])
+        XCTAssertEqual(plan.friendAccountIDs[second.id], [first.id])
+        XCTAssertEqual(plan.lookupFailures[first.id], "The Roblox service could not be reached.")
+    }
+
     func testServerConfirmationRequiresTheExactPlaceAndJob() async {
         let account = ManagedAccount(userID: 1, username: "first", displayName: "First")
         let social = FriendRelaySocialMock(
@@ -99,23 +122,88 @@ final class FriendRelayServiceTests: XCTestCase {
 
         XCTAssertEqual(result, .timedOut)
     }
+
+    func testServerConfirmationHasAHardOverallDeadline() async {
+        let account = ManagedAccount(userID: 1, username: "first", displayName: "First")
+        let social = FriendRelaySocialMock(
+            friendsByUserID: [:],
+            presenceDelayNanoseconds: 5_000_000_000
+        )
+        let service = FriendRelayService(
+            social: social,
+            configuration: FriendRelayConfiguration(
+                presenceAttempts: 15,
+                presencePollNanoseconds: 1_000_000_000,
+                confirmationTimeoutNanoseconds: 20_000_000
+            )
+        )
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        let result = await service.waitForServer(
+            account: account,
+            session: "session",
+            placeID: 1818,
+            jobID: "target-job"
+        )
+        let elapsed = start.duration(to: clock.now)
+
+        XCTAssertEqual(result, .timedOut)
+        XCTAssertLessThan(elapsed, .milliseconds(500))
+    }
+
+    func testSignedOutServerConfirmationStopsWithoutRetrying() async {
+        let account = ManagedAccount(userID: 1, username: "first", displayName: "First")
+        let social = FriendRelaySocialMock(
+            friendsByUserID: [:],
+            presenceError: .signedOut
+        )
+        let service = FriendRelayService(
+            social: social,
+            configuration: FriendRelayConfiguration(
+                presenceAttempts: 15,
+                presencePollNanoseconds: 0
+            )
+        )
+
+        let result = await service.waitForServer(
+            account: account,
+            session: "session",
+            placeID: 1818,
+            jobID: "target-job"
+        )
+
+        XCTAssertEqual(result, .unavailable("The Roblox sign-in has expired."))
+        let requestCount = await social.presenceRequestCount()
+        XCTAssertEqual(requestCount, 1)
+    }
 }
 
 private actor FriendRelaySocialMock: RobloxSocialProviding {
     private let friendsByUserID: [Int64: [Int64]]
+    private let friendErrorsByUserID: [Int64: RobloxSocialAPIError]
     private var presencesByUserID: [Int64: [RobloxSocialPresence]]
+    private let presenceDelayNanoseconds: UInt64
+    private let presenceError: RobloxSocialAPIError?
     private var presenceRequests = 0
 
     init(
         friendsByUserID: [Int64: [Int64]],
-        presencesByUserID: [Int64: [RobloxSocialPresence]] = [:]
+        friendErrorsByUserID: [Int64: RobloxSocialAPIError] = [:],
+        presencesByUserID: [Int64: [RobloxSocialPresence]] = [:],
+        presenceDelayNanoseconds: UInt64 = 0,
+        presenceError: RobloxSocialAPIError? = nil
     ) {
         self.friendsByUserID = friendsByUserID
+        self.friendErrorsByUserID = friendErrorsByUserID
         self.presencesByUserID = presencesByUserID
+        self.presenceDelayNanoseconds = presenceDelayNanoseconds
+        self.presenceError = presenceError
     }
 
-    func friends(of userID: Int64) -> [RobloxSocialUser] {
-        friendsByUserID[userID, default: []].map {
+    func friends(of userID: Int64) throws -> [RobloxSocialUser] {
+        if let error = friendErrorsByUserID[userID] { throw error }
+        return friendsByUserID[userID, default: []].map {
             RobloxSocialUser(id: $0, name: "user_\($0)", displayName: "User \($0)")
         }
     }
@@ -126,8 +214,12 @@ private actor FriendRelaySocialMock: RobloxSocialProviding {
 
     func onlineFriends(of userID: Int64, session: String) -> [RobloxVisibleFriend] { [] }
 
-    func presences(for userIDs: [Int64], session: String?) -> [RobloxSocialPresence] {
+    func presences(for userIDs: [Int64], session: String?) async throws -> [RobloxSocialPresence] {
         presenceRequests += 1
+        if presenceDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: presenceDelayNanoseconds)
+        }
+        if let presenceError { throw presenceError }
         return userIDs.compactMap { userID in
             guard var values = presencesByUserID[userID], !values.isEmpty else { return nil }
             let value = values.removeFirst()

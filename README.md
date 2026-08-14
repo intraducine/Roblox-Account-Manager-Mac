@@ -127,6 +127,8 @@ To join a friend with several accounts:
 
 The manager checks the existing friendships between the selected accounts and builds the shortest available layers from the **Visible To** accounts. It starts a source account through the selected player. It confirms the exact Place ID and Job ID, then starts the next account through that confirmed friend. It repeats this process for each layer. The account list shows the current path and result for every account.
 
+Each server confirmation has a hard 15-second limit, including slow Roblox requests. If an account does not reach the exact server, the app marks it **Could not join**. A full, restricted, or changed server can all cause this result, so the app does not claim a specific cause that Roblox did not confirm. Close any Roblox client that stayed open, then select the account again to retry. Other independent friend paths continue.
+
 If an account has no usable friend path, the manager keeps the old direct Job ID attempt as a fallback. It also checks that result. Select **Stop Relay** to prevent any accounts that have not started yet from opening. Accounts that already joined stay open.
 
 The relay does not send friend requests or change any Roblox friendship. Roblox checks visibility, access, available space, age, region, and game limits for every account. A private or restricted server can still reject an account.

@@ -874,7 +874,7 @@ final class AccountStore: ObservableObject {
         case .arrived:
             return ""
         case .timedOut:
-            return "Roblox started, but it did not report this server within 15 seconds."
+            return "Roblox opened, but this account did not reach the server within 15 seconds. The server may be full, restricted, or changed. Close its Roblox window before you retry."
         case .unavailable(let message):
             return "Roblox started, but the server check failed. \(message)"
         }
