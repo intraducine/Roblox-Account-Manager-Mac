@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import Security
 import XCTest
 @testable import RAMacCore
 
@@ -18,8 +20,8 @@ final class SoftwareUpdateServiceTests: XCTestCase {
     func testUpdateCheckFindsExactReleaseFiles() async throws {
         SoftwareUpdateURLProtocol.handler = { request in
             XCTAssertEqual(request.url?.host, "api.github.com")
-            XCTAssertEqual(request.url?.path, "/repos/intraducine/Roblox-Account-Manager-Mac/releases/latest")
-            return Self.response(request, Self.releaseJSON(version: "1.0.3"))
+            XCTAssertEqual(request.url?.path, "/repos/intraducine/Roblox-Account-Manager-Mac/releases")
+            return Self.response(request, "[\(Self.releaseJSON(version: "1.0.3"))]")
         }
 
         let result = try await makeService().check(currentVersion: "1.0.2")
@@ -31,6 +33,25 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         XCTAssertEqual(release.publishedAt, ISO8601DateFormatter().date(from: "2026-08-13T12:00:00Z"))
         XCTAssertEqual(release.archive.name, "Roblox-Account-Manager-for-Mac-1.0.3.zip")
         XCTAssertEqual(release.checksum.name, "Roblox-Account-Manager-for-Mac-1.0.3.zip.sha256")
+        XCTAssertEqual(release.signature.name, "Roblox-Account-Manager-for-Mac-1.0.3.zip.sig")
+    }
+
+    func testUpdateCheckFindsHighestFinalReleaseEvenWhenItIsNotMarkedLatest() async throws {
+        SoftwareUpdateURLProtocol.handler = { request in
+            let releases = [
+                Self.releaseJSON(version: "1.1.1"),
+                Self.releaseJSON(version: "1.1.2"),
+                Self.releaseJSON(version: "1.2.0", prerelease: true)
+            ].joined(separator: ",")
+            return Self.response(request, "[\(releases)]")
+        }
+
+        let result = try await makeService().check(currentVersion: "1.1.1")
+
+        guard case .available(let release) = result else {
+            return XCTFail("Expected the unmarked final update")
+        }
+        XCTAssertEqual(release.version, AppVersion("1.1.2"))
     }
 
     func testReleaseHistoryListsOnlyFinalProjectReleasesNewestFirst() async throws {
@@ -65,7 +86,7 @@ final class SoftwareUpdateServiceTests: XCTestCase {
 
     func testUpdateCheckDoesNotInstallAnOlderRelease() async throws {
         SoftwareUpdateURLProtocol.handler = { request in
-            Self.response(request, Self.releaseJSON(version: "1.0.2"))
+            Self.response(request, "[\(Self.releaseJSON(version: "1.0.2"))]")
         }
 
         let result = try await makeService().check(currentVersion: "1.0.3")
@@ -75,15 +96,11 @@ final class SoftwareUpdateServiceTests: XCTestCase {
 
     func testUpdateCheckRejectsPrerelease() async throws {
         SoftwareUpdateURLProtocol.handler = { request in
-            Self.response(request, Self.releaseJSON(version: "1.0.4", prerelease: true))
+            Self.response(request, "[\(Self.releaseJSON(version: "1.0.4", prerelease: true))]")
         }
 
-        do {
-            _ = try await makeService().check(currentVersion: "1.0.3")
-            XCTFail("Expected prerelease rejection")
-        } catch let error as SoftwareUpdateError {
-            XCTAssertEqual(error, .invalidRelease)
-        }
+        let result = try await makeService().check(currentVersion: "1.0.3")
+        XCTAssertEqual(result, .upToDate(currentVersion: "1.0.3"))
     }
 
     func testChecksumParsingRequiresTheExpectedFilename() {
@@ -99,6 +116,135 @@ final class SoftwareUpdateServiceTests: XCTestCase {
             in: "\(digest)  different.zip\n",
             for: "Roblox-Account-Manager-for-Mac-1.0.3.zip"
         ))
+    }
+
+    func testUpdateCheckRequiresReleaseSignatureAsset() async throws {
+        SoftwareUpdateURLProtocol.handler = { request in
+            Self.response(request, "[\(Self.releaseJSON(version: "1.0.3", includeSignature: false))]")
+        }
+
+        do {
+            _ = try await makeService().check(currentVersion: "1.0.2")
+            XCTFail("Expected a missing release files error")
+        } catch let error as SoftwareUpdateError {
+            XCTAssertEqual(error, .missingReleaseFiles)
+        }
+    }
+
+    func testReleaseSignatureRejectsChangedArchiveOrSignature() throws {
+        let privateKey = P256.Signing.PrivateKey()
+        let archive = Data("official archive".utf8)
+        let signature = try privateKey.signature(for: archive).derRepresentation
+
+        XCTAssertTrue(GitHubSoftwareUpdateService.verifyReleaseSignature(
+            signature,
+            for: archive,
+            publicKey: privateKey.publicKey.x963Representation
+        ))
+        XCTAssertFalse(GitHubSoftwareUpdateService.verifyReleaseSignature(
+            signature,
+            for: Data("changed archive".utf8),
+            publicKey: privateKey.publicKey.x963Representation
+        ))
+        XCTAssertFalse(GitHubSoftwareUpdateService.verifyReleaseSignature(
+            Data(signature.dropLast()),
+            for: archive,
+            publicKey: privateKey.publicKey.x963Representation
+        ))
+    }
+
+    func testProjectCertificateFingerprintRequiresLowercaseSHA256() {
+        XCTAssertTrue(GitHubSoftwareUpdateService.isValidProjectCertificateSHA256(
+            String(repeating: "a", count: 64)
+        ))
+        XCTAssertFalse(GitHubSoftwareUpdateService.isValidProjectCertificateSHA256(
+            String(repeating: "A", count: 64)
+        ))
+        XCTAssertFalse(GitHubSoftwareUpdateService.isValidProjectCertificateSHA256(
+            String(repeating: "a", count: 63)
+        ))
+        XCTAssertFalse(GitHubSoftwareUpdateService.isValidProjectCertificateSHA256(
+            String(repeating: "z", count: 64)
+        ))
+    }
+
+    func testCurrentApplicationMetadataMustRemainInsideItsValidSignature() throws {
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RAMac-Signed-App-Test-\(UUID().uuidString)", isDirectory: true)
+        let applicationURL = workspace.appendingPathComponent("Roblox Account Manager.app", isDirectory: true)
+        let contentsURL = applicationURL.appendingPathComponent("Contents", isDirectory: true)
+        let executableURL = contentsURL.appendingPathComponent("MacOS/TestApp")
+        let infoURL = contentsURL.appendingPathComponent("Info.plist")
+        try FileManager.default.createDirectory(
+            at: executableURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executableURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+        let info: [String: Any] = [
+            "CFBundleIdentifier": "com.intraducine.RobloxAccountManager",
+            "CFBundleExecutable": "TestApp",
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": "1.1.1",
+            "RAMExpectedProjectCertificateSHA256": String(repeating: "a", count: 64)
+        ]
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: infoURL)
+        XCTAssertEqual(Self.run("/usr/bin/codesign", [
+            "--force", "--deep", "--sign", "-", applicationURL.path
+        ]), 0)
+
+        XCTAssertNoThrow(try GitHubSoftwareUpdateService.verifyApplicationSignature(applicationURL))
+        var changedInfo = info
+        changedInfo["RAMExpectedProjectCertificateSHA256"] = String(repeating: "b", count: 64)
+        try PropertyListSerialization.data(fromPropertyList: changedInfo, format: .xml, options: 0)
+            .write(to: infoURL, options: .atomic)
+        XCTAssertThrowsError(try GitHubSoftwareUpdateService.verifyApplicationSignature(applicationURL))
+    }
+
+    func testKeychainBridgeAuthorizesTheCandidateTool() throws {
+        guard ProcessInfo.processInfo.environment["RAM_RUN_KEYCHAIN_BRIDGE_INTEGRATION"] == "1" else {
+            throw XCTSkip("Set RAM_RUN_KEYCHAIN_BRIDGE_INTEGRATION=1 for the macOS Keychain ACL test.")
+        }
+        let service = "com.intraducine.RobloxAccountManager.update-bridge-tests.\(UUID().uuidString)"
+        let account = "temporary-item"
+        let secret = "temporary-bridge-secret"
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        defer { SecItemDelete(query as CFDictionary) }
+
+        var add = query
+        add[kSecValueData as String] = Data(secret.utf8)
+        XCTAssertEqual(SecItemAdd(add as CFDictionary, nil), errSecSuccess)
+
+        try SoftwareUpdateKeychainAccessBridge.authorize(
+            candidateApplicationURL: URL(fileURLWithPath: "/usr/bin/security"),
+            items: [(service, account)]
+        )
+
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", service, "-a", account, "-w"]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+
+        XCTAssertEqual(process.terminationStatus, 0)
+        XCTAssertEqual(
+            String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            secret
+        )
     }
 
     func testSHA256UsesTheStandardDigest() {
@@ -144,6 +290,68 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         XCTAssertEqual(Self.bundleVersion(at: currentURL), "1.0.2")
     }
 
+    func testLocalSigningBridgeWhenEnabled() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["RAM_RUN_SIGNING_BRIDGE_INTEGRATION"] == "1" else {
+            throw XCTSkip("Set RAM_RUN_SIGNING_BRIDGE_INTEGRATION=1 with local bridge app paths.")
+        }
+        guard let currentPath = environment["RAM_SIGNING_BRIDGE_CURRENT_APP"],
+              let candidatePath = environment["RAM_SIGNING_BRIDGE_CANDIDATE_APP"] else {
+            return XCTFail("Set RAM_SIGNING_BRIDGE_CURRENT_APP and RAM_SIGNING_BRIDGE_CANDIDATE_APP.")
+        }
+
+        let currentURL = URL(fileURLWithPath: currentPath, isDirectory: true)
+        let candidateURL = URL(fileURLWithPath: candidatePath, isDirectory: true)
+        let assetURL = URL(
+            string: "https://github.com/intraducine/Roblox-Account-Manager-Mac/releases/download/v1.1.2/test"
+        )!
+        let asset = SoftwareUpdateAsset(
+            name: "test",
+            downloadURL: assetURL,
+            byteCount: 1,
+            digest: "sha256:\(String(repeating: "a", count: 64))"
+        )
+        let release = SoftwareUpdateRelease(
+            version: AppVersion("1.1.2")!,
+            title: "Signing bridge test",
+            notes: "",
+            pageURL: URL(
+                string: "https://github.com/intraducine/Roblox-Account-Manager-Mac/releases/tag/v1.1.2"
+            )!,
+            publishedAt: nil,
+            archive: asset,
+            checksum: asset,
+            signature: asset
+        )
+        let service = GitHubSoftwareUpdateService()
+
+        XCTAssertNoThrow(try service.validateApplication(
+            candidateURL,
+            release: release,
+            currentApplicationURL: currentURL
+        ))
+
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RAMac-Wrong-Signer-Test-\(UUID().uuidString)", isDirectory: true)
+        let wrongSignerURL = workspace.appendingPathComponent(
+            "Roblox Account Manager.app",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        try FileManager.default.copyItem(at: candidateURL, to: wrongSignerURL)
+        XCTAssertEqual(Self.run("/usr/bin/codesign", [
+            "--force", "--deep", "--sign", "-", wrongSignerURL.path
+        ]), 0)
+        XCTAssertThrowsError(try service.validateApplication(
+            wrongSignerURL,
+            release: release,
+            currentApplicationURL: currentURL
+        )) { error in
+            XCTAssertEqual(error as? SoftwareUpdateError, .wrongSigningIdentity)
+        }
+    }
+
     private func makeService() -> GitHubSoftwareUpdateService {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [SoftwareUpdateURLProtocol.self]
@@ -155,12 +363,23 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         prerelease: Bool = false,
         draft: Bool = false,
         publishedAt: String = "2026-08-13T12:00:00Z",
-        pageURL: String? = nil
+        pageURL: String? = nil,
+        includeSignature: Bool = true
     ) -> String {
         let archiveName = "Roblox-Account-Manager-for-Mac-\(version).zip"
         let digest = String(repeating: "a", count: 64)
         let releasePageURL = pageURL
             ?? "https://github.com/intraducine/Roblox-Account-Manager-Mac/releases/tag/v\(version)"
+        let signatureAsset = includeSignature ? """
+            ,
+            {
+              "name": "\(archiveName).sig",
+              "browser_download_url": "https://github.com/intraducine/Roblox-Account-Manager-Mac/releases/download/v\(version)/\(archiveName).sig",
+              "size": 72,
+              "digest": "sha256:\(digest)",
+              "state": "uploaded"
+            }
+        """ : ""
         return """
         {
           "tag_name": "v\(version)",
@@ -185,6 +404,7 @@ final class SoftwareUpdateServiceTests: XCTestCase {
               "digest": "sha256:\(digest)",
               "state": "uploaded"
             }
+            \(signatureAsset)
           ]
         }
         """
@@ -205,6 +425,23 @@ final class SoftwareUpdateServiceTests: XCTestCase {
     private static func bundleVersion(at applicationURL: URL) -> String? {
         let plistURL = applicationURL.appendingPathComponent("Contents/Info.plist")
         return (NSDictionary(contentsOf: plistURL)?["CFBundleShortVersionString"] as? String)
+    }
+
+
+    @discardableResult
+    private static func run(_ executable: String, _ arguments: [String]) -> Int32 {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus
+        } catch {
+            return -1
+        }
     }
 }
 

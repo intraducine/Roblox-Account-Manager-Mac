@@ -23,7 +23,7 @@ Roblox lets users control who can see their current experience. The available au
 
 ## 2. Apple account constraint
 
-A free Apple account is sufficient for local development. It is not sufficient for Developer ID distribution, notarization, the Mac App Store, or a normal trusted auto-update system. Apple states that Personal Team profiles expire after seven days and that program membership is required for distribution and notarization. See [Apple Developer account overview](https://developer.apple.com/help/account/basics/about-your-developer-account).
+A free Apple account is sufficient for local development. It is not sufficient for Developer ID distribution, notarization, or the Mac App Store. Apple states that Personal Team profiles expire after seven days and that program membership is required for Apple-trusted distribution and notarization. This project therefore uses its own archive signature and pinned project certificate for update trust. See [Apple Developer account overview](https://developer.apple.com/help/account/basics/about-your-developer-account).
 
 ### Required release approach
 
@@ -52,11 +52,11 @@ WebKit, Keychain, local files, and normal HTTPS requests do not require paid App
 
 Version 1.0.3 and later must:
 
-- Check the latest final release when the app opens and when the user chooses **Check for Updates**.
+- Check the highest-version final release when the app opens and when the user chooses **Check for Updates**.
 - Show a dismissible main-window notice only when a newer final release is available, downloading, or ready to install.
 - Load the paginated final-release history only when the Update Center opens.
 - List every valid final release by date and version, and show its full Markdown notes when selected.
-- Read the latest final release from `intraducine/Roblox-Account-Manager-Mac` on GitHub.
+- Read the paginated final release list from `intraducine/Roblox-Account-Manager-Mac` on GitHub and select the highest valid version.
 - Ignore drafts and prereleases.
 - Compare numeric version components and never install the same or an older version.
 - Require exact ZIP and `.sha256` asset names for that version.
@@ -108,6 +108,20 @@ Version 1.0.4 and later must:
 - Keep profile notes in a separate macOS Keychain item instead of account JSON.
 - Move a legacy plain-text note into Keychain before the account file and its backup are scrubbed.
 - Keep profile notes out of normal metadata exports and preserve the local encrypted note during import.
+
+### Version 1.1.1 update-signing bridge
+
+- Require a project P-256 signature on the complete release archive before extraction.
+- Keep the private project key in the release Mac's Secure Enclave and require user presence for each signature.
+- Create one long-lived self-signed code-signing certificate with a project-only subject and no email address.
+- Put that certificate's SHA-256 fingerprint in the signed v1.1.1 app bundle.
+- Keep v1.1.1 compatible with the v1.1.0 Apple signing requirement.
+- Require the public v1.1.0 app as a package input and verify both signing requirements in both directions.
+- For v1.1.2 and later, require strict code validation and the exact pinned project certificate.
+- Before v1.1.1 installs v1.1.2, authorize the validated candidate identity for the existing session and profile-note Keychain items.
+- Keep v1.1.1 marked as GitHub's latest release for legacy clients. Publish v1.1.2 and later as final releases without replacing that marker.
+- Reject a v1.1.2 or later package if the signed app contains an email address or local user home path.
+- Do not claim Apple notarization or suppress the expected unidentified-developer warning for manual downloads.
 
 ## 3. Version 1.0 scope
 

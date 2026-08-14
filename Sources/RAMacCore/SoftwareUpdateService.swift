@@ -45,6 +45,7 @@ public struct SoftwareUpdateRelease: Equatable, Sendable {
     public let publishedAt: Date?
     public let archive: SoftwareUpdateAsset
     public let checksum: SoftwareUpdateAsset
+    public let signature: SoftwareUpdateAsset
 }
 
 public struct SoftwareUpdateHistoryEntry: Identifiable, Equatable, Sendable {
@@ -83,9 +84,11 @@ public enum SoftwareUpdateError: LocalizedError, Equatable {
     case downloadFailed
     case archiveTooLarge
     case checksumFailed
+    case releaseSignatureFailed
     case extractionFailed
     case invalidApplication
     case wrongSigningIdentity
+    case keychainMigrationFailed
     case installationNotAllowed
     case installationFailed
 
@@ -94,9 +97,9 @@ public enum SoftwareUpdateError: LocalizedError, Equatable {
         case .invalidCurrentVersion:
             return "The installed app version could not be read. Download the latest release manually."
         case .invalidRelease:
-            return "The latest GitHub release is not a valid app update."
+            return "GitHub did not return a valid final app release."
         case .missingReleaseFiles:
-            return "The latest release does not include both the app ZIP and its checksum file."
+            return "The newest final release does not include the app ZIP, checksum, and update signature."
         case .unsafeDownloadAddress:
             return "The release files did not come from the expected GitHub project."
         case .downloadFailed:
@@ -105,12 +108,16 @@ public enum SoftwareUpdateError: LocalizedError, Equatable {
             return "The update file is larger than this app allows. Download it manually if the release is trusted."
         case .checksumFailed:
             return "The downloaded update did not match its published checksum. Nothing was installed."
+        case .releaseSignatureFailed:
+            return "The downloaded update did not have this project's verified update signature. Nothing was installed."
         case .extractionFailed:
             return "The update ZIP could not be opened. Nothing was installed."
         case .invalidApplication:
             return "The downloaded app has the wrong name, version, identifier, or processor support. Nothing was installed."
         case .wrongSigningIdentity:
-            return "The downloaded app does not have the same verified signing identity as this app. Nothing was installed."
+            return "The downloaded app does not have an approved verified signing identity. Nothing was installed."
+        case .keychainMigrationFailed:
+            return "macOS could not prepare saved sign-ins and encrypted notes for this signing update. Nothing was installed. Unlock Keychain and try again."
         case .installationNotAllowed:
             return "macOS did not allow this app to update itself. Move it to Applications, make sure you own the file, and try again."
         case .installationFailed:
@@ -124,14 +131,17 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
     public static let applicationName = "Roblox Account Manager.app"
     public static let bundleIdentifier = "com.intraducine.RobloxAccountManager"
 
-    private static let latestReleaseURL = URL(
-        string: "https://api.github.com/repos/\(repository)/releases/latest"
-    )!
     private static let releaseHistoryPageSize = 100
     private static let maximumReleaseHistoryPages = 10
     private static let maximumReleaseHistoryPageSize = 5 * 1_024 * 1_024
     private static let maximumArchiveSize = 100 * 1_024 * 1_024
     private static let maximumChecksumSize = 4 * 1_024
+    private static let maximumSignatureSize = 1_024
+    private static let projectCertificateMigrationVersion = AppVersion("1.1.2")!
+    private static let expectedProjectCertificateSHA256Key = "RAMExpectedProjectCertificateSHA256"
+    static let releaseSignaturePublicKey = Data(
+        base64Encoded: "BH6LL3N1YNpQjRTACAKLI9UELoIyysGzQlULU+wVmH1ze0iBShCFvhrpPcpfLGsNCOmkGrq6ZBErg8lCMb6ktww="
+    )!
 
     private let session: URLSession
     private let redirectDelegate: SoftwareUpdateRedirectDelegate?
@@ -150,7 +160,7 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
             configuration.httpAdditionalHeaders = [
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2026-03-10",
-                "User-Agent": "Roblox-Account-Manager-Mac/1.1.0"
+                "User-Agent": "Roblox-Account-Manager-Mac/1.1.1"
             ]
             redirectDelegate = delegate
             self.session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
@@ -162,32 +172,38 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
         guard let installed = AppVersion(currentVersion) else {
             throw SoftwareUpdateError.invalidCurrentVersion
         }
-        let request = releaseRequest(url: Self.latestReleaseURL)
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse,
-              http.statusCode == 200,
-              data.count <= 1_000_000 else {
-            throw SoftwareUpdateError.downloadFailed
+        let payloads = try await releasePayloads()
+        let finalReleases = payloads.compactMap { payload -> (AppVersion, GitHubReleasePayload)? in
+            guard !payload.draft,
+                  !payload.prerelease,
+                  let version = AppVersion(payload.tagName),
+                  Self.safeReleasePageURL(payload.pageURL) != nil else { return nil }
+            return (version, payload)
         }
-        let payload: GitHubReleasePayload
-        do { payload = try JSONDecoder().decode(GitHubReleasePayload.self, from: data) }
-        catch { throw SoftwareUpdateError.invalidRelease }
-        guard !payload.draft,
-              !payload.prerelease,
-              let latest = AppVersion(payload.tagName),
-              let pageURL = Self.safeReleasePageURL(payload.pageURL) else {
-            throw SoftwareUpdateError.invalidRelease
-        }
-        guard latest > installed else {
+        guard let (latest, payload) = finalReleases.max(by: { $0.0 < $1.0 }),
+              latest > installed else {
             return .upToDate(currentVersion: currentVersion)
+        }
+
+        guard let pageURL = Self.safeReleasePageURL(payload.pageURL) else {
+            throw SoftwareUpdateError.invalidRelease
         }
 
         let archiveName = "Roblox-Account-Manager-for-Mac-\(latest).zip"
         let checksumName = "\(archiveName).sha256"
-        guard let archivePayload = payload.assets.first(where: { $0.name == archiveName }),
-              let checksumPayload = payload.assets.first(where: { $0.name == checksumName }),
+        let signatureName = "\(archiveName).sig"
+        let archiveMatches = payload.assets.filter { $0.name == archiveName }
+        let checksumMatches = payload.assets.filter { $0.name == checksumName }
+        let signatureMatches = payload.assets.filter { $0.name == signatureName }
+        guard archiveMatches.count == 1,
+              checksumMatches.count == 1,
+              signatureMatches.count == 1,
+              let archivePayload = archiveMatches.first,
+              let checksumPayload = checksumMatches.first,
+              let signaturePayload = signatureMatches.first,
               let archive = try asset(from: archivePayload, maximumSize: Self.maximumArchiveSize),
-              let checksum = try asset(from: checksumPayload, maximumSize: Self.maximumChecksumSize) else {
+              let checksum = try asset(from: checksumPayload, maximumSize: Self.maximumChecksumSize),
+              let signature = try asset(from: signaturePayload, maximumSize: Self.maximumSignatureSize) else {
             throw SoftwareUpdateError.missingReleaseFiles
         }
         return .available(SoftwareUpdateRelease(
@@ -198,7 +214,8 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
             pageURL: pageURL,
             publishedAt: Self.releaseDate(payload.publishedAt),
             archive: archive,
-            checksum: checksum
+            checksum: checksum,
+            signature: signature
         ))
     }
 
@@ -206,6 +223,24 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
         var entries: [SoftwareUpdateHistoryEntry] = []
         var seenVersions: Set<String> = []
 
+        for payload in try await releasePayloads() {
+            guard let entry = Self.historyEntry(from: payload),
+                  seenVersions.insert(entry.id).inserted else { continue }
+            entries.append(entry)
+        }
+
+        return entries.sorted {
+            switch ($0.publishedAt, $1.publishedAt) {
+            case let (left?, right?) where left != right:
+                return left > right
+            default:
+                return $0.version > $1.version
+            }
+        }
+    }
+
+    private func releasePayloads() async throws -> [GitHubReleasePayload] {
+        var payloads: [GitHubReleasePayload] = []
         for page in 1...Self.maximumReleaseHistoryPages {
             var components = URLComponents(
                 string: "https://api.github.com/repos/\(Self.repository)/releases"
@@ -222,26 +257,14 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
                 throw SoftwareUpdateError.downloadFailed
             }
 
-            let payloads: [GitHubReleasePayload]
-            do { payloads = try JSONDecoder().decode([GitHubReleasePayload].self, from: data) }
+            let pagePayloads: [GitHubReleasePayload]
+            do { pagePayloads = try JSONDecoder().decode([GitHubReleasePayload].self, from: data) }
             catch { throw SoftwareUpdateError.invalidRelease }
 
-            for payload in payloads {
-                guard let entry = Self.historyEntry(from: payload),
-                      seenVersions.insert(entry.id).inserted else { continue }
-                entries.append(entry)
-            }
-            if payloads.count < Self.releaseHistoryPageSize { break }
+            payloads.append(contentsOf: pagePayloads)
+            if pagePayloads.count < Self.releaseHistoryPageSize { break }
         }
-
-        return entries.sorted {
-            switch ($0.publishedAt, $1.publishedAt) {
-            case let (left?, right?) where left != right:
-                return left > right
-            default:
-                return $0.version > $1.version
-            }
-        }
+        return payloads
     }
 
     public func downloadAndPrepare(
@@ -254,14 +277,24 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
             try fileManager.createDirectory(at: workspace, withIntermediateDirectories: true)
             async let archiveDownload = download(release.archive, maximumSize: Self.maximumArchiveSize)
             async let checksumDownload = download(release.checksum, maximumSize: Self.maximumChecksumSize)
-            let (archiveData, checksumData) = try await (archiveDownload, checksumDownload)
+            async let signatureDownload = download(release.signature, maximumSize: Self.maximumSignatureSize)
+            let (archiveData, checksumData, signatureData) = try await (
+                archiveDownload,
+                checksumDownload,
+                signatureDownload
+            )
             let actualDigest = Self.sha256(archiveData)
             let actualChecksumDigest = Self.sha256(checksumData)
+            let actualSignatureDigest = Self.sha256(signatureData)
             guard release.archive.digest == "sha256:\(actualDigest)",
                   release.checksum.digest == "sha256:\(actualChecksumDigest)",
+                  release.signature.digest == "sha256:\(actualSignatureDigest)",
                   let checksumText = String(data: checksumData, encoding: .utf8),
                   Self.checksum(in: checksumText, for: release.archive.name) == actualDigest else {
                 throw SoftwareUpdateError.checksumFailed
+            }
+            guard Self.verifyReleaseSignature(signatureData, for: archiveData) else {
+                throw SoftwareUpdateError.releaseSignatureFailed
             }
 
             let archiveURL = workspace.appendingPathComponent(release.archive.name)
@@ -310,7 +343,13 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
               ) else {
             throw SoftwareUpdateError.invalidApplication
         }
-        do { try Self.verifyMutuallyCompatibleSignatures(currentApplicationURL, candidateURL) }
+        do {
+            try Self.verifySigningIdentity(
+                currentApplicationURL,
+                candidateURL,
+                releaseVersion: release.version
+            )
+        }
         catch { throw SoftwareUpdateError.wrongSigningIdentity }
     }
 
@@ -328,6 +367,18 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
             return nil
         }
         return fields[0].lowercased()
+    }
+
+    static func verifyReleaseSignature(
+        _ signature: Data,
+        for archive: Data,
+        publicKey: Data = releaseSignaturePublicKey
+    ) -> Bool {
+        guard let key = try? P256.Signing.PublicKey(x963Representation: publicKey),
+              let signature = try? P256.Signing.ECDSASignature(derRepresentation: signature) else {
+            return false
+        }
+        return key.isValidSignature(signature, for: archive)
     }
 
     private func asset(from payload: GitHubAssetPayload, maximumSize: Int) throws -> SoftwareUpdateAsset? {
@@ -354,7 +405,7 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2026-03-10", forHTTPHeaderField: "X-GitHub-Api-Version")
-        request.setValue("Roblox-Account-Manager-Mac/1.1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox-Account-Manager-Mac/1.1.1", forHTTPHeaderField: "User-Agent")
         return request
     }
 
@@ -395,7 +446,7 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
         }
         var request = URLRequest(url: asset.downloadURL)
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
-        request.setValue("Roblox-Account-Manager-Mac/1.1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("Roblox-Account-Manager-Mac/1.1.1", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse,
               http.statusCode == 200,
@@ -412,6 +463,23 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
             && url.path.hasPrefix("/\(repository)/releases/download/")
     }
 
+    private static func verifySigningIdentity(
+        _ currentURL: URL,
+        _ candidateURL: URL,
+        releaseVersion: AppVersion
+    ) throws {
+        if releaseVersion >= projectCertificateMigrationVersion {
+            try verifyApplicationSignature(currentURL)
+            let expectedCertificateSHA256 = try expectedProjectCertificateSHA256(in: currentURL)
+            try verifyProjectCertificateSignature(
+                candidateURL,
+                expectedCertificateSHA256: expectedCertificateSHA256
+            )
+        } else {
+            try verifyMutuallyCompatibleSignatures(currentURL, candidateURL)
+        }
+    }
+
     private static func verifyMutuallyCompatibleSignatures(_ firstURL: URL, _ secondURL: URL) throws {
         let first = try staticCode(at: firstURL)
         let second = try staticCode(at: secondURL)
@@ -423,6 +491,72 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
         let secondRequirement = try designatedRequirement(for: second)
         try check(second, flags: flags, requirement: firstRequirement)
         try check(first, flags: flags, requirement: secondRequirement)
+    }
+
+    static func verifyApplicationSignature(_ applicationURL: URL) throws {
+        let application = try staticCode(at: applicationURL)
+        let flags = SecCSFlags(rawValue:
+            kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode
+        )
+        try check(application, flags: flags, requirement: nil)
+    }
+
+    static func isValidProjectCertificateSHA256(_ value: String) -> Bool {
+        value.range(
+            of: #"^[a-f0-9]{64}$"#,
+            options: .regularExpression
+        ) != nil
+    }
+
+    private static func expectedProjectCertificateSHA256(in applicationURL: URL) throws -> String {
+        let infoURL = applicationURL.appendingPathComponent("Contents/Info.plist")
+        guard let plist = NSDictionary(contentsOf: infoURL),
+              let fingerprint = plist[expectedProjectCertificateSHA256Key] as? String,
+              isValidProjectCertificateSHA256(fingerprint) else {
+            throw SoftwareUpdateError.wrongSigningIdentity
+        }
+        return fingerprint
+    }
+
+    private static func verifyProjectCertificateSignature(
+        _ candidateURL: URL,
+        expectedCertificateSHA256: String
+    ) throws {
+        let candidate = try staticCode(at: candidateURL)
+        let flags = SecCSFlags(rawValue:
+            kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode
+        )
+        try check(candidate, flags: flags, requirement: nil)
+
+        var signingInformation: CFDictionary?
+        guard SecCodeCopySigningInformation(
+            candidate,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &signingInformation
+        ) == errSecSuccess,
+        let information = signingInformation as? [CFString: Any],
+        let certificates = information[kSecCodeInfoCertificates] as? [SecCertificate],
+        let leafCertificate = certificates.first else {
+            throw SoftwareUpdateError.wrongSigningIdentity
+        }
+        let certificateData = SecCertificateCopyData(leafCertificate) as Data
+        guard sha256(certificateData) == expectedCertificateSHA256 else {
+            throw SoftwareUpdateError.wrongSigningIdentity
+        }
+    }
+
+    func prepareProtectedKeychainAccess(
+        for candidateApplicationURL: URL,
+        release: SoftwareUpdateRelease
+    ) throws {
+        guard release.version >= Self.projectCertificateMigrationVersion else { return }
+        do {
+            try SoftwareUpdateKeychainAccessBridge.authorize(
+                candidateApplicationURL: candidateApplicationURL
+            )
+        } catch {
+            throw SoftwareUpdateError.keychainMigrationFailed
+        }
     }
 
     private static func staticCode(at url: URL) throws -> SecStaticCode {
@@ -467,6 +601,59 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
     }
 }
 
+enum SoftwareUpdateKeychainAccessBridge {
+    private static let protectedItems: [(service: String, account: String)] = [
+        ("com.intraducine.RobloxAccountManager.session", "sessions-v2"),
+        ("com.intraducine.RobloxAccountManager.profile-notes", "notes-v1")
+    ]
+
+    static func authorize(
+        candidateApplicationURL: URL,
+        items: [(service: String, account: String)] = protectedItems
+    ) throws {
+        var currentApplication: SecTrustedApplication?
+        guard SecTrustedApplicationCreateFromPath(nil, &currentApplication) == errSecSuccess,
+              let currentApplication else {
+            throw SoftwareUpdateError.keychainMigrationFailed
+        }
+
+        var candidateApplication: SecTrustedApplication?
+        let candidateStatus = candidateApplicationURL.withUnsafeFileSystemRepresentation { path in
+            SecTrustedApplicationCreateFromPath(path, &candidateApplication)
+        }
+        guard candidateStatus == errSecSuccess,
+              let candidateApplication else {
+            throw SoftwareUpdateError.keychainMigrationFailed
+        }
+
+        var access: SecAccess?
+        let trustedApplications = [currentApplication, candidateApplication] as CFArray
+        guard SecAccessCreate(
+            "Roblox Account Manager saved data" as CFString,
+            trustedApplications,
+            &access
+        ) == errSecSuccess,
+        let access else {
+            throw SoftwareUpdateError.keychainMigrationFailed
+        }
+
+        for item in items {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: item.service,
+                kSecAttrAccount as String: item.account
+            ]
+            let status = SecItemUpdate(
+                query as CFDictionary,
+                [kSecAttrAccess as String: access] as CFDictionary
+            )
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw SoftwareUpdateError.keychainMigrationFailed
+            }
+        }
+    }
+}
+
 public final class SoftwareUpdateInstaller: @unchecked Sendable {
     private let service: GitHubSoftwareUpdateService
     private let fileManager: FileManager
@@ -501,6 +688,10 @@ public final class SoftwareUpdateInstaller: @unchecked Sendable {
                 stagedURL,
                 release: prepared.release,
                 currentApplicationURL: applicationURL
+            )
+            try service.prepareProtectedKeychainAccess(
+                for: stagedURL,
+                release: prepared.release
             )
         } catch {
             try? fileManager.removeItem(at: stagedURL)

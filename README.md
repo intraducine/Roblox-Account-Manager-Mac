@@ -54,16 +54,22 @@ swift test
 open "dist/Roblox Account Manager.app"
 ```
 
-The build script creates one universal app for Apple silicon and Intel Macs. It uses an installed Apple code-signing identity when one is available. This stable signature lets macOS recognize the app after an update. If no identity is available, the script uses an ad hoc signature. To choose a specific identity, set `RAM_SIGNING_IDENTITY` to its certificate hash or name before running the script.
+The build script creates one universal app for Apple silicon and Intel Macs. Versions through 1.1.1 use an installed Apple code-signing identity when one is available. If no identity is available, a normal local build uses an ad hoc signature. Version 1.1.2 and later release builds use one project-owned self-signed certificate that contains only the project name. To choose a specific identity for a local build, set `RAM_SIGNING_IDENTITY` to its certificate hash or name.
 
-To create the optional ZIP file and SHA-256 checksum:
+Release maintainers create the ZIP, checksum, and project signature with:
 
 ```sh
+./scripts/create-project-signing-identity.sh
+export RAM_BRIDGE_BASE_APP="/path/to/public-v1.1.0/Roblox Account Manager.app"
 ./scripts/package-release.sh
-(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-1.1.0.zip.sha256")
+(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-1.1.1.zip.sha256")
 ```
 
-A downloaded build is not notarized. macOS can show a warning when you open it. Building from source gives you the clearest local trust boundary. The in-app updater accepts only a release with the same signing requirement as the installed app.
+Run the identity script only once on the release Mac. It creates a 20-year project certificate and non-exportable private key through a temporary memory disk, imports them into the user's Keychain, and leaves no private-key file in the repository or normal disk storage. The certificate subject contains the project name and no email address. Keychain can ask for approval when the release build uses this private key.
+
+Version 1.1.1 is the signing bridge. Its signed app stores the exact SHA-256 fingerprint of the project certificate that will sign version 1.1.2 and later. Packaging requires `RAM_BRIDGE_BASE_APP` and proves that the bridge and the public v1.1.0 app accept each other's existing signatures. The updater also authorizes the validated 1.1.2 app to read the existing Keychain items before it replaces 1.1.1. Create the separate project update key once with `xcrun swift scripts/release-signature.swift create`. That key stays in the Mac Secure Enclave, and macOS requires user approval for each release signature.
+
+Version 1.1.2 and later must match the pinned project certificate and the separate project update signature. Packaging stops if the app, certificate, or signing metadata contains an email address or local user home path. This free signing path does not use Apple notarization. macOS can show an unidentified-developer warning after a manual download. Existing users who update through version 1.1.1 keep the verified in-app update path.
 
 ## Add accounts
 
@@ -83,7 +89,16 @@ Version 1.0.3 and later include the in-app updater. The app checks for a newer f
 
 The Update Center lists every published final release with its date and version. Select a release to read its full Markdown release notes. Opening the history does not download or install an update.
 
-The app checks only final releases from this project's public GitHub page. When a newer version exists, it downloads the release ZIP and checksum, checks GitHub's file fingerprint, and confirms that the downloaded app has the same signing identity as the installed app. It also checks the app name, version, bundle identifier, and Intel and Apple silicon support before showing **Install and Restart**.
+The app checks only final releases from this project's public GitHub page. It compares all final releases by version, so a bridge install can find a newer release even when GitHub does not mark that release as latest. When a newer version exists, it downloads the release ZIP, checksum, and project signature. It checks GitHub's file fingerprints, the published checksum, the project signature, app name, version, bundle identifier, and Intel and Apple silicon support before showing **Install and Restart**. Version 1.1.1 also records the approved project certificate fingerprint. It accepts version 1.1.2 and later only when the app has a valid signature from that exact certificate. Before the bridge installs 1.1.2, it also prepares the saved sign-ins and encrypted notes for the new stable app identity.
+
+Keep v1.1.1 marked as GitHub's latest release while old v1.1.0 installs remain in use. Publish v1.1.2 and later as final releases without changing the marked latest release. Old clients then receive v1.1.1 first, while v1.1.1 and later clients still find the highest final version from the full release list.
+
+```sh
+gh release create v1.1.2 dist/Roblox-Account-Manager-for-Mac-1.1.2.zip{,.sha256,.sig} \
+    --title "Roblox Account Manager for Mac 1.1.2" \
+    --notes-file /path/to/release-notes.md \
+    --latest=false
+```
 
 The updater never stores a GitHub login or token. It does not show or install a draft or prerelease. It downloads an update only after you select **Update**, and it replaces the app only after you select **Install and Restart**. The current app must be in a location that your macOS account can change, such as an app that you copied to `/Applications`. A hidden copy of the previous version stays beside the app as a recovery backup.
 

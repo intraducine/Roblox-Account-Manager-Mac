@@ -1,8 +1,17 @@
 # Release verification report
 
-Latest update: August 13, 2026
+Latest update: August 14, 2026
 
 This report uses saved account labels only. It does not contain usernames, cookies, private links, launch tickets, or personal account IDs.
+
+## Version 1.1.1 preparation
+
+- The source suite passes 162 tests with zero failures. Three installed-app integration tests remain opt-in.
+- The updater requires a project P-256 archive signature and pins version 1.1.2 and later to one project-owned certificate fingerprint stored in the signed v1.1.1 app.
+- The project signing key is held by the Mac Secure Enclave. A live sign-and-verify check passed and required user approval.
+- The unpublished legacy test key was removed from Keychain.
+- The project code-signing certificate contains the project name and no email address. Its private key stays in the release Mac's Keychain.
+- Version 1.1.1 remains unpublished until its pinned-certificate and Keychain access migration paths pass end-to-end tests.
 
 ## Version 1.1.0 release readiness
 

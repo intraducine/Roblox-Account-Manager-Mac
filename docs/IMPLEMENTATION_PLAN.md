@@ -139,7 +139,7 @@ The phases below record how the product was built. They are not current usage in
 ### Phase 11: complete in version 1.0.3
 
 - Add Check for Updates to the app menu and About window.
-- Read only the latest final release from the public project on GitHub.
+- Read the public project's final release list and select the highest valid version.
 - Require exact versioned ZIP and checksum asset names.
 - Verify GitHub's SHA-256 digest and the release checksum.
 - Extract into a private temporary folder and validate the app before installation.
@@ -183,9 +183,20 @@ The phases below record how the product was built. They are not current usage in
 - Apply one concentric corner and spacing system across every custom app view.
 - Use one continuous translucent material across the full account sidebar.
 
-### Suitable follow-up work
+### Phase 14: version 1.1.1 signing bridge
 
-- Developer ID signing and notarized release builds.
+- Sign every update archive with the project's Secure Enclave key.
+- Require the archive signature before extraction or app replacement.
+- Create one long-lived project signing certificate with a project-only subject and no email address.
+- Embed that certificate's SHA-256 fingerprint in the signed bridge app.
+- Require that exact project certificate for version 1.1.2 and later.
+- Keep v1.1.1 marked as GitHub's latest release so v1.1.0 cannot skip the bridge. Publish later final releases without changing that marker.
+- Prepare existing session and encrypted-note Keychain items for the new app identity before replacement.
+- Stop v1.1.1 packaging until the project certificate is available.
+- Stop v1.1.2 and later packaging if signing metadata or app files contain an email address or local user home path.
+- Keep the v1.1.1 app on the existing signing identity so v1.1.0 can install the bridge.
+- Require the public v1.1.0 app during packaging and prove mutual signing compatibility before creating v1.1.1 assets.
+- Keep the release path free. State clearly that manual downloads are not Apple-notarized.
 
 ### Not planned without further research
 

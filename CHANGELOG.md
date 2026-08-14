@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.1.1 - 2026-08-14
+
+- Added friend relay joining so selected accounts can follow existing friendships into one confirmed server.
+- Kept independent relay paths moving when one account cannot open or confirm the target server.
+- Reported every account clearly when a full, restricted, or changed server blocks a relay.
+- Removed server and open-place details from Joinable Players because Roblox does not provide them reliably there.
+- Expanded every remaining disclosure-triangle control to use its full labeled row as the click target.
+
 ## 1.1.0 - 2026-08-13
 
 - Extended one continuous translucent material across the full account sidebar.
