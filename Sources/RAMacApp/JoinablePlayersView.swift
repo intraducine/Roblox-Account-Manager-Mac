@@ -213,13 +213,6 @@ struct JoinablePlayersView: View {
             TableColumn("Experience") { player in
                 Text(player.presence.locationName ?? "Roblox experience").lineLimit(2)
             }
-            TableColumn("Server") { player in
-                Label(serverText(player.verification), systemImage: serverSymbol(player.verification))
-                    .accessibilityLabel("Server: \(serverText(player.verification))")
-            }
-            TableColumn("Open Spaces") { player in
-                Text(openSpacesText(player.verification))
-            }
         }
     }
 
@@ -236,8 +229,6 @@ struct JoinablePlayersView: View {
 
                     LabeledContent("Experience", value: player.presence.locationName ?? "Roblox experience")
                     LabeledContent("Visible to these accounts", value: sourceNames(for: player).joined(separator: ", "))
-                    LabeledContent("Server", value: serverText(player.verification))
-                    LabeledContent("Open spaces", value: openSpacesText(player.verification))
                     if let explanation = verificationExplanation(player.verification) {
                         Text(explanation)
                             .font(.callout)
@@ -263,7 +254,7 @@ struct JoinablePlayersView: View {
                 .padding(AppGeometry.windowContentInset)
             }
         } else {
-            emptyState("Select a player to review the server and choose accounts.", symbol: "cursorarrow.click")
+            emptyState("Select a player, then choose the accounts to launch.", symbol: "cursorarrow.click")
         }
     }
 
@@ -454,35 +445,6 @@ struct JoinablePlayersView: View {
                 destination: .playerProfile(player.candidate.userID)
             ))
         }
-    }
-
-    private func serverText(_ verification: PublicServerVerification) -> String {
-        switch verification {
-        case .friendTarget: return "Friend server"
-        case .verifiedPublic(let server): return server.openSpaces == 0 ? "Public, full" : "Public"
-        case .unconfirmed: return "Not confirmed"
-        case .paused: return "Check paused"
-        case .restrictedOrUnavailable: return "Restricted or unavailable"
-        case .noServerSupplied: return "No server supplied"
-        case .verificationFailed: return "Could not verify"
-        }
-    }
-
-    private func serverSymbol(_ verification: PublicServerVerification) -> String {
-        switch verification {
-        case .friendTarget: return "person.2"
-        case .verifiedPublic: return "checkmark.circle"
-        case .unconfirmed: return "questionmark.circle"
-        case .paused: return "clock"
-        case .restrictedOrUnavailable: return "lock"
-        case .noServerSupplied: return "minus.circle"
-        case .verificationFailed: return "exclamationmark.triangle"
-        }
-    }
-
-    private func openSpacesText(_ verification: PublicServerVerification) -> String {
-        if case .verifiedPublic(let server) = verification { return String(server.openSpaces) }
-        return "Unknown"
     }
 
     private func verificationExplanation(_ verification: PublicServerVerification) -> String? {
