@@ -41,7 +41,8 @@ struct LaunchSetsView: View {
                 Button("New Launch Set", systemImage: "plus") { createDraft() }
                     .buttonStyle(.borderless)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+                    .padding(.horizontal, AppGeometry.windowEdgeControlInset)
+                    .padding(.vertical, AppGeometry.windowEdgeControlInset)
             }
             .navigationTitle("Launch Sets")
             .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)

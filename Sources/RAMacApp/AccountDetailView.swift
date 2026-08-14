@@ -41,7 +41,7 @@ struct AccountDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 GroupBox {
                     identityHeader
-                        .padding(8)
+                        .padding(AppGeometry.panelEdgeControlInset)
                 }
 
                 if showsLaunchBar {
@@ -161,7 +161,7 @@ struct AccountDetailView: View {
                 )
                 .padding(.vertical, 8)
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, AppGeometry.panelEdgeControlInset)
         } label: {
             Text("Open Roblox")
                 .font(.headline)
@@ -240,7 +240,12 @@ struct AccountDetailView: View {
                     }
                     .frame(minHeight: 76, maxHeight: 110)
                     .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .clipShape(
+                        RoundedRectangle(
+                            cornerRadius: AppGeometry.controlCornerRadius,
+                            style: .continuous
+                        )
+                    )
                     Text("Notes are encrypted in macOS Keychain.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -264,7 +269,7 @@ struct AccountDetailView: View {
                 }
                 .padding(.vertical, 8)
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, AppGeometry.panelEdgeControlInset)
         } label: {
             Text("Account")
                 .font(.headline)
@@ -273,7 +278,11 @@ struct AccountDetailView: View {
 
     private var identityHeader: some View {
         HStack(spacing: 14) {
-            AccountAvatarView(url: account.avatarURL, size: 68, cornerRadius: 12)
+            AccountAvatarView(
+                url: account.avatarURL,
+                size: 68,
+                cornerRadius: AppGeometry.largeThumbnailRadius
+            )
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(draft.title)

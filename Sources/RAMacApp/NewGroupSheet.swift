@@ -28,7 +28,9 @@ struct NewGroupSheet: View {
                     .disabled(trimmedName.isEmpty)
             }
         }
-        .padding(24)
+        .padding(.horizontal, AppGeometry.windowEdgeControlInset)
+        .padding(.top, AppGeometry.windowContentInset)
+        .padding(.bottom, AppGeometry.windowEdgeControlInset)
         .frame(width: 420)
     }
 

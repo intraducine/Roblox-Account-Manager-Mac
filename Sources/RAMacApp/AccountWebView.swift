@@ -138,8 +138,8 @@ struct AccountWebsiteWindow: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.horizontal, AppGeometry.windowEdgeControlInset)
+        .padding(.vertical, AppGeometry.compactInset)
         .background(.bar)
     }
 

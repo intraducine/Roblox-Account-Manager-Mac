@@ -227,7 +227,12 @@ private struct ExperienceIcon: View {
         }
         .frame(width: size, height: size)
         .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: max(5, size * 0.15), style: .continuous))
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: AppGeometry.thumbnailRadius(for: size),
+                style: .continuous
+            )
+        )
         .task(id: experience.thumbnailURL) {
             let url = experience.thumbnailURL
             image = RemoteImageCache.image(for: url)

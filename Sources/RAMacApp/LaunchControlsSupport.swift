@@ -151,6 +151,6 @@ struct LaunchClientNotice: View {
             }
         }
         .frame(width: 420)
-        .padding(18)
+        .padding(AppGeometry.windowContentInset)
     }
 }

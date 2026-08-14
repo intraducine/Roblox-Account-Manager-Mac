@@ -70,6 +70,7 @@ private struct AccountReauthenticationView: View {
                     RobloxLoginWebView(model: browser)
                     if browser.isLoading { ProgressView().controlSize(.large) }
                 }
+                .appRoundedPanel()
                 HStack {
                     Text(browser.hasSession ? "Ready to save" : "Sign in above to continue")
                         .foregroundStyle(.secondary)
@@ -84,7 +85,9 @@ private struct AccountReauthenticationView: View {
                     .disabled(!browser.hasSession)
                 }
             }
-            .padding(18)
+            .padding(.horizontal, AppGeometry.windowEdgeControlInset)
+            .padding(.top, AppGeometry.windowContentInset)
+            .padding(.bottom, AppGeometry.windowEdgeControlInset)
             .navigationTitle("Sign In Again as @\(account.username)")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

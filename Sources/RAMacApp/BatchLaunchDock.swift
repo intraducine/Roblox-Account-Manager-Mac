@@ -72,7 +72,7 @@ struct BatchLaunchBar: View {
                         )
                         .padding(.vertical, 8)
                     }
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, AppGeometry.panelEdgeControlInset)
                 } label: {
                     Text("Open Roblox")
                         .font(.headline)

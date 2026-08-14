@@ -164,7 +164,8 @@ struct JoinablePlayersView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(12)
+        .padding(.horizontal, AppGeometry.windowEdgeControlInset)
+        .padding(.vertical, AppGeometry.compactInset)
         .background(.bar)
     }
 
@@ -257,7 +258,7 @@ struct JoinablePlayersView: View {
 
                     primaryActions(for: player)
                 }
-                .padding(18)
+                .padding(AppGeometry.windowContentInset)
             }
         } else {
             emptyState("Select a player to review the server and choose accounts.", symbol: "cursorarrow.click")

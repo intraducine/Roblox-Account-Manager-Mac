@@ -275,8 +275,8 @@ struct ContentView: View {
             .fixedSize()
             Spacer()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, AppGeometry.windowEdgeControlInset)
+        .padding(.vertical, AppGeometry.compactInset)
         .background(.bar)
     }
 
@@ -333,9 +333,9 @@ struct ContentView: View {
             }
         }
         .font(.caption)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, AppGeometry.windowEdgeControlInset)
         .padding(.top, 5)
-        .padding(.bottom, 10)
+        .padding(.bottom, AppGeometry.windowEdgeControlInset)
         .background(.bar)
     }
 
@@ -417,7 +417,11 @@ private struct AccountRow: View {
                 .disabled(isRunning || isSelectionDisabled)
             }
 
-            AccountAvatarView(url: account.avatarURL, size: 34, cornerRadius: 7)
+            AccountAvatarView(
+                url: account.avatarURL,
+                size: 34,
+                cornerRadius: AppGeometry.smallThumbnailRadius
+            )
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(account.title)

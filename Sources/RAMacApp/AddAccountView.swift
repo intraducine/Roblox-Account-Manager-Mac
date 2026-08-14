@@ -32,7 +32,9 @@ struct AddAccountView: View {
                     cookieImport
                 }
             }
-            .padding(20)
+            .padding(.horizontal, AppGeometry.windowEdgeControlInset)
+            .padding(.top, AppGeometry.windowContentInset)
+            .padding(.bottom, AppGeometry.windowEdgeControlInset)
             .navigationTitle("Add Roblox Account")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -65,11 +67,7 @@ struct AddAccountView: View {
                         .controlSize(.large)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-            }
+            .appRoundedPanel()
 
             HStack {
                 Label(

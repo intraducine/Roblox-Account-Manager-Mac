@@ -552,7 +552,7 @@ struct SoftwareUpdateView: View {
                         .padding(.top, 6)
                     }
                 }
-                .padding(24)
+                .padding(AppGeometry.windowContentInset)
                 .frame(maxWidth: 680, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -642,7 +642,12 @@ private struct ReleaseNotesMarkdownView: View {
                     .padding(10)
             }
             .background(Color(nsColor: .textBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: AppGeometry.controlCornerRadius,
+                    style: .continuous
+                )
+            )
         case .divider:
             Divider()
         }
@@ -789,10 +794,11 @@ struct SoftwareUpdateNotice: View {
                 .help("Dismiss this update notice")
             }
         }
-        .padding(8)
+        .padding(AppGeometry.compactInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     @ViewBuilder
