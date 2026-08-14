@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Moved update-notice actions beside the status text to keep the sidebar compact.
+- Replaced the update notice with a compact single-line action rail and tighter sidebar spacing.
 - Added an update notice to the main sidebar when a newer final release is available.
 - Added a browsable release history with dates, versions, and full Markdown release notes.
 - Checked for a newer final release automatically when the account manager opens.

@@ -334,7 +334,8 @@ struct ContentView: View {
         }
         .font(.caption)
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.top, 5)
+        .padding(.bottom, 10)
         .background(.bar)
     }
 

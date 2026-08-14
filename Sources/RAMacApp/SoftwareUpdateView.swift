@@ -707,32 +707,34 @@ struct SoftwareUpdateNotice: View {
             switch controller.state {
             case .available(let release) where dismissedVersion != release.version.description:
                 notice(
-                    title: "Update available",
-                    detail: release.title,
+                    status: "Version \(release.version.updateDisplayName)",
+                    icon: .symbol("arrow.down.circle.fill"),
                     canDismiss: true
                 ) {
-                    Button("Update") { controller.download(release) }
+                    Button("Update available") { controller.download(release) }
                         .buttonStyle(.borderedProminent)
                     Button("Details", action: onShowDetails)
+                        .buttonStyle(.borderless)
                 } onDismiss: {
                     dismissedVersion = release.version.description
                 }
             case .downloading(let release):
                 notice(
-                    title: "Downloading update",
-                    detail: "Version \(release.version.updateDisplayName) will be verified before installation."
+                    status: "Downloading · Version \(release.version.updateDisplayName)",
+                    icon: .progress
                 ) {
-                    ProgressView().controlSize(.small)
                     Button("Details", action: onShowDetails)
+                        .buttonStyle(.borderless)
                 }
             case .ready(let prepared):
                 notice(
-                    title: "Update ready",
-                    detail: "Restart to install version \(prepared.release.version.updateDisplayName)."
+                    status: "Version \(prepared.release.version.updateDisplayName)",
+                    icon: .symbol("info.circle.fill")
                 ) {
-                    Button("Restart") { confirmsRestart = true }
+                    Button("Restart to update") { confirmsRestart = true }
                         .buttonStyle(.borderedProminent)
                     Button("Details", action: onShowDetails)
+                        .buttonStyle(.borderless)
                 }
             default:
                 EmptyView()
@@ -748,27 +750,31 @@ struct SoftwareUpdateNotice: View {
         }
     }
 
+    private enum NoticeIcon {
+        case symbol(String)
+        case progress
+    }
+
     private func notice<Actions: View>(
-        title: String,
-        detail: String,
+        status: String,
+        icon: NoticeIcon,
         canDismiss: Bool = false,
         @ViewBuilder actions: () -> Actions,
         onDismiss: @escaping () -> Void = {}
     ) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Label(title, systemImage: "arrow.down.circle.fill")
-                    .font(.caption.weight(.semibold))
+        HStack(alignment: .center, spacing: 5) {
+            noticeIcon(icon)
 
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(status)
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.9)
+                .allowsTightening(true)
+                .layoutPriority(1)
 
-            HStack(spacing: 8) {
+            Spacer(minLength: 3)
+
+            HStack(spacing: 4) {
                 actions()
             }
             .controlSize(.small)
@@ -783,10 +789,24 @@ struct SoftwareUpdateNotice: View {
                 .help("Dismiss this update notice")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
+    }
+
+    @ViewBuilder
+    private func noticeIcon(_ icon: NoticeIcon) -> some View {
+        switch icon {
+        case .symbol(let name):
+            Image(systemName: name)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+        case .progress:
+            ProgressView()
+                .controlSize(.mini)
+                .accessibilityLabel("Downloading update")
+        }
     }
 }
