@@ -91,7 +91,7 @@ Version 1.0.4 and later must:
 - Keep reusable private-server links out of active process records.
 - Use a fixed minimal command path and absolute security-tool paths for release builds.
 
-### Post-1.0.4 update and note-storage changes
+### Version 1.1.0 account, update, and interface changes
 
 - Let users paste a normal Roblox game link, then show the trusted game name and icon before selection. Keep direct Place ID entry as an advanced fallback.
 - Keep alias, encrypted notes, and multi-group editing visible on the main account page.

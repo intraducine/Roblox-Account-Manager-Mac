@@ -373,7 +373,7 @@ public actor ParallelRobloxLauncher {
 
         let officialPath = Self.officialApplicationURL.standardizedFileURL.path
         var officialAccountIDs = Set<UUID>()
-        var mainPathByAccount: [UUID: String] = [:]
+        var mainProcessByAccount: [UUID: (processIdentifier: Int32, executablePath: String)] = [:]
         var helperPathsByAccount: [UUID: Set<String>] = [:]
 
         for accountID in requested {
@@ -382,10 +382,13 @@ public actor ParallelRobloxLauncher {
                 continue
             }
             if let record = validProcessRecord(for: accountID) {
-                mainPathByAccount[accountID] = canonicalPath(
-                    URL(fileURLWithPath: record.applicationPath, isDirectory: true)
-                        .appendingPathComponent("Contents/MacOS/RobloxPlayer")
-                        .path
+                mainProcessByAccount[accountID] = (
+                    record.processIdentifier,
+                    canonicalPath(
+                        URL(fileURLWithPath: record.applicationPath, isDirectory: true)
+                            .appendingPathComponent("Contents/MacOS/RobloxPlayer")
+                            .path
+                    )
                 )
             } else {
                 try? fileManager.removeItem(at: processRecordURL(for: accountID))
@@ -399,14 +402,22 @@ public actor ParallelRobloxLauncher {
         } else {
             officialStopped = await stopOfficialApplications()
         }
-        let managedPaths = Set(mainPathByAccount.values)
+        let managedPaths = Set(mainProcessByAccount.values.map(\.executablePath))
             .union(helperPathsByAccount.values.flatMap { $0 })
 
         for attempt in 0..<6 where !managedPaths.isEmpty {
-            let matching = runningProcessTable().filter { managedPaths.contains($0.value) }
+            var matching = Set(
+                runningProcessTable()
+                    .filter { managedPaths.contains($0.value) }
+                    .keys
+            )
+            for process in mainProcessByAccount.values
+            where executablePath(for: process.processIdentifier) == process.executablePath {
+                matching.insert(process.processIdentifier)
+            }
             if matching.isEmpty { break }
             let signal = attempt < 2 ? SIGTERM : SIGKILL
-            for processIdentifier in matching.keys {
+            for processIdentifier in matching {
                 _ = kill(processIdentifier, signal)
             }
             try? await Task.sleep(nanoseconds: attempt < 2 ? 250_000_000 : 100_000_000)
@@ -415,7 +426,9 @@ public actor ParallelRobloxLauncher {
         let remainingPaths = Set(runningProcessTable().values)
         var stopped = officialStopped ? officialAccountIDs : []
         for accountID in requested.subtracting(officialAccountIDs) {
-            let mainStopped = mainPathByAccount[accountID].map { !remainingPaths.contains($0) } ?? true
+            let mainStopped = mainProcessByAccount[accountID].map {
+                executablePath(for: $0.processIdentifier) != $0.executablePath
+            } ?? true
             let helpersStopped = helperPathsByAccount[accountID, default: []].isDisjoint(with: remainingPaths)
             if mainStopped && helpersStopped {
                 stopped.insert(accountID)
@@ -513,7 +526,13 @@ public actor ParallelRobloxLauncher {
             .appendingPathComponent("Contents/MacOS/RobloxPlayer")
             .path
         let canonicalExecutable = canonicalPath(expectedExecutable)
-        return runningProcessTable()[record.processIdentifier] == canonicalExecutable
+        return executablePath(for: record.processIdentifier) == canonicalExecutable
+    }
+
+    private func executablePath(for processIdentifier: Int32) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        guard proc_pidpath(processIdentifier, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return canonicalPath(String(cString: buffer))
     }
 
     private func runningProcessTable() -> [Int32: String] {

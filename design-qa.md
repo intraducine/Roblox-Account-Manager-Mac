@@ -8,6 +8,7 @@
 - State tested: update available, downloading, and update ready for version 1.0.4
 - Final main-window capture: `/tmp/ramac-geometry-final-main.png`
 - Continuous sidebar capture: `/tmp/ramac-continuous-sidebar.png`
+- Version 1.1.0 release captures: `/tmp/ramac-v110-main.png`, `/tmp/ramac-v110-add-account.png`, `/tmp/ramac-v110-players.png`, `/tmp/ramac-v110-launchsets.png`, `/tmp/ramac-v110-diagnostics.png`, and `/tmp/ramac-v110-updates.png`
 - Final Add Account capture: `/tmp/ramac-geometry-final-add.png`
 - Additional window captures: `/tmp/ramac-geometry-players.png`, `/tmp/ramac-geometry-launchsets.png`, `/tmp/ramac-geometry-updates.png`, and `/tmp/ramac-geometry-diagnostics.png`
 
@@ -43,6 +44,16 @@
 - The account list hides its separate scroll background, so it no longer creates a material boundary inside the sidebar.
 - The continuous sidebar capture shows one surface from the title area to the bottom window corners, with no opaque footer bands or material seams.
 - Selection, disabled, running, and secondary-text states remain readable against the shared material.
+
+## Version 1.1.0 release review
+
+- The exact packaged version 1.1.0 app was opened for the final review.
+- The main account window, Add Account, Joinable Players, Launch Sets, Diagnostics and Backup, and Updates windows were inspected at their real macOS sizes.
+- The main window keeps a clear launch hierarchy, a continuous sidebar surface, readable account state, and consistent edge spacing.
+- Add Account keeps the sign-in method, instructions, browser, status, and save action within the window without clipping.
+- Joinable Players, Launch Sets, and Diagnostics keep their main action and empty or saved-content states clear at first glance.
+- The Updates window reports version 1.1.0 and keeps release selection, Markdown notes, and update status readable at its restored compact size.
+- No control overlap, clipped text, mismatched custom radius, opaque sidebar band, or unreadable state was found.
 
 ## Interaction checks
 

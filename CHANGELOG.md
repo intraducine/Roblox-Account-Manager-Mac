@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.1.0 - 2026-08-13
+
 - Extended one continuous translucent material across the full account sidebar.
 - Standardized app-owned corners and edge controls with concentric radii and optical insets in every window.
 - Replaced the update notice with a compact single-line action rail and tighter sidebar spacing.
@@ -15,6 +17,7 @@
 - Prevented a saved game icon from briefly disappearing when switching between accounts.
 - Fixed the Roblox Keychain Not Found alert by giving each isolated account app its own temporary-password Keychain.
 - Made Stop All close managed Roblox processes in one batch instead of repeating a full process scan for each account.
+- Made Stop All use each recorded process ID and exact executable path so newly started clients are not missed.
 - Added group deletion without deleting accounts, and removed deleted group references from saved Launch Sets.
 - Prevented account avatars from showing the previous account while the next avatar loads.
 - Applied the full-row Advanced options control to the Launch Set editor.

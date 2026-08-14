@@ -4,6 +4,16 @@ Latest update: August 13, 2026
 
 This report uses saved account labels only. It does not contain usernames, cookies, private links, launch tickets, or personal account IDs.
 
+## Version 1.1.0 release readiness
+
+- The complete source suite passed 145 tests with zero failures. Three installed-app integration tests remain opt-in.
+- Every commit after version 1.0.4 and the final release worktree passed dedicated secret and personal-data scans.
+- The release app reports version 1.1.0 build 110 and contains Apple silicon and Intel code.
+- `Roblox-Account-Manager-for-Mac-1.1.0.zip` matches its checksum sidecar. Its SHA-256 value is `c61493dca6016c07ab66d75c55a5ac42f17fd38fcc3f49d8b428a3aa3bcc7816`.
+- The ZIP contains only the app bundle. It contains no user home path, account handle, personal email, token, private key, saved account data, `.DS_Store`, AppleDouble file, or repository source.
+- The exact packaged app was opened and reviewed in the main, Add Account, Joinable Players, Launch Sets, Diagnostics and Backup, and Updates windows.
+- The public release description lists user-facing changes only. It does not include a verification section.
+
 ## Version 1.0.4 release verification
 
 - The complete source suite passed 124 tests with zero failures. Three tests stayed opt-in because they start installed Roblox clients or install a published update.

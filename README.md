@@ -60,7 +60,7 @@ To create the optional ZIP file and SHA-256 checksum:
 
 ```sh
 ./scripts/package-release.sh
-(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-1.0.4.zip.sha256")
+(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-1.1.0.zip.sha256")
 ```
 
 A downloaded build is not notarized. macOS can show a warning when you open it. Building from source gives you the clearest local trust boundary. The in-app updater accepts only a release with the same signing requirement as the installed app.
@@ -79,7 +79,7 @@ You can give one account an alias, an encrypted profile note, and several groups
 
 ## Update the app
 
-Version 1.0.3 and later include the in-app updater. The app checks for a newer final release when it opens. If one is available, the main sidebar shows an update notice with **Update**, **Details**, and dismiss actions. You can also choose **Roblox Account Manager > Check for Updates** or open **About > Check for Updates**.
+Version 1.0.3 and later include the in-app updater. The app checks for a newer final release when it opens. If one is available, the main sidebar shows **Update available**, **Details**, and a dismiss action. When the update is ready, the same notice shows **Restart to update**. You can also choose **Roblox Account Manager > Check for Updates** or open **About > Check for Updates**.
 
 The Update Center lists every published final release with its date and version. Select a release to read its full Markdown release notes. Opening the history does not download or install an update.
 

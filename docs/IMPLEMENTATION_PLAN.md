@@ -166,10 +166,26 @@ The phases below record how the product was built. They are not current usage in
 - Restrict account avatar requests to secure Roblox CDN addresses.
 - Use fixed trusted command paths in release scripts.
 
+### Phase 13: complete in version 1.1.0
+
+- Simplify the main account and batch-launch screens for first-time users.
+- Accept normal Roblox game links and show the game name and icon before selection.
+- Keep aliases, encrypted notes, groups, account checkboxes, Find Players, and Launch Sets easy to reach.
+- Add group deletion without deleting the accounts in that group.
+- Run Launch Sets from their menu or by double-clicking a row.
+- Check saved accounts and final app updates when the manager opens.
+- Add a browsable Markdown release history and a compact update notice.
+- Encrypt profile notes in a separate Keychain item and exclude them from backups.
+- Prevent account avatar and game icon flicker while selections change.
+- Give each isolated Roblox account home a working private Keychain.
+- Stop all managed Roblox clients in one batched process pass.
+- Quit the manager after its final window closes.
+- Apply one concentric corner and spacing system across every custom app view.
+- Use one continuous translucent material across the full account sidebar.
+
 ### Suitable follow-up work
 
 - Developer ID signing and notarized release builds.
-- Better avatar caching and offline handling.
 
 ### Not planned without further research
 
