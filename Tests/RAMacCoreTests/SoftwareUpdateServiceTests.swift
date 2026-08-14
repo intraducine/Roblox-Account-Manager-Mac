@@ -226,7 +226,7 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         XCTAssertEqual(SecItemAdd(add as CFDictionary, nil), errSecSuccess)
 
         try SoftwareUpdateKeychainAccessBridge.authorize(
-            candidateApplicationURL: URL(fileURLWithPath: "/usr/bin/security"),
+            candidateRequirement: try Self.designatedRequirement(at: "/usr/bin/security"),
             items: [(service, account)]
         )
 
@@ -244,6 +244,104 @@ final class SoftwareUpdateServiceTests: XCTestCase {
             String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             secret
+        )
+    }
+
+    func testKeychainBridgeTrustRequirementRejectsDifferentCodeAtTheSameBoundary() throws {
+        let securityRequirement = try Self.designatedRequirement(at: "/usr/bin/security")
+        var otherCode: SecStaticCode?
+        XCTAssertEqual(
+            SecStaticCodeCreateWithPath(
+                URL(fileURLWithPath: "/usr/bin/codesign") as CFURL,
+                SecCSFlags(),
+                &otherCode
+            ),
+            errSecSuccess
+        )
+        let status = SecStaticCodeCheckValidity(
+            try XCTUnwrap(otherCode),
+            SecCSFlags(rawValue: kSecCSStrictValidate),
+            securityRequirement
+        )
+        XCTAssertNotEqual(status, errSecSuccess)
+    }
+
+    func testInstallerRejectsAReplacementAfterPreparationAndRestoresCurrentApp() throws {
+        let fixture = try Self.makeInstallerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspaceURL) }
+        var validationCount = 0
+        let installer = SoftwareUpdateInstaller(
+            validateApplication: { candidateURL, _, _ in
+                validationCount += 1
+                let marker = try String(
+                    contentsOf: candidateURL.appendingPathComponent("marker"),
+                    encoding: .utf8
+                )
+                guard marker == "candidate" else {
+                    throw SoftwareUpdateError.wrongSigningIdentity
+                }
+            },
+            prepareProtectedKeychainAccess: { stagedURL, _, _ in
+                try FileManager.default.removeItem(at: stagedURL)
+                try FileManager.default.createDirectory(
+                    at: stagedURL,
+                    withIntermediateDirectories: true
+                )
+                try Data("replacement".utf8).write(
+                    to: stagedURL.appendingPathComponent("marker")
+                )
+            }
+        )
+
+        XCTAssertThrowsError(
+            try installer.install(fixture.prepared, replacing: fixture.currentURL)
+        ) { error in
+            XCTAssertEqual(error as? SoftwareUpdateError, .wrongSigningIdentity)
+        }
+        XCTAssertEqual(validationCount, 2)
+        XCTAssertEqual(
+            try String(
+                contentsOf: fixture.currentURL.appendingPathComponent("marker"),
+                encoding: .utf8
+            ),
+            "current"
+        )
+    }
+
+    func testInstallerKeepsTheValidatedReplacementAndBackup() throws {
+        let fixture = try Self.makeInstallerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspaceURL) }
+        var validationCount = 0
+        let installer = SoftwareUpdateInstaller(
+            validateApplication: { candidateURL, _, _ in
+                validationCount += 1
+                XCTAssertEqual(
+                    try String(
+                        contentsOf: candidateURL.appendingPathComponent("marker"),
+                        encoding: .utf8
+                    ),
+                    "candidate"
+                )
+            },
+            prepareProtectedKeychainAccess: { _, _, _ in }
+        )
+
+        let backupURL = try installer.install(fixture.prepared, replacing: fixture.currentURL)
+
+        XCTAssertEqual(validationCount, 2)
+        XCTAssertEqual(
+            try String(
+                contentsOf: fixture.currentURL.appendingPathComponent("marker"),
+                encoding: .utf8
+            ),
+            "candidate"
+        )
+        XCTAssertEqual(
+            try String(
+                contentsOf: backupURL.appendingPathComponent("marker"),
+                encoding: .utf8
+            ),
+            "current"
         )
     }
 
@@ -425,6 +523,74 @@ final class SoftwareUpdateServiceTests: XCTestCase {
     private static func bundleVersion(at applicationURL: URL) -> String? {
         let plistURL = applicationURL.appendingPathComponent("Contents/Info.plist")
         return (NSDictionary(contentsOf: plistURL)?["CFBundleShortVersionString"] as? String)
+    }
+
+    private static func designatedRequirement(at path: String) throws -> SecRequirement {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(
+            URL(fileURLWithPath: path) as CFURL,
+            SecCSFlags(),
+            &code
+        ) == errSecSuccess,
+        let code else {
+            throw SoftwareUpdateError.wrongSigningIdentity
+        }
+        var requirement: SecRequirement?
+        guard SecCodeCopyDesignatedRequirement(
+            code,
+            SecCSFlags(),
+            &requirement
+        ) == errSecSuccess,
+        let requirement else {
+            throw SoftwareUpdateError.wrongSigningIdentity
+        }
+        return requirement
+    }
+
+    private static func makeInstallerFixture() throws -> (
+        workspaceURL: URL,
+        currentURL: URL,
+        prepared: PreparedSoftwareUpdate
+    ) {
+        let workspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RAMac-Installer-Test-\(UUID().uuidString)", isDirectory: true)
+        let currentURL = workspaceURL.appendingPathComponent(
+            "Roblox Account Manager.app",
+            isDirectory: true
+        )
+        let preparedURL = workspaceURL.appendingPathComponent("Prepared.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: currentURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: preparedURL, withIntermediateDirectories: true)
+        try Data("current".utf8).write(to: currentURL.appendingPathComponent("marker"))
+        try Data("candidate".utf8).write(to: preparedURL.appendingPathComponent("marker"))
+        let assetURL = URL(
+            string: "https://github.com/intraducine/Roblox-Account-Manager-Mac/releases/download/v1.1.2/test"
+        )!
+        let asset = SoftwareUpdateAsset(
+            name: "test",
+            downloadURL: assetURL,
+            byteCount: 1,
+            digest: "sha256:\(String(repeating: "a", count: 64))"
+        )
+        let release = SoftwareUpdateRelease(
+            version: AppVersion("1.1.2")!,
+            title: "Installer test",
+            notes: "",
+            pageURL: assetURL,
+            publishedAt: nil,
+            archive: asset,
+            checksum: asset,
+            signature: asset
+        )
+        return (
+            workspaceURL,
+            currentURL,
+            PreparedSoftwareUpdate(
+                release: release,
+                applicationURL: preparedURL,
+                workspaceURL: workspaceURL
+            )
+        )
     }
 
 

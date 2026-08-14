@@ -734,7 +734,10 @@ final class AccountStore: ObservableObject {
                 joinedIDs.insert(accountID)
                 friendRelayStates[accountID] = .joined(nil)
             } else {
-                friendRelayStates[accountID] = .failed(friendRelayFailureMessage(for: arrival))
+                let message = friendRelayFailureMessage(for: arrival)
+                friendRelayStates[accountID] = .failed(
+                    await stopUnconfirmedFriendRelayClient(account, failureMessage: message)
+                )
             }
         }
 
@@ -780,7 +783,10 @@ final class AccountStore: ObservableObject {
                 joinedIDs.insert(account.id)
                 friendRelayStates[account.id] = .joined(parent.username)
             } else {
-                friendRelayStates[account.id] = .failed(friendRelayFailureMessage(for: arrival))
+                let message = friendRelayFailureMessage(for: arrival)
+                friendRelayStates[account.id] = .failed(
+                    await stopUnconfirmedFriendRelayClient(account, failureMessage: message)
+                )
             }
         }
 
@@ -814,7 +820,10 @@ final class AccountStore: ObservableObject {
                 joinedIDs.insert(account.id)
                 friendRelayStates[account.id] = .joined(nil)
             } else {
-                friendRelayStates[account.id] = .failed(friendRelayFailureMessage(for: arrival))
+                let message = friendRelayFailureMessage(for: arrival)
+                friendRelayStates[account.id] = .failed(
+                    await stopUnconfirmedFriendRelayClient(account, failureMessage: message)
+                )
             }
         }
 
@@ -874,10 +883,22 @@ final class AccountStore: ObservableObject {
         case .arrived:
             return ""
         case .timedOut:
-            return "Roblox opened, but this account did not reach the server within 15 seconds. The server may be full, restricted, or changed. Close its Roblox window before you retry."
+            return "Roblox opened, but this account did not reach the server within 15 seconds. The server may be full, restricted, or changed."
         case .unavailable(let message):
             return "Roblox started, but the server check failed. \(message)"
         }
+    }
+
+    private func stopUnconfirmedFriendRelayClient(
+        _ account: ManagedAccount,
+        failureMessage: String
+    ) async -> String {
+        _ = await launcher.stop(accountID: account.id)
+        await refreshRunningInstances()
+        guard runningAccountIDs.contains(account.id) else {
+            return "\(failureMessage) The unconfirmed Roblox window was closed."
+        }
+        return "\(failureMessage) Close the unexpected Roblox window before trying this account again."
     }
 
     func tryUnconfirmedPlayer(_ player: DiscoveredPlayer, accountIDs: Set<UUID>) async {

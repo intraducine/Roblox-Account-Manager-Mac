@@ -2,6 +2,13 @@ import CryptoKit
 import Foundation
 import Security
 
+@_silgen_name("SecTrustedApplicationCreateFromRequirement")
+private func ramSecTrustedApplicationCreateFromRequirement(
+    _ description: UnsafePointer<CChar>?,
+    _ requirement: SecRequirement,
+    _ application: UnsafeMutablePointer<SecTrustedApplication?>
+) -> OSStatus
+
 public struct AppVersion: Comparable, CustomStringConvertible, Sendable {
     public let components: [Int]
 
@@ -471,7 +478,7 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
         if releaseVersion >= projectCertificateMigrationVersion {
             try verifyApplicationSignature(currentURL)
             let expectedCertificateSHA256 = try expectedProjectCertificateSHA256(in: currentURL)
-            try verifyProjectCertificateSignature(
+            _ = try verifiedProjectRequirement(
                 candidateURL,
                 expectedCertificateSHA256: expectedCertificateSHA256
             )
@@ -509,19 +516,31 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
     }
 
     private static func expectedProjectCertificateSHA256(in applicationURL: URL) throws -> String {
-        let infoURL = applicationURL.appendingPathComponent("Contents/Info.plist")
-        guard let plist = NSDictionary(contentsOf: infoURL),
-              let fingerprint = plist[expectedProjectCertificateSHA256Key] as? String,
-              isValidProjectCertificateSHA256(fingerprint) else {
+        let application = try staticCode(at: applicationURL)
+        let flags = SecCSFlags(rawValue:
+            kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode
+        )
+        try check(application, flags: flags, requirement: nil)
+
+        var signingInformation: CFDictionary?
+        guard SecCodeCopySigningInformation(
+            application,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &signingInformation
+        ) == errSecSuccess,
+        let information = signingInformation as? [CFString: Any],
+        let plist = information[kSecCodeInfoPList] as? [String: Any],
+        let fingerprint = plist[expectedProjectCertificateSHA256Key] as? String,
+        isValidProjectCertificateSHA256(fingerprint) else {
             throw SoftwareUpdateError.wrongSigningIdentity
         }
         return fingerprint
     }
 
-    private static func verifyProjectCertificateSignature(
+    static func verifiedProjectRequirement(
         _ candidateURL: URL,
         expectedCertificateSHA256: String
-    ) throws {
+    ) throws -> SecRequirement {
         let candidate = try staticCode(at: candidateURL)
         let flags = SecCSFlags(rawValue:
             kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode
@@ -543,16 +562,27 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
         guard sha256(certificateData) == expectedCertificateSHA256 else {
             throw SoftwareUpdateError.wrongSigningIdentity
         }
+        let requirement = try designatedRequirement(for: candidate)
+        try check(candidate, flags: flags, requirement: requirement)
+        return requirement
     }
 
     func prepareProtectedKeychainAccess(
         for candidateApplicationURL: URL,
-        release: SoftwareUpdateRelease
+        release: SoftwareUpdateRelease,
+        currentApplicationURL: URL
     ) throws {
         guard release.version >= Self.projectCertificateMigrationVersion else { return }
         do {
+            let expectedCertificateSHA256 = try Self.expectedProjectCertificateSHA256(
+                in: currentApplicationURL
+            )
+            let requirement = try Self.verifiedProjectRequirement(
+                candidateApplicationURL,
+                expectedCertificateSHA256: expectedCertificateSHA256
+            )
             try SoftwareUpdateKeychainAccessBridge.authorize(
-                candidateApplicationURL: candidateApplicationURL
+                candidateRequirement: requirement
             )
         } catch {
             throw SoftwareUpdateError.keychainMigrationFailed
@@ -608,7 +638,7 @@ enum SoftwareUpdateKeychainAccessBridge {
     ]
 
     static func authorize(
-        candidateApplicationURL: URL,
+        candidateRequirement: SecRequirement,
         items: [(service: String, account: String)] = protectedItems
     ) throws {
         var currentApplication: SecTrustedApplication?
@@ -618,8 +648,14 @@ enum SoftwareUpdateKeychainAccessBridge {
         }
 
         var candidateApplication: SecTrustedApplication?
-        let candidateStatus = candidateApplicationURL.withUnsafeFileSystemRepresentation { path in
-            SecTrustedApplicationCreateFromPath(path, &candidateApplication)
+        // A path-based trusted application can change between validation and the ACL update.
+        // Bind access to the validated code requirement instead.
+        let candidateStatus = "csreq://com.intraducine.RobloxAccountManager".withCString { description in
+            ramSecTrustedApplicationCreateFromRequirement(
+                description,
+                candidateRequirement,
+                &candidateApplication
+            )
         }
         guard candidateStatus == errSecSuccess,
               let candidateApplication else {
@@ -655,15 +691,55 @@ enum SoftwareUpdateKeychainAccessBridge {
 }
 
 public final class SoftwareUpdateInstaller: @unchecked Sendable {
-    private let service: GitHubSoftwareUpdateService
     private let fileManager: FileManager
+    private let validateApplication: (
+        _ candidateURL: URL,
+        _ release: SoftwareUpdateRelease,
+        _ currentApplicationURL: URL
+    ) throws -> Void
+    private let prepareProtectedKeychainAccess: (
+        _ candidateURL: URL,
+        _ release: SoftwareUpdateRelease,
+        _ currentApplicationURL: URL
+    ) throws -> Void
 
     public init(
         service: GitHubSoftwareUpdateService,
         fileManager: FileManager = .default
     ) {
-        self.service = service
         self.fileManager = fileManager
+        validateApplication = { candidateURL, release, currentApplicationURL in
+            try service.validateApplication(
+                candidateURL,
+                release: release,
+                currentApplicationURL: currentApplicationURL
+            )
+        }
+        prepareProtectedKeychainAccess = { candidateURL, release, currentApplicationURL in
+            try service.prepareProtectedKeychainAccess(
+                for: candidateURL,
+                release: release,
+                currentApplicationURL: currentApplicationURL
+            )
+        }
+    }
+
+    init(
+        fileManager: FileManager = .default,
+        validateApplication: @escaping (
+            _ candidateURL: URL,
+            _ release: SoftwareUpdateRelease,
+            _ currentApplicationURL: URL
+        ) throws -> Void,
+        prepareProtectedKeychainAccess: @escaping (
+            _ candidateURL: URL,
+            _ release: SoftwareUpdateRelease,
+            _ currentApplicationURL: URL
+        ) throws -> Void
+    ) {
+        self.fileManager = fileManager
+        self.validateApplication = validateApplication
+        self.prepareProtectedKeychainAccess = prepareProtectedKeychainAccess
     }
 
     public func install(
@@ -684,14 +760,15 @@ public final class SoftwareUpdateInstaller: @unchecked Sendable {
         )
         do {
             try fileManager.copyItem(at: prepared.applicationURL, to: stagedURL)
-            try service.validateApplication(
+            try validateApplication(
                 stagedURL,
-                release: prepared.release,
-                currentApplicationURL: applicationURL
+                prepared.release,
+                applicationURL
             )
-            try service.prepareProtectedKeychainAccess(
-                for: stagedURL,
-                release: prepared.release
+            try prepareProtectedKeychainAccess(
+                stagedURL,
+                prepared.release,
+                applicationURL
             )
         } catch {
             try? fileManager.removeItem(at: stagedURL)
@@ -705,8 +782,17 @@ public final class SoftwareUpdateInstaller: @unchecked Sendable {
             try fileManager.moveItem(at: applicationURL, to: backupURL)
             do {
                 try fileManager.moveItem(at: stagedURL, to: applicationURL)
+                try validateApplication(
+                    applicationURL,
+                    prepared.release,
+                    backupURL
+                )
             } catch {
+                try? fileManager.removeItem(at: applicationURL)
                 try? fileManager.moveItem(at: backupURL, to: applicationURL)
+                if let updateError = error as? SoftwareUpdateError {
+                    throw updateError
+                }
                 throw SoftwareUpdateError.installationFailed
             }
             return backupURL

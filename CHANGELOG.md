@@ -6,6 +6,7 @@
 
 - Added friend relay joining so selected accounts can follow existing friendships into one confirmed server.
 - Kept independent relay paths moving when one account cannot open or confirm the target server.
+- Closed any unconfirmed relay client before retrying that account through the exact Job ID.
 - Reported every account clearly when a full, restricted, or changed server blocks a relay.
 - Removed server and open-place details from Joinable Players because Roblox does not provide them reliably there.
 - Expanded every remaining disclosure-triangle control to use its full labeled row as the click target.

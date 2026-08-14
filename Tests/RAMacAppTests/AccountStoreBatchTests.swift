@@ -410,11 +410,13 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(fixture.store.batchStatus, "0 joined, 3 could not join")
         XCTAssertEqual(fixture.store.batchSelectedIDs, selectedIDs)
         XCTAssertEqual(fixture.store.notice?.title, "Some accounts could not join")
+        XCTAssertTrue(fixture.store.runningAccountIDs.isEmpty)
         for account in fixture.accounts {
             guard case .failed(let message) = fixture.store.friendRelayStates[account.id] else {
                 return XCTFail("Expected @\(account.username) to have a visible relay failure.")
             }
             XCTAssertTrue(message.contains("may be full, restricted, or changed"))
+            XCTAssertTrue(message.contains("unconfirmed Roblox window was closed"))
             guard case .failed(let batchMessage) = fixture.store.batchStates[account.id] else {
                 return XCTFail("Expected @\(account.username) to remain selected for retry.")
             }
@@ -461,8 +463,9 @@ final class AccountStoreBatchTests: XCTestCase {
         )
 
         let urls = await fixture.launcher.attemptedURLs()
-        XCTAssertEqual(urls.count, 3)
+        XCTAssertEqual(urls.count, 4)
         XCTAssertTrue(urls[2].absoluteString.contains("userId%3D2"))
+        XCTAssertTrue(urls[3].absoluteString.contains("RequestGameJob"))
         XCTAssertEqual(fixture.store.friendRelayStates[first.id]?.label, "Could not join")
         XCTAssertEqual(fixture.store.friendRelayStates[second.id], .joined(nil))
         XCTAssertEqual(fixture.store.friendRelayStates[third.id], .joined(second.username))
