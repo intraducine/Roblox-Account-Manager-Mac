@@ -174,7 +174,7 @@ private struct LaunchSetEditor: View {
                     Text("Private links stay on this Mac and are excluded from normal backups.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                AdvancedOptionsDisclosure {
+                FullWidthDisclosure("Advanced options") {
                     VStack(alignment: .leading, spacing: 12) {
                         LabeledContent("Place ID") {
                             TextField("Place ID", text: gamePlaceID)

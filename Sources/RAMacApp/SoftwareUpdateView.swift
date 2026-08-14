@@ -543,7 +543,7 @@ struct SoftwareUpdateView: View {
                         Label("View this release on GitHub", systemImage: "safari")
                     }
 
-                    DisclosureGroup("How updates stay safe") {
+                    FullWidthDisclosure("How updates stay safe") {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("The app downloads final releases only from this project's public GitHub page. It checks the published file fingerprint and confirms that the new app has the same signing identity before installing it.")
                             Text("The previous app version stays in a hidden backup beside the installed app. A failed replacement restores it automatically.")

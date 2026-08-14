@@ -24,7 +24,7 @@ struct AdvancedLaunchOptions: View {
     let onRequestModifiedFallback: () -> Void
 
     var body: some View {
-        AdvancedOptionsDisclosure {
+        FullWidthDisclosure("Advanced options") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("Place ID")
@@ -49,9 +49,15 @@ struct AdvancedLaunchOptions: View {
     }
 }
 
-struct AdvancedOptionsDisclosure<Content: View>: View {
+struct FullWidthDisclosure<Content: View>: View {
+    let title: String
     @State private var isExpanded = false
     @ViewBuilder let content: () -> Content
+
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -62,13 +68,14 @@ struct AdvancedOptionsDisclosure<Content: View>: View {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.caption.weight(.semibold))
                         .frame(width: 10)
-                    Text("Advanced options")
+                    Text(title)
                     Spacer()
                 }
-                .frame(minHeight: 24)
+                .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(title)
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
 
             if isExpanded {
