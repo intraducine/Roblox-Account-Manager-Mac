@@ -36,6 +36,34 @@ final class AccountStore: ObservableObject {
         }
     }
 
+    enum FriendRelayState: Equatable {
+        case waiting
+        case planning
+        case starting(String)
+        case confirming
+        case joined(String?)
+        case tryingDirect
+        case failed(String)
+
+        var label: String {
+            switch self {
+            case .waiting: return "Waiting"
+            case .planning: return "Finding a friend path"
+            case .starting(let username): return "Joining @\(username)"
+            case .confirming: return "Checking server"
+            case .joined(let username):
+                return username.map { "Joined through @\($0)" } ?? "Joined friend"
+            case .tryingDirect: return "Trying server directly"
+            case .failed: return "Could not join"
+            }
+        }
+
+        var detail: String? {
+            guard case .failed(let message) = self else { return nil }
+            return message
+        }
+    }
+
     private struct BatchOutcome: Sendable {
         let accountID: UUID
         let username: String
@@ -70,6 +98,9 @@ final class AccountStore: ObservableObject {
     @Published private(set) var discoveryFailures: [PlayerDiscoveryFailure] = []
     @Published private(set) var discoveryUpdatedAt: Date?
     @Published private(set) var isDiscoveringPlayers = false
+    @Published private(set) var isFriendRelayLaunching = false
+    @Published private(set) var friendRelayPlayerID: Int64?
+    @Published private(set) var friendRelayStates: [UUID: FriendRelayState] = [:]
     @Published private(set) var accountHealth: [UUID: AccountHealth] = [:]
     @Published private(set) var launchSets: [LaunchSet] = []
     @Published private(set) var runningLaunchSetID: UUID?
@@ -85,6 +116,7 @@ final class AccountStore: ObservableObject {
     private let builder: RobloxLaunchURLBuilder
     private let launcher: any ParallelRobloxLaunching
     private let playerDiscovery: any PlayerDiscovering
+    private let friendRelay: any FriendRelayProviding
     private let joinAssessor: any JoinAssessing
     private let healthChecker: any AccountHealthChecking
     private let launchSetRepository: LaunchSetRepository
@@ -97,6 +129,7 @@ final class AccountStore: ObservableObject {
     private var serverPageCache: [String: PublicServerSnapshot] = [:]
     private let serverCacheLifetime: TimeInterval = 60
     private var didStartInitialAccountCheck = false
+    private var friendRelayCancellationRequested = false
 
     init(
         repository: AccountRepository = AccountRepository(),
@@ -107,6 +140,7 @@ final class AccountStore: ObservableObject {
         launcher: (any ParallelRobloxLaunching)? = nil,
         launchMode: RobloxLaunchMode? = nil,
         playerDiscovery: (any PlayerDiscovering)? = nil,
+        friendRelay: (any FriendRelayProviding)? = nil,
         joinAssessor: (any JoinAssessing)? = nil,
         healthChecker: (any AccountHealthChecking)? = nil,
         launchSetRepository: LaunchSetRepository? = nil,
@@ -126,6 +160,7 @@ final class AccountStore: ObservableObject {
         self.playerDiscovery = playerDiscovery ?? PlayerDiscoveryService(
             social: RobloxSocialAPIClient()
         )
+        self.friendRelay = friendRelay ?? FriendRelayService()
         self.joinAssessor = joinAssessor ?? JoinAssessmentService()
         self.healthChecker = healthChecker ?? AccountHealthService(vault: vault, api: api)
         self.launchSetRepository = launchSetRepository ?? LaunchSetRepository(dataDirectory: repository.dataDirectory)
@@ -588,6 +623,13 @@ final class AccountStore: ObservableObject {
     }
 
     func launchFriendPlayer(_ player: DiscoveredPlayer, accountIDs: Set<UUID>) async {
+        guard !isFriendRelayLaunching else {
+            notice = Notice(
+                title: "A friend relay is already running",
+                message: "Wait for it to finish or select Stop Relay before starting another one."
+            )
+            return
+        }
         guard case .friendTarget = player.verification,
               let placeID = player.presence.placeID,
               let jobID = player.presence.jobID?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -609,6 +651,15 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        isFriendRelayLaunching = true
+        friendRelayCancellationRequested = false
+        friendRelayPlayerID = player.id
+        friendRelayStates = Dictionary(uniqueKeysWithValues: selected.map { ($0.id, .planning) })
+        defer {
+            isFriendRelayLaunching = false
+            friendRelayCancellationRequested = false
+        }
+
         await checkAccounts(accountIDs)
         let notReady = selected.filter { accountHealth[$0.id]?.isReady != true }
         guard notReady.isEmpty else {
@@ -619,7 +670,7 @@ final class AccountStore: ObservableObject {
             return
         }
 
-        guard let source = selected.first(where: { player.candidate.sourceAccountIDs.contains($0.id) }) else {
+        guard selected.contains(where: { player.candidate.sourceAccountIDs.contains($0.id) }) else {
             notice = Notice(
                 title: "Select a friend account",
                 message: "Select at least one account listed under Visible to these accounts. Roblox gave that account the friend's server, so it must start first."
@@ -627,43 +678,205 @@ final class AccountStore: ObservableObject {
             return
         }
 
-        batchStatus = "Starting @\(source.username) first"
-        await launch(
-            account: source,
-            placeText: String(placeID),
-            server: .manualJob(jobID),
-            rememberSelection: false
-        )
-        guard runningAccountIDs.contains(source.id) else {
-            batchStatus = "The first friend account did not start"
+        var sessions: [UUID: String] = [:]
+        do {
+            for account in selected {
+                guard let session = try vault.read(for: account.id), !session.isEmpty else {
+                    throw RobloxAPIError.invalidSession
+                }
+                sessions[account.id] = session
+            }
+        } catch {
+            notice = Notice(title: "Some accounts are signed out", message: error.localizedDescription)
             return
         }
 
-        let remainingIDs = accountIDs.subtracting([source.id])
-        guard !remainingIDs.isEmpty else {
-            clearRememberedFriendServer(jobID, accountIDs: [source.id])
-            batchSelectedIDs.removeAll()
-            batchStates.removeAll()
-            batchStatus = "Started @\(source.username)"
-            return
+        batchStatus = "Finding friend paths for \(selected.count) accounts"
+
+        let selectedIDs = Set(selected.map(\.id))
+        let sourceIDs = player.candidate.sourceAccountIDs.intersection(selectedIDs)
+        let plan = await friendRelay.plan(accounts: selected, sourceAccountIDs: sourceIDs)
+        let accountByID = Dictionary(uniqueKeysWithValues: selected.map { ($0.id, $0) })
+        let orderByID = Dictionary(uniqueKeysWithValues: selected.enumerated().map { ($0.element.id, $0.offset) })
+        var joinedIDs = Set<UUID>()
+
+        let orderedSources = plan.sourceAccountIDs.sorted {
+            orderByID[$0, default: .max] < orderByID[$1, default: .max]
+        }
+        for accountID in orderedSources {
+            if friendRelayCancellationRequested { break }
+            guard let account = accountByID[accountID], let session = sessions[accountID] else { continue }
+            friendRelayStates[accountID] = .starting(player.candidate.username)
+            batchStatus = "Starting @\(account.username) through @\(player.candidate.username)"
+            await launch(
+                account: account,
+                placeText: String(placeID),
+                server: .player(
+                    username: player.candidate.username,
+                    userID: player.candidate.userID,
+                    jobID: jobID
+                ),
+                rememberSelection: false,
+                friendRelayStep: true
+            )
+            guard runningAccountIDs.contains(accountID) else {
+                friendRelayStates[accountID] = .failed(notice?.message ?? "Roblox did not start.")
+                continue
+            }
+            friendRelayStates[accountID] = .confirming
+            let arrival = await friendRelay.waitForServer(
+                account: account,
+                session: session,
+                placeID: placeID,
+                jobID: jobID
+            )
+            if arrival == .arrived {
+                joinedIDs.insert(accountID)
+                friendRelayStates[accountID] = .joined(nil)
+            } else {
+                friendRelayStates[accountID] = .failed(friendRelayFailureMessage(for: arrival))
+            }
         }
 
-        batchSelectedIDs = remainingIDs
-        batchStatus = "First account started. Starting \(remainingIDs.count) more"
-        await launchBatch(
-            placeText: String(placeID),
-            server: .manualJob(jobID),
-            skipPublicServerPreflight: true,
-            skipHealthPreflight: true,
-            rememberSelection: false
-        )
-        clearRememberedFriendServer(
-            jobID,
-            accountIDs: accountIDs.intersection(runningAccountIDs)
-        )
-        if accountIDs.isSubset(of: runningAccountIDs) {
-            batchStatus = "Started all \(accountIDs.count) accounts"
-            launchStatus = "Running \(accountIDs.count) accounts in the friend server"
+        let reachableAccounts = selected.filter {
+            !plan.sourceAccountIDs.contains($0.id) && plan.levels[$0.id] != nil
+        }.sorted { left, right in
+            let leftLevel = plan.levels[left.id] ?? .max
+            let rightLevel = plan.levels[right.id] ?? .max
+            if leftLevel != rightLevel { return leftLevel < rightLevel }
+            return orderByID[left.id, default: .max] < orderByID[right.id, default: .max]
+        }
+
+        for account in reachableAccounts {
+            if friendRelayCancellationRequested { break }
+            guard let session = sessions[account.id],
+                  let parentID = plan.availableParent(for: account.id, joinedAccountIDs: joinedIDs),
+                  let parent = accountByID[parentID] else {
+                let lookupMessage = plan.lookupFailures[account.id].map { " The friend list check failed: \($0)" } ?? ""
+                friendRelayStates[account.id] = .failed("No confirmed friend path was available.\(lookupMessage)")
+                continue
+            }
+            friendRelayStates[account.id] = .starting(parent.username)
+            batchStatus = "Starting @\(account.username) through @\(parent.username)"
+            await launch(
+                account: account,
+                placeText: String(placeID),
+                server: .player(username: parent.username, userID: parent.userID, jobID: jobID),
+                rememberSelection: false,
+                friendRelayStep: true
+            )
+            guard runningAccountIDs.contains(account.id) else {
+                friendRelayStates[account.id] = .failed(notice?.message ?? "Roblox did not start.")
+                continue
+            }
+            friendRelayStates[account.id] = .confirming
+            let arrival = await friendRelay.waitForServer(
+                account: account,
+                session: session,
+                placeID: placeID,
+                jobID: jobID
+            )
+            if arrival == .arrived {
+                joinedIDs.insert(account.id)
+                friendRelayStates[account.id] = .joined(parent.username)
+            } else {
+                friendRelayStates[account.id] = .failed(friendRelayFailureMessage(for: arrival))
+            }
+        }
+
+        // Keep the previous direct Job ID behavior for accounts that have no usable
+        // friend path. It is a fallback only, and it must pass the same server check.
+        for account in selected where !friendRelayCancellationRequested
+            && !joinedIDs.contains(account.id)
+            && !runningAccountIDs.contains(account.id) {
+            guard let session = sessions[account.id] else { continue }
+            friendRelayStates[account.id] = .tryingDirect
+            batchStatus = "Trying @\(account.username) directly"
+            await launch(
+                account: account,
+                placeText: String(placeID),
+                server: .manualJob(jobID),
+                rememberSelection: false,
+                friendRelayStep: true
+            )
+            guard runningAccountIDs.contains(account.id) else {
+                friendRelayStates[account.id] = .failed(notice?.message ?? "Roblox did not start.")
+                continue
+            }
+            friendRelayStates[account.id] = .confirming
+            let arrival = await friendRelay.waitForServer(
+                account: account,
+                session: session,
+                placeID: placeID,
+                jobID: jobID
+            )
+            if arrival == .arrived {
+                joinedIDs.insert(account.id)
+                friendRelayStates[account.id] = .joined(nil)
+            } else {
+                friendRelayStates[account.id] = .failed(friendRelayFailureMessage(for: arrival))
+            }
+        }
+
+        clearRememberedFriendServer(jobID, accountIDs: selectedIDs.intersection(runningAccountIDs))
+        let failedIDs = selectedIDs.subtracting(joinedIDs)
+        if friendRelayCancellationRequested {
+            for accountID in failedIDs {
+                switch friendRelayStates[accountID] {
+                case .joined, .failed:
+                    break
+                default:
+                    friendRelayStates[accountID] = .failed("The friend relay stopped before this account started.")
+                }
+            }
+        }
+        batchSelectedIDs = failedIDs
+        batchStates = Dictionary(uniqueKeysWithValues: failedIDs.map { accountID in
+            let message = friendRelayStates[accountID]?.detail ?? "Roblox did not confirm this account in the server."
+            return (accountID, .failed(message))
+        })
+        if friendRelayCancellationRequested {
+            batchStatus = "Friend relay stopped after \(joinedIDs.count) joined"
+            launchStatus = "Friend relay stopped"
+            notice = Notice(
+                title: "Friend relay stopped",
+                message: "No more accounts will start. Accounts that already joined will stay open."
+            )
+        } else if failedIDs.isEmpty {
+            batchStatus = "Joined all \(selected.count) accounts"
+            launchStatus = "Confirmed \(selected.count) accounts in the friend server"
+            notice = nil
+        } else {
+            batchStatus = "\(joinedIDs.count) joined, \(failedIDs.count) could not join"
+            launchStatus = "Confirmed \(joinedIDs.count) of \(selected.count) accounts"
+            let failedNames = selected.filter { failedIDs.contains($0.id) }.map { "@\($0.username)" }.joined(separator: ", ")
+            notice = Notice(
+                title: "Some accounts could not join",
+                message: "\(failedNames) could not be confirmed in this server. Review each account result in Find Players."
+            )
+        }
+    }
+
+    func clearFriendRelayProgress() {
+        guard !isFriendRelayLaunching else { return }
+        friendRelayPlayerID = nil
+        friendRelayStates.removeAll()
+    }
+
+    func cancelFriendRelay() {
+        guard isFriendRelayLaunching else { return }
+        friendRelayCancellationRequested = true
+        batchStatus = "Stopping friend relay"
+    }
+
+    private func friendRelayFailureMessage(for arrival: FriendRelayArrival) -> String {
+        switch arrival {
+        case .arrived:
+            return ""
+        case .timedOut:
+            return "Roblox started, but it did not report this server within 15 seconds."
+        case .unavailable(let message):
+            return "Roblox started, but the server check failed. \(message)"
         }
     }
 
@@ -880,6 +1093,7 @@ final class AccountStore: ObservableObject {
         guard runningLaunchSetID == nil,
               !isWorking,
               !isBatchLaunching,
+              !isFriendRelayLaunching,
               !isOpeningSelectedApps else { return }
         runningLaunchSetID = launchSet.id
         defer { runningLaunchSetID = nil }
@@ -1212,7 +1426,7 @@ final class AccountStore: ObservableObject {
     }
 
     func launchApp(account: ManagedAccount) async {
-        guard !isWorking, !isBatchLaunching, !isOpeningSelectedApps else {
+        guard !isWorking, !isBatchLaunching, !isFriendRelayLaunching, !isOpeningSelectedApps else {
             notice = Notice(
                 title: "Another launch is starting",
                 message: "Wait for the current launch to finish, then open the Roblox app again."
@@ -1273,7 +1487,7 @@ final class AccountStore: ObservableObject {
     }
 
     func launchSelectedApps(skipHealthPreflight: Bool = false) async {
-        guard !isWorking, !isBatchLaunching, !isOpeningSelectedApps else { return }
+        guard !isWorking, !isBatchLaunching, !isFriendRelayLaunching, !isOpeningSelectedApps else { return }
         let selectedAccounts = accounts.filter {
             batchSelectedIDs.contains($0.id) && !isRunning($0) && !isOpeningApp($0)
         }
@@ -1405,9 +1619,13 @@ final class AccountStore: ObservableObject {
         account: ManagedAccount,
         placeText: String,
         server: RobloxServerSelection,
-        rememberSelection: Bool = true
+        rememberSelection: Bool = true,
+        friendRelayStep: Bool = false
     ) async {
-        guard !isWorking, !isBatchLaunching, appOpeningAccountIDs.isEmpty else {
+        guard !isWorking,
+              !isBatchLaunching,
+              appOpeningAccountIDs.isEmpty,
+              friendRelayStep || !isFriendRelayLaunching else {
             notice = Notice(
                 title: "Another launch is starting",
                 message: "Wait for the current launch to finish, then select Play again."
@@ -1535,7 +1753,10 @@ final class AccountStore: ObservableObject {
         skipHealthPreflight: Bool = false,
         rememberSelection: Bool = true
     ) async {
-        guard !isWorking, !isBatchLaunching, appOpeningAccountIDs.isEmpty else { return }
+        guard !isWorking,
+              !isBatchLaunching,
+              !isFriendRelayLaunching,
+              appOpeningAccountIDs.isEmpty else { return }
         guard let placeID = Int64(placeText.trimmingCharacters(in: .whitespacesAndNewlines)), placeID > 0 else {
             notice = Notice(title: "Check the shared place ID", message: RobloxLaunchError.invalidPlaceID.localizedDescription)
             return
@@ -1955,7 +2176,10 @@ private func resolveServerTarget(
     switch selection {
     case .automatic:
         return ResolvedServerTarget(placeID: placeID, target: .publicServer)
-    case .publicInstance(let jobID, _, _), .player(_, _, let jobID), .manualJob(let jobID):
+    case .player(_, let userID, _):
+        guard userID > 0 else { throw RobloxLaunchError.invalidServer }
+        return ResolvedServerTarget(placeID: placeID, target: .followUser(userID))
+    case .publicInstance(let jobID, _, _), .manualJob(let jobID):
         let clean = jobID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard UUID(uuidString: clean) != nil else { throw RobloxLaunchError.invalidServer }
         return ResolvedServerTarget(placeID: placeID, target: .job(clean))

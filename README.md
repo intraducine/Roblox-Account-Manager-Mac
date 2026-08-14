@@ -17,7 +17,7 @@ This project is independent. Roblox Corporation does not make or approve it. Use
 - Let Roblox choose a server, choose a public server with enough open spaces, or use a supported private-server link.
 - Save private-server links with names and browse them again without pasting them each time.
 - Find friends whose current game is visible to at least one saved account.
-- Join a visible friend with several accounts. The friend account starts first, then the app sends the other selected accounts to the same server.
+- Join a visible friend with several accounts. The app can relay through existing friendships between saved accounts and confirms each server hop before it continues.
 - Open Roblox Home, Profile, Settings, or Security as one saved account without signing the other accounts out.
 - Use Roblox Play and Join buttons in that account's website window. The correct saved account opens in its own managed Roblox window.
 - Check whether a saved account is still signed in and sign in again without losing its name, groups, notes, favorites, or Launch Sets.
@@ -123,11 +123,15 @@ To join a friend with several accounts:
 1. Select the friend.
 2. Select every account that you want to launch. Accounts that already have a managed Roblox client running are disabled.
 3. Include at least one account shown under **Visible To**. Roblox gave that account the friend's server, so it must start first.
-4. Select **Join Friend**.
+4. Select **Join Accounts with Friend Relay**.
 
-The manager starts one account from the **Visible To** list first. It then tries the other selected accounts in the same server. Roblox checks access and available space for each account. An account can still be rejected because it cannot join that player, the server is full, the game has limits, or the server changed.
+The manager checks the existing friendships between the selected accounts and builds the shortest available layers from the **Visible To** accounts. It starts a source account through the selected player. It confirms the exact Place ID and Job ID, then starts the next account through that confirmed friend. It repeats this process for each layer. The account list shows the current path and result for every account.
 
-This friend flow makes no public-server requests. Public-server browsing remains a separate manual tool.
+If an account has no usable friend path, the manager keeps the old direct Job ID attempt as a fallback. It also checks that result. Select **Stop Relay** to prevent any accounts that have not started yet from opening. Accounts that already joined stay open.
+
+The relay does not send friend requests or change any Roblox friendship. Roblox checks visibility, access, available space, age, region, and game limits for every account. A private or restricted server can still reject an account.
+
+This friend flow makes no public-server requests. It reads existing friendship lists and uses each saved account's authenticated presence only to confirm arrival. Public-server browsing remains a separate manual tool.
 
 Roblox controls online visibility and join access. See [Roblox Online Status and Visibility](https://en.help.roblox.com/hc/en-us/articles/39144167691284-Online-Status-and-Visibility).
 

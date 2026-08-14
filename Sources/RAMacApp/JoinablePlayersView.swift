@@ -40,6 +40,7 @@ struct JoinablePlayersView: View {
         .onChange(of: selectedPlayerID) { _ in
             selectedAccountIDs.removeAll()
             assessments.removeAll()
+            store.clearFriendRelayProgress()
         }
         .onChange(of: store.runningAccountIDs) { runningAccountIDs in
             selectedAccountIDs.subtract(runningAccountIDs)
@@ -249,7 +250,8 @@ struct JoinablePlayersView: View {
                     AccountJoinMatrixView(
                         store: store,
                         selectedAccountIDs: $selectedAccountIDs,
-                        assessments: assessments
+                        assessments: assessments,
+                        relayStates: store.friendRelayPlayerID == player.id ? store.friendRelayStates : [:]
                     )
                     Button("Check Selected Accounts") {
                         Task { assessments = await store.assessments(for: player, accountIDs: selectedAccountIDs) }
@@ -269,12 +271,37 @@ struct JoinablePlayersView: View {
     private func primaryActions(for player: DiscoveredPlayer) -> some View {
         switch player.verification {
         case .friendTarget:
-            Button("Join Friend with \(selectedAccountIDs.count) Account\(selectedAccountIDs.count == 1 ? "" : "s")") {
+            if selectedAccountIDs.count > 1 {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Friend relay")
+                        .font(.headline)
+                    Text("The app finds paths between the selected accounts. Each account starts through a friend that the app already confirmed in this server.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if store.isFriendRelayLaunching, store.friendRelayPlayerID == player.id {
+                        HStack(spacing: 10) {
+                            ProgressView("Joining accounts in order")
+                                .controlSize(.small)
+                            Spacer()
+                            Button("Stop Relay") { store.cancelFriendRelay() }
+                                .controlSize(.small)
+                        }
+                    }
+                }
+            }
+            Button(selectedAccountIDs.count > 1
+                ? "Join \(selectedAccountIDs.count) Accounts with Friend Relay"
+                : "Join Friend") {
                 Task { await prepareFriendLaunch(player) }
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(selectedAccountIDs.isEmpty || !hasSelectedSource(for: player))
+            .disabled(
+                selectedAccountIDs.isEmpty
+                    || !hasSelectedSource(for: player)
+                    || store.isFriendRelayLaunching
+            )
             if !selectedAccountIDs.isEmpty, !hasSelectedSource(for: player) {
                 Text("Select at least one account listed under Visible to these accounts. Roblox gave that account the friend's server, so it starts first.")
                     .font(.caption)
@@ -461,7 +488,7 @@ struct JoinablePlayersView: View {
     private func verificationExplanation(_ verification: PublicServerVerification) -> String? {
         switch verification {
         case .friendTarget:
-            return "Roblox told one saved account which server this friend is using. The manager starts that account first, then tries the other selected accounts in the same server. Roblox decides whether each account can enter."
+            return "Roblox told one saved account which server this friend is using. The manager can relay through existing friendships between selected accounts and confirms each server hop. Roblox still decides whether each account can enter."
         case .verifiedPublic:
             return "The reported Job ID appears in Roblox's public server list."
         case .unconfirmed(let pagesSearched):
@@ -500,39 +527,53 @@ struct AccountJoinMatrixView: View {
     @ObservedObject var store: AccountStore
     @Binding var selectedAccountIDs: Set<UUID>
     let assessments: [AccountJoinAssessment]
+    let relayStates: [UUID: AccountStore.FriendRelayState]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             ForEach(store.accounts) { account in
                 let isRunning = store.runningAccountIDs.contains(account.id)
-                HStack(spacing: 8) {
-                    Toggle(
-                        "Select @\(account.username)",
-                        isOn: Binding(
-                            get: { selectedAccountIDs.contains(account.id) },
-                            set: { selected in
-                                guard !isRunning else {
-                                    selectedAccountIDs.remove(account.id)
-                                    return
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Toggle(
+                            "Select @\(account.username)",
+                            isOn: Binding(
+                                get: { selectedAccountIDs.contains(account.id) },
+                                set: { selected in
+                                    guard !isRunning else {
+                                        selectedAccountIDs.remove(account.id)
+                                        return
+                                    }
+                                    if selected { selectedAccountIDs.insert(account.id) }
+                                    else { selectedAccountIDs.remove(account.id) }
                                 }
-                                if selected { selectedAccountIDs.insert(account.id) }
-                                else { selectedAccountIDs.remove(account.id) }
-                            }
+                            )
                         )
-                    )
-                    .toggleStyle(.checkbox)
-                    .disabled(isRunning)
-                    Text(account.title).lineLimit(1)
-                    Spacer()
-                    Text(assessmentText(account.id))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .toggleStyle(.checkbox)
+                        .disabled(isRunning)
+                        Text(account.title).lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(statusText(account.id))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    if let detail = relayStates[account.id]?.detail {
+                        Text(detail)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.leading, 22)
+                    }
                 }
             }
         }
     }
 
-    private func assessmentText(_ accountID: UUID) -> String {
+    private func statusText(_ accountID: UUID) -> String {
+        if let relayState = relayStates[accountID] {
+            return relayState.label
+        }
         if store.runningAccountIDs.contains(accountID) {
             return "Already running"
         }

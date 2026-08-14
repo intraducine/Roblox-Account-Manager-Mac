@@ -71,6 +71,20 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertTrue(privateServer.absoluteString.contains("linkCode%3Dlink"))
     }
 
+    func testFollowUserRequestUsesTheFriendUserID() throws {
+        let follow = try builder.makeURL(
+            ticket: "ticket",
+            placeID: 1818,
+            target: .followUser(42),
+            trackerID: "123456789012",
+            launchTime: 1
+        )
+
+        XCTAssertTrue(follow.absoluteString.contains("RequestFollowUser"))
+        XCTAssertTrue(follow.absoluteString.contains("userId%3D42"))
+        XCTAssertFalse(follow.absoluteString.contains("RequestGameJob"))
+    }
+
     func testWebsitePlayLinkParsesAutomaticAndSpecificServerTargets() throws {
         let automaticURL = try builder.makeURL(
             ticket: "page-ticket-that-must-not-be-reused",

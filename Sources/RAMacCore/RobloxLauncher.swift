@@ -79,6 +79,7 @@ public enum RobloxLaunchMode: String, Codable, CaseIterable, Hashable, Sendable 
 public enum RobloxServerTarget: Equatable, Sendable {
     case publicServer
     case job(String)
+    case followUser(Int64)
     case privateServer(accessCode: String, linkCode: String)
 }
 
@@ -111,6 +112,9 @@ public struct RobloxLaunchURLBuilder: Sendable {
                 throw RobloxLaunchError.invalidServer
             }
             requestURL = "https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestGameJob&browserTrackerId=\(trackerID)&placeId=\(placeID)&gameId=\(jobID)&isPlayTogetherGame=false"
+        case .followUser(let userID):
+            guard userID > 0 else { throw RobloxLaunchError.invalidServer }
+            requestURL = "https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestFollowUser&browserTrackerId=\(trackerID)&userId=\(userID)&isPlayTogetherGame=false"
         case .privateServer(let accessCode, let linkCode):
             guard !accessCode.isEmpty, !linkCode.isEmpty else { throw RobloxLaunchError.invalidServer }
             requestURL = "https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestPrivateGame&placeId=\(placeID)&accessCode=\(accessCode)&linkCode=\(linkCode)"

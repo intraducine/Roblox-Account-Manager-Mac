@@ -281,8 +281,8 @@ final class AccountStoreBatchTests: XCTestCase {
         let publicServerRequests = await fixture.api.publicServerRequestCount()
         XCTAssertEqual(publicServerRequests, 0)
         XCTAssertEqual(fixture.store.runningAccountIDs, Set(fixture.accounts.map(\.id)))
-        XCTAssertEqual(fixture.store.batchStatus, "Started all 3 accounts")
-        XCTAssertEqual(fixture.store.launchStatus, "Running 3 accounts in the friend server")
+        XCTAssertEqual(fixture.store.batchStatus, "Joined all 3 accounts")
+        XCTAssertEqual(fixture.store.launchStatus, "Confirmed 3 accounts in the friend server")
 
         let saved = try fixture.repository.load()
         let sourceAfterLaunch = try XCTUnwrap(saved.first(where: { $0.id == sourceAccount.id }))
@@ -294,6 +294,129 @@ final class AccountStoreBatchTests: XCTestCase {
         let untouchedAfterLaunch = try XCTUnwrap(saved.first(where: { $0.id == fixture.accounts[2].id }))
         XCTAssertEqual(untouchedAfterLaunch.savedPlaceID, "")
         XCTAssertEqual(untouchedAfterLaunch.savedServer, "")
+    }
+
+    func testFriendRelayChainsEachAccountThroughAConfirmedFriend() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let first = fixture.accounts[0]
+        let second = fixture.accounts[1]
+        let third = fixture.accounts[2]
+        let jobID = "11111111-2222-3333-4444-555555555555"
+        await fixture.friendRelay.setPlan(FriendRelayPlan(
+            sourceAccountIDs: [first.id],
+            friendAccountIDs: [
+                first.id: [second.id],
+                second.id: [first.id, third.id],
+                third.id: [second.id]
+            ],
+            levels: [first.id: 0, second.id: 1, third.id: 2]
+        ))
+        let player = DiscoveredPlayer(
+            candidate: PlayerCandidate(
+                userID: 900,
+                username: "target_friend",
+                displayName: "Target Friend",
+                sourceAccountIDs: [first.id]
+            ),
+            presence: PlayerPresenceSnapshot(
+                userID: 900,
+                presenceType: .inExperience,
+                placeID: 1818,
+                jobID: jobID
+            ),
+            verification: .friendTarget,
+            isPubliclyVisible: false
+        )
+
+        await fixture.store.launchFriendPlayer(player, accountIDs: Set(fixture.accounts.map(\.id)))
+
+        let attemptedAccountIDs = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertEqual(attemptedAccountIDs, [first.id, second.id, third.id])
+        let urls = await fixture.launcher.attemptedURLs()
+        XCTAssertEqual(urls.count, 3)
+        XCTAssertTrue(urls[0].absoluteString.contains("RequestFollowUser"))
+        XCTAssertTrue(urls[0].absoluteString.contains("userId%3D900"))
+        XCTAssertTrue(urls[1].absoluteString.contains("userId%3D1"))
+        XCTAssertTrue(urls[2].absoluteString.contains("userId%3D2"))
+        XCTAssertEqual(fixture.store.friendRelayStates[first.id], .joined(nil))
+        XCTAssertEqual(fixture.store.friendRelayStates[second.id], .joined(first.username))
+        XCTAssertEqual(fixture.store.friendRelayStates[third.id], .joined(second.username))
+    }
+
+    func testFriendRelayKeepsDirectJobFallbackForAnAccountWithNoPath() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let source = fixture.accounts[0]
+        let other = fixture.accounts[1]
+        let jobID = "11111111-2222-3333-4444-555555555555"
+        await fixture.friendRelay.setPlan(FriendRelayPlan(
+            sourceAccountIDs: [source.id],
+            friendAccountIDs: [source.id: [], other.id: []],
+            levels: [source.id: 0]
+        ))
+        let player = DiscoveredPlayer(
+            candidate: PlayerCandidate(
+                userID: 900,
+                username: "target_friend",
+                displayName: "Target Friend",
+                sourceAccountIDs: [source.id]
+            ),
+            presence: PlayerPresenceSnapshot(
+                userID: 900,
+                presenceType: .inExperience,
+                placeID: 1818,
+                jobID: jobID
+            ),
+            verification: .friendTarget,
+            isPubliclyVisible: false
+        )
+
+        await fixture.store.launchFriendPlayer(player, accountIDs: [source.id, other.id])
+
+        let urls = await fixture.launcher.attemptedURLs()
+        XCTAssertEqual(urls.count, 2)
+        XCTAssertTrue(urls[0].absoluteString.contains("RequestFollowUser"))
+        XCTAssertTrue(urls[1].absoluteString.contains("RequestGameJob"))
+        XCTAssertEqual(fixture.store.friendRelayStates[other.id], .joined(nil))
+    }
+
+    func testStoppingFriendRelayPreventsTheRemainingAccountsFromStarting() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let source = fixture.accounts[0]
+        await fixture.friendRelay.setWaitNanoseconds(300_000_000)
+        let player = DiscoveredPlayer(
+            candidate: PlayerCandidate(
+                userID: 900,
+                username: "target_friend",
+                displayName: "Target Friend",
+                sourceAccountIDs: [source.id]
+            ),
+            presence: PlayerPresenceSnapshot(
+                userID: 900,
+                presenceType: .inExperience,
+                placeID: 1818,
+                jobID: "11111111-2222-3333-4444-555555555555"
+            ),
+            verification: .friendTarget,
+            isPubliclyVisible: false
+        )
+
+        let relayTask = Task {
+            await fixture.store.launchFriendPlayer(player, accountIDs: Set(fixture.accounts.map(\.id)))
+        }
+        for _ in 0..<100 {
+            if await fixture.launcher.attemptedAccountIDs().contains(source.id) { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        fixture.store.cancelFriendRelay()
+        await relayTask.value
+
+        let attempts = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertEqual(attempts, [source.id])
+        XCTAssertEqual(fixture.store.notice?.title, "Friend relay stopped")
+        XCTAssertFalse(fixture.store.isFriendRelayLaunching)
     }
 
     func testFriendJoinRequiresASelectedSourceAccount() async throws {
@@ -825,12 +948,14 @@ final class AccountStoreBatchTests: XCTestCase {
             failingAccountID: failingID,
             launchDelayNanoseconds: launchDelayNanoseconds
         )
+        let friendRelay = BatchMockFriendRelay()
         let store = AccountStore(
             repository: repository,
             vault: vault,
             api: api,
             launcher: launcher,
-            launchMode: .unmodifiedParallel
+            launchMode: .unmodifiedParallel,
+            friendRelay: friendRelay
         )
         return Fixture(
             directory: directory,
@@ -838,6 +963,7 @@ final class AccountStoreBatchTests: XCTestCase {
             accounts: accounts,
             api: api,
             launcher: launcher,
+            friendRelay: friendRelay,
             store: store
         )
     }
@@ -915,7 +1041,60 @@ private struct Fixture {
     let accounts: [ManagedAccount]
     let api: BatchMockAPI
     let launcher: BatchMockLauncher
+    let friendRelay: BatchMockFriendRelay
     let store: AccountStore
+}
+
+private actor BatchMockFriendRelay: FriendRelayProviding {
+    private var configuredPlan: FriendRelayPlan?
+    private var arrivals: [UUID: FriendRelayArrival] = [:]
+    private var waitNanoseconds: UInt64 = 0
+
+    func setPlan(_ plan: FriendRelayPlan) {
+        configuredPlan = plan
+    }
+
+    func setArrival(_ arrival: FriendRelayArrival, for accountID: UUID) {
+        arrivals[accountID] = arrival
+    }
+
+    func setWaitNanoseconds(_ value: UInt64) {
+        waitNanoseconds = value
+    }
+
+    func plan(accounts: [ManagedAccount], sourceAccountIDs: Set<UUID>) -> FriendRelayPlan {
+        if let configuredPlan { return configuredPlan }
+        let selectedIDs = Set(accounts.map(\.id))
+        let roots = sourceAccountIDs.intersection(selectedIDs)
+        var friends: [UUID: Set<UUID>] = [:]
+        var levels: [UUID: Int] = [:]
+        for account in accounts {
+            if roots.contains(account.id) {
+                friends[account.id] = selectedIDs.subtracting([account.id])
+                levels[account.id] = 0
+            } else {
+                friends[account.id] = roots
+                levels[account.id] = 1
+            }
+        }
+        return FriendRelayPlan(
+            sourceAccountIDs: roots,
+            friendAccountIDs: friends,
+            levels: levels
+        )
+    }
+
+    func waitForServer(
+        account: ManagedAccount,
+        session: String,
+        placeID: Int64,
+        jobID: String
+    ) async -> FriendRelayArrival {
+        if waitNanoseconds > 0 {
+            try? await Task.sleep(nanoseconds: waitNanoseconds)
+        }
+        return arrivals[account.id] ?? .arrived
+    }
 }
 
 private final class MemoryVault: SecretVault, ProfileNoteVault, @unchecked Sendable {
