@@ -9,6 +9,7 @@
 - Reported every account clearly when a full, restricted, or changed server blocks a relay.
 - Removed server and open-place details from Joinable Players because Roblox does not provide them reliably there.
 - Expanded every remaining disclosure-triangle control to use its full labeled row as the click target.
+- Kept each isolated Roblox Keychain unlocked for its account so Roblox can save its session without a password or missing-Keychain warning.
 
 ## 1.1.0 - 2026-08-13
 

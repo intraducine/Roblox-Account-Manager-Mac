@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import Security
 
 public enum RobloxLaunchError: LocalizedError, Equatable {
     case invalidPlaceID
@@ -967,12 +968,7 @@ public actor ParallelRobloxLauncher {
         let keychainURL = keychainsURL.appendingPathComponent("login.keychain-db")
         let oneTimePassword = UUID().uuidString + UUID().uuidString
         do {
-            try run(
-                executable: URL(fileURLWithPath: "/usr/bin/security"),
-                arguments: ["create-keychain", keychainURL.path],
-                environment: environment,
-                standardInput: "\(oneTimePassword)\n\(oneTimePassword)\n"
-            )
+            try createKeychain(at: keychainURL, password: oneTimePassword)
             try run(
                 executable: URL(fileURLWithPath: "/usr/bin/security"),
                 arguments: ["set-keychain-settings", keychainURL.path],
@@ -992,6 +988,30 @@ public actor ParallelRobloxLauncher {
             try? fileManager.removeItem(at: keychainsURL)
             throw RobloxLaunchError.copyFailed(
                 "The private Keychain for this Roblox account could not be prepared. \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func createKeychain(at url: URL, password: String) throws {
+        let passwordData = Data(password.utf8)
+        var keychain: SecKeychain?
+        let createStatus = url.path.withCString { pathPointer in
+            passwordData.withUnsafeBytes { passwordBytes in
+                SecKeychainCreate(
+                    pathPointer,
+                    UInt32(passwordBytes.count),
+                    passwordBytes.baseAddress,
+                    false,
+                    nil,
+                    &keychain
+                )
+            }
+        }
+        guard createStatus == errSecSuccess, keychain != nil else {
+            throw NSError(
+                domain: NSOSStatusErrorDomain,
+                code: Int(createStatus),
+                userInfo: [NSLocalizedDescriptionKey: SecCopyErrorMessageString(createStatus, nil) as String? ?? "Keychain creation failed."]
             )
         }
     }
