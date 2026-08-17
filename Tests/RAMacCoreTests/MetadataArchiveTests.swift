@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import RAMacCore
 
@@ -99,7 +100,20 @@ final class MetadataArchiveTests: XCTestCase {
     func testImportRemapsLaunchSetToTheExistingLocalAccountID() throws {
         let local = ManagedAccount(id: UUID(), userID: 5, username: "local", displayName: "Local")
         let backup = ManagedAccount(id: UUID(), userID: 5, username: "backup", displayName: "Backup")
-        let set = LaunchSet(name: "Team", accountIDs: [backup.id], placeID: 1818)
+        let importedAssignment = WindowLayoutAssignment(
+            accountID: backup.id,
+            displayID: "display-1",
+            displayName: "Display",
+            displayPixelWidth: 2560,
+            displayPixelHeight: 1440,
+            region: .left
+        )
+        let set = LaunchSet(
+            name: "Team",
+            accountIDs: [backup.id],
+            placeID: 1818,
+            windowArrangement: .custom([importedAssignment])
+        )
         let service = MetadataArchiveService()
         let data = try service.exportData(
             accounts: [backup],
@@ -117,5 +131,24 @@ final class MetadataArchiveTests: XCTestCase {
         )
 
         XCTAssertEqual(result.launchSets.first?.accountIDs, [local.id])
+        guard case .custom(let assignments) = result.launchSets.first?.windowArrangement else {
+            return XCTFail("Expected a custom window arrangement")
+        }
+        XCTAssertEqual(assignments.first?.accountID, local.id)
+        XCTAssertEqual(assignments.first?.region, .left)
+    }
+
+    func testLaunchSetWithoutWindowPolicyUsesSavedPlacements() throws {
+        let launchSet = LaunchSet(name: "Legacy", placeID: 1818)
+        let encoded = try JSONEncoder().encode(launchSet)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object["windowArrangement"] = nil
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(LaunchSet.self, from: legacyData)
+
+        XCTAssertEqual(decoded.windowArrangement, .savedPlacements)
     }
 }

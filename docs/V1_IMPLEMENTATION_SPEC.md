@@ -123,6 +123,28 @@ Version 1.0.4 and later must:
 - Reject a v1.1.2 or later package if the signed app contains an email address or local user home path.
 - Do not claim Apple notarization or suppress the expected unidentified-developer warning for manual downloads.
 
+### Version 1.1.2 native window layout
+
+- List every connected display with its name, physical pixel dimensions, and current usable workspace.
+- Let users drag a saved profile onto nine familiar snap targets: four quarters, four halves, and the whole usable display.
+- Use `NSScreen.visibleFrame` at launch time. Do not cache menu bar, Dock, camera-housing, or monitor geometry.
+- Convert AppKit display coordinates into the top-left global coordinate system used by macOS Accessibility.
+- Bind placement to the exact process ID returned by the managed Roblox launch.
+- Set the standard Accessibility position and size attributes first. Do not edit, inject into, or patch Roblox window code.
+- Treat a successful Accessibility write as a request, then poll until Roblox reports a stable frame.
+- If Roblox enforces another size, place its final native size against the selected edge or corner within `NSScreen.visibleFrame`. Record the adjustment as layout status, not as a Roblox launch failure.
+- Keep Arrange Windows as the separate global editor for saved per-account placements.
+- Show the monitor and selected profiles inline below the Launch Accounts action. Use saved placements by default and create a temporary custom override only after the user changes the inline layout.
+- Add the same inline editor to Launch Set settings. Let each set inherit saved placements or store its own custom layout.
+- Decode Launch Sets created before this field as saved placements. Remap account IDs inside imported custom layouts.
+- Do not install a helper, use private window scaling, inject into Roblox, modify Roblox, simulate input, or require reduced System Integrity Protection.
+- Require explicit macOS Accessibility permission and keep launches functional when permission is absent.
+- Open the exact Accessibility settings pane when permission is missing, support a manual status refresh, and explain the one-time off/on reset needed after a signing-identity migration.
+- Keep global display assignments local to the Mac and outside normal backups. Include custom Launch Set layouts with their Launch Sets in metadata backups.
+- Do not silently move an assignment to a different display when its saved monitor is disconnected.
+- Clear overlapping assignments when a larger snap region replaces smaller regions.
+- Clear an account's assignment when the account is removed.
+
 ## 3. Version 1.0 scope
 
 ### Required features
@@ -408,7 +430,7 @@ Add one toolbar action:
 
 Also add a native menu command:
 
-> View > Joinable Players
+> Tools > Joinable Players
 
 Open a separate window. Do not add another large block to the account detail screen.
 
@@ -550,6 +572,7 @@ struct LaunchSet: Codable, Identifiable {
     var placeID: Int64
     var experienceName: String?
     var serverStrategy: ServerStrategy
+    var windowArrangement: WindowArrangementPolicy
     var createdAt: Date
     var updatedAt: Date
 }
@@ -561,6 +584,8 @@ Supported server strategies:
 - Browse before launch
 - Join a player
 - Private server link
+
+Selecting a group in Launch Set settings must also select every current member in the Accounts section. Clearing a group must clear its members unless another selected group still contains them.
 
 Do not save a discovered public Job ID. Public servers can close.
 

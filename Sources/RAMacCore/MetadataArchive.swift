@@ -136,6 +136,19 @@ public struct MetadataArchiveService: Sendable {
         for imported in archive.launchSets {
             var mapped = imported
             mapped.accountIDs = imported.accountIDs.compactMap { accountIDMap[$0] }
+            if case .custom(let assignments) = imported.windowArrangement {
+                mapped.windowArrangement = .custom(assignments.compactMap { assignment in
+                    guard let accountID = accountIDMap[assignment.accountID] else { return nil }
+                    return WindowLayoutAssignment(
+                        accountID: accountID,
+                        displayID: assignment.displayID,
+                        displayName: assignment.displayName,
+                        displayPixelWidth: assignment.displayPixelWidth,
+                        displayPixelHeight: assignment.displayPixelHeight,
+                        region: assignment.region
+                    )
+                })
+            }
             sets[imported.id] = mapped
         }
         return MetadataImportResult(

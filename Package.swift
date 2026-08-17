@@ -20,7 +20,10 @@ let package = Package(
         .executableTarget(
             name: "RAMacApp",
             dependencies: ["RAMacCore"],
-            linkerSettings: [.linkedFramework("WebKit")]
+            linkerSettings: [
+                .linkedFramework("ApplicationServices"),
+                .linkedFramework("WebKit")
+            ]
         ),
         .testTarget(name: "RAMacCoreTests", dependencies: ["RAMacCore"]),
         .testTarget(name: "RAMacAppTests", dependencies: ["RAMacApp", "RAMacCore"])

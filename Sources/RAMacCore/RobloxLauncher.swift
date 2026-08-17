@@ -428,11 +428,12 @@ public actor ParallelRobloxLauncher {
             try? await Task.sleep(nanoseconds: attempt < 2 ? 250_000_000 : 100_000_000)
         }
 
-        let remainingPaths = Set(runningProcessTable().values)
+        let remainingProcesses = runningProcessTable()
+        let remainingPaths = Set(remainingProcesses.values)
         var stopped = officialStopped ? officialAccountIDs : []
         for accountID in requested.subtracting(officialAccountIDs) {
             let mainStopped = mainProcessByAccount[accountID].map {
-                executablePath(for: $0.processIdentifier) != $0.executablePath
+                remainingProcesses[$0.processIdentifier] != $0.executablePath
             } ?? true
             let helpersStopped = helperPathsByAccount[accountID, default: []].isDisjoint(with: remainingPaths)
             if mainStopped && helpersStopped {

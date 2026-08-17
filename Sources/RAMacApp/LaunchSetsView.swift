@@ -15,6 +15,10 @@ struct LaunchSetsView: View {
                         Text("\(launchSet.experienceName ?? (launchSet.placeID > 0 ? "Saved game" : "No game chosen")) · \(launchSet.serverStrategy.title)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        Text("\(resolvedAccountLabel(for: launchSet)) · \(arrangementTitle(for: launchSet.windowArrangement))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                     .tag(launchSet.id)
                     .contentShape(Rectangle())
@@ -107,6 +111,22 @@ struct LaunchSetsView: View {
         }
     }
 
+    private func resolvedAccountLabel(for launchSet: LaunchSet) -> String {
+        let count = store.accounts.filter { account in
+            launchSet.accountIDs.contains(account.id)
+                || launchSet.groupNames.contains { account.belongs(to: $0) }
+        }.count
+        return "\(count) account\(count == 1 ? "" : "s")"
+    }
+
+    private func arrangementTitle(for policy: WindowArrangementPolicy) -> String {
+        switch policy {
+        case .savedPlacements: return "Saved placements"
+        case .custom: return "Custom window layout"
+        case .unchanged: return "Windows unchanged"
+        }
+    }
+
     private func binding(for fallback: LaunchSet) -> Binding<LaunchSet> {
         Binding(get: { draft ?? fallback }, set: { draft = $0 })
     }
@@ -188,6 +208,22 @@ private struct LaunchSetEditor: View {
                     }
                 }
             }
+            Section("Windows") {
+                InlineWindowArrangementEditor(
+                    controller: store.windowLayout,
+                    accounts: resolvedAccounts,
+                    assignments: effectiveWindowAssignments,
+                    usesSavedPlacements: draft.windowArrangement.usesSavedPlacements,
+                    customStatus: "Using the custom layout saved with this Launch Set.",
+                    disabled: false,
+                    onAssignmentsChange: { assignments in
+                        draft.windowArrangement = .custom(assignments)
+                    },
+                    onUseSavedPlacements: {
+                        draft.windowArrangement = .savedPlacements
+                    }
+                )
+            }
             Section("Accounts") {
                 ForEach(store.accounts) { account in
                     Toggle(account.title, isOn: membership(account.id, in: $draft.accountIDs))
@@ -222,6 +258,21 @@ private struct LaunchSetEditor: View {
         .navigationTitle(draft.name)
     }
 
+    private var resolvedAccounts: [ManagedAccount] {
+        store.accounts.filter { account in
+            draft.accountIDs.contains(account.id)
+                || draft.groupNames.contains { account.belongs(to: $0) }
+        }
+    }
+
+    private var effectiveWindowAssignments: [WindowLayoutAssignment] {
+        let accountIDs = Set(resolvedAccounts.map(\.id))
+        return draft.windowArrangement.effectiveAssignments(
+            savedAssignments: store.windowLayout.savedAssignments(for: accountIDs),
+            accountIDs: accountIDs
+        )
+    }
+
     private var isValid: Bool {
         !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && (Int64(placeText) ?? 0) > 0
@@ -249,6 +300,10 @@ private struct LaunchSetEditor: View {
         case "private": draft.serverStrategy = .privateServerLink(privateLink)
         default: draft.serverStrategy = .robloxChooses
         }
+        if case .custom(let assignments) = draft.windowArrangement {
+            let validIDs = Set(resolvedAccounts.map(\.id))
+            draft.windowArrangement = .custom(assignments.filter { validIDs.contains($0.accountID) })
+        }
     }
 
     private func membership(_ id: UUID, in ids: Binding<[UUID]>) -> Binding<Bool> {
@@ -265,8 +320,7 @@ private struct LaunchSetEditor: View {
         Binding(
             get: { draft.groupNames.contains { $0.caseInsensitiveCompare(group) == .orderedSame } },
             set: { selected in
-                if selected { draft.groupNames = ManagedAccount.normalizedGroups(draft.groupNames + [group]) }
-                else { draft.groupNames.removeAll { $0.caseInsensitiveCompare(group) == .orderedSame } }
+                draft.setGroupSelection(group, selected: selected, accounts: store.accounts)
             }
         )
     }

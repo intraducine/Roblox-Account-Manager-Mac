@@ -49,6 +49,12 @@ struct RAMacApp: App {
         }
         .defaultSize(width: 980, height: 680)
 
+        Window("Arrange Roblox Windows", id: "window-layout") {
+            WindowLayoutView(store: store, controller: store.windowLayout)
+                .dismissTextInputOnOutsideClick()
+        }
+        .defaultSize(width: 1100, height: 650)
+
         Window("Diagnostics and Backup", id: "diagnostics") {
             DiagnosticsView(store: store)
                 .dismissTextInputOnOutsideClick()
@@ -78,10 +84,12 @@ private struct V1ViewCommands: Commands {
             Button("Add Account") { openWindow(id: "add-account") }
                 .keyboardShortcut("n", modifiers: .command)
         }
-        CommandGroup(after: .sidebar) {
+        CommandMenu("Tools") {
             Button("Joinable Players") { openWindow(id: "joinable-players") }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
             Button("Launch Sets") { openWindow(id: "launch-sets") }
+            Button("Arrange Roblox Windows") { openWindow(id: "window-layout") }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
             Button("Diagnostics and Backup") { openWindow(id: "diagnostics") }
         }
         CommandGroup(after: .appInfo) {

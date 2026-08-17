@@ -429,6 +429,12 @@ final class RobloxLauncherTests: XCTestCase {
             process.arguments = ["60"]
             try process.run()
             processes.append(process)
+            XCTAssertTrue(
+                waitForExecutablePath(
+                    processIdentifier: process.processIdentifier,
+                    expectedPath: executable.path
+                )
+            )
             let record = TestProcessRecord(
                 processIdentifier: process.processIdentifier,
                 applicationPath: app.standardizedFileURL.path
@@ -447,6 +453,25 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertLessThan(elapsed, 5)
         for process in processes { process.waitUntilExit() }
         XCTAssertTrue(processes.allSatisfy { !$0.isRunning })
+    }
+
+    private func waitForExecutablePath(processIdentifier: Int32, expectedPath: String) -> Bool {
+        let canonicalExpectedPath = URL(fileURLWithPath: expectedPath)
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+            .path
+        for _ in 0..<100 {
+            var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+            if proc_pidpath(processIdentifier, &buffer, UInt32(buffer.count)) > 0 {
+                let currentPath = URL(fileURLWithPath: String(cString: buffer))
+                    .resolvingSymlinksInPath()
+                    .standardizedFileURL
+                    .path
+                if currentPath == canonicalExpectedPath { return true }
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        return false
     }
 
     func testUnmodifiedParallelModeDescribesExactOriginalSignatureCopies() {

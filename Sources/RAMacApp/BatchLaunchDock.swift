@@ -53,6 +53,11 @@ struct BatchLaunchBar: View {
                         launchRow
                             .padding(.vertical, 8)
 
+                        Divider()
+
+                        windowArrangementRow
+                            .padding(.vertical, 8)
+
                         if store.launchMode == .modifiedParallel {
                             Divider()
 
@@ -103,6 +108,23 @@ struct BatchLaunchBar: View {
         }
     }
 
+    private var windowArrangementRow: some View {
+        InlineWindowArrangementEditor(
+            controller: store.windowLayout,
+            accounts: selectedAccounts,
+            assignments: effectiveWindowAssignments,
+            usesSavedPlacements: store.batchWindowArrangement.usesSavedPlacements,
+            customStatus: "Using a custom layout for this launch.",
+            disabled: store.isBatchLaunching || store.isOpeningSelectedApps || store.isWorking,
+            onAssignmentsChange: { assignments in
+                store.batchWindowArrangement = .custom(assignments)
+            },
+            onUseSavedPlacements: {
+                store.batchWindowArrangement = .savedPlacements
+            }
+        )
+    }
+
     private var launchRow: some View {
         HStack {
             Text(batchLaunchSummary)
@@ -122,6 +144,17 @@ struct BatchLaunchBar: View {
 
     private var selectionCount: Int {
         store.batchSelectedIDs.count
+    }
+
+    private var selectedAccounts: [ManagedAccount] {
+        store.accounts.filter { store.batchSelectedIDs.contains($0.id) }
+    }
+
+    private var effectiveWindowAssignments: [WindowLayoutAssignment] {
+        store.batchWindowArrangement.effectiveAssignments(
+            savedAssignments: store.windowLayout.savedAssignments(for: store.batchSelectedIDs),
+            accountIDs: store.batchSelectedIDs
+        )
     }
 
     private var selectedHandles: String {

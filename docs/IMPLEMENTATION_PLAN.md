@@ -172,6 +172,7 @@ The phases below record how the product was built. They are not current usage in
 - Accept normal Roblox game links and show the game name and icon before selection.
 - Keep aliases, encrypted notes, groups, account checkboxes, Find Players, and Launch Sets easy to reach.
 - Add group deletion without deleting the accounts in that group.
+- Make Launch Set group toggles select their current members in the Accounts section. Keep members selected when another enabled group also contains them.
 - Run Launch Sets from their menu or by double-clicking a row.
 - Check saved accounts and final app updates when the manager opens.
 - Add a browsable Markdown release history and a compact update notice.
@@ -197,6 +198,22 @@ The phases below record how the product was built. They are not current usage in
 - Keep the v1.1.1 app on the existing signing identity so v1.1.0 can install the bridge.
 - Require the public v1.1.0 app during packaging and prove mutual signing compatibility before creating v1.1.1 assets.
 - Keep the release path free. State clearly that manual downloads are not Apple-notarized.
+
+### Phase 15: version 1.1.2 native window layouts
+
+- Show connected monitors with physical resolution and usable workspace.
+- Add drag-and-drop profile placement for halves, quarters, and the whole usable display.
+- Use current menu bar, Dock, camera-housing, scaling, and multi-monitor geometry for every launch.
+- Save monitor assignments as local preferences and exclude them from backups.
+- Bind every placement to the exact managed Roblox process ID.
+- Use macOS Accessibility window attributes first and leave Roblox code unchanged.
+- Wait for Roblox's settled frame after each resize. If Roblox enforces another size, anchor that native size inside the selected display region. Do not report the successful launch as failed.
+- Keep Arrange Windows as the global per-account placement editor.
+- Show the monitor and selected profiles inline below the Launch Accounts action for batch launches. Display saved placements until the user changes the inline layout, then use a temporary custom override.
+- Show the same inline editor inside Launch Set settings. Store custom Launch Set layouts with the set and remap their account IDs during metadata import.
+- Do not ship the rejected full-screen profile deck. Direct and bridged window moves into a type-4 full-screen Space were no-ops in the local proof, and separate full-screen Spaces did not match the requested workflow.
+- Keep launches working when permission is missing or a saved display is disconnected.
+- Test coordinate conversion, overlap replacement, persistence, PID binding, temporary batch overrides, legacy Launch Set decoding, and backup account-ID remapping.
 
 ### Not planned without further research
 

@@ -123,6 +123,7 @@ final class AccountStoreBatchTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         fixture.store.toggleBatchGroup("Wave")
+        fixture.store.batchWindowArrangement = .unchanged
         await fixture.store.launchBatch(placeText: "12345", serverText: jobID)
 
         let maximumConcurrentRequests = await fixture.api.maximumConcurrentTicketRequests()
@@ -137,6 +138,7 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(fixture.store.batchStatus, "2 started, 1 failed")
         XCTAssertEqual(fixture.store.launchStatus, "2 running, 1 failed")
         XCTAssertEqual(fixture.store.notice?.title, "1 account did not start")
+        XCTAssertEqual(fixture.store.batchWindowArrangement, .unchanged)
         guard case .failed = fixture.store.batchStates[fixture.accounts[1].id] else {
             return XCTFail("The failed account must stay marked for retry.")
         }
@@ -145,6 +147,157 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[0].id })?.savedPlaceID, "12345")
         XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[0].id })?.savedServer, "")
         XCTAssertEqual(saved.first(where: { $0.id == fixture.accounts[1].id })?.savedPlaceID, "")
+    }
+
+    func testBatchLaunchPlacesOnlyAssignedProfilesUsingTheirRobloxProcessIDs() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-window-layout-launch-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let accounts = (0..<3).map { index in
+            ManagedAccount(
+                userID: Int64(index + 1),
+                username: "layout_\(index + 1)",
+                displayName: "Layout \(index + 1)",
+                group: "Layout"
+            )
+        }
+        try repository.save(accounts)
+        let vault = MemoryVault()
+        for account in accounts { try vault.save("cookie-\(account.userID)", for: account.id) }
+        let launcher = BatchMockLauncher(failingAccountID: nil)
+        let windowPlacer = BatchRecordingWindowPlacer()
+        let display = batchTestDisplay
+        let windowLayout = WindowLayoutController(
+            repository: BatchMemoryWindowLayoutRepository(),
+            displayProvider: BatchStaticDisplayProvider(
+                snapshotValue: ConnectedDisplaySnapshot(
+                    displays: [display],
+                    accessibilityReferenceTop: 1000
+                )
+            ),
+            placer: windowPlacer
+        )
+        let store = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: BatchMockAPI(),
+            launcher: launcher,
+            windowLayout: windowLayout
+        )
+        windowLayout.assign(accountID: accounts[0].id, to: display, region: .topLeft)
+        windowLayout.assign(accountID: accounts[1].id, to: display, region: .right)
+
+        store.toggleBatchGroup("Layout")
+        await store.launchBatch(placeText: "12345", serverText: "")
+
+        let processIdentifiers = await launcher.processIdentifiersByAccount()
+        let placements = await windowPlacer.recordedRequests()
+        XCTAssertEqual(Set(placements.map(\.processIdentifier)), Set([
+            try XCTUnwrap(processIdentifiers[accounts[0].id]),
+            try XCTUnwrap(processIdentifiers[accounts[1].id])
+        ]))
+        XCTAssertFalse(placements.contains { $0.processIdentifier == processIdentifiers[accounts[2].id] })
+    }
+
+    func testBatchLaunchUsesTemporaryCustomArrangementAndResetsAfterSuccess() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-custom-window-launch-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let accounts = (0..<3).map { index in
+            ManagedAccount(
+                userID: Int64(index + 1),
+                username: "custom_layout_\(index + 1)",
+                displayName: "Custom Layout \(index + 1)",
+                group: "Layout"
+            )
+        }
+        try repository.save(accounts)
+        let vault = MemoryVault()
+        for account in accounts { try vault.save("cookie-\(account.userID)", for: account.id) }
+        let launcher = BatchMockLauncher(failingAccountID: nil)
+        let windowPlacer = BatchRecordingWindowPlacer()
+        let windowLayout = WindowLayoutController(
+            repository: BatchMemoryWindowLayoutRepository(),
+            displayProvider: BatchStaticDisplayProvider(
+                snapshotValue: ConnectedDisplaySnapshot(
+                    displays: [batchTestDisplay],
+                    accessibilityReferenceTop: 1000
+                )
+            ),
+            placer: windowPlacer
+        )
+        let store = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: BatchMockAPI(),
+            launcher: launcher,
+            windowLayout: windowLayout
+        )
+        store.toggleBatchGroup("Layout")
+        store.batchWindowArrangement = .custom([
+            WindowLayoutAssignment(
+                accountID: accounts[2].id,
+                displayID: batchTestDisplay.id,
+                displayName: batchTestDisplay.name,
+                displayPixelWidth: batchTestDisplay.pixelWidth,
+                displayPixelHeight: batchTestDisplay.pixelHeight,
+                region: .bottomRight
+            )
+        ])
+
+        await store.launchBatch(placeText: "12345", serverText: "")
+
+        let launchedProcessIdentifiers = await launcher.processIdentifiersByAccount()
+        let placements = await windowPlacer.recordedRequests()
+        XCTAssertEqual(placements.count, 1)
+        XCTAssertEqual(placements.first?.processIdentifier, launchedProcessIdentifiers[accounts[2].id])
+        XCTAssertEqual(placements.first?.request.region, .bottomRight)
+        XCTAssertNil(windowLayout.assignment(for: accounts[2].id))
+        XCTAssertEqual(store.batchWindowArrangement, .savedPlacements)
+    }
+
+    func testBatchLaunchCanLeaveSavedPlacementsUnchanged() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-unchanged-window-launch-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let account = ManagedAccount(
+            userID: 1,
+            username: "unchanged_layout",
+            displayName: "Unchanged Layout"
+        )
+        try repository.save([account])
+        let vault = MemoryVault()
+        try vault.save("cookie", for: account.id)
+        let windowPlacer = BatchRecordingWindowPlacer()
+        let windowLayout = WindowLayoutController(
+            repository: BatchMemoryWindowLayoutRepository(),
+            displayProvider: BatchStaticDisplayProvider(
+                snapshotValue: ConnectedDisplaySnapshot(
+                    displays: [batchTestDisplay],
+                    accessibilityReferenceTop: 1000
+                )
+            ),
+            placer: windowPlacer
+        )
+        windowLayout.assign(accountID: account.id, to: batchTestDisplay, region: .left)
+        let store = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: BatchMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil),
+            windowLayout: windowLayout
+        )
+        store.toggleBatchSelection(account)
+        store.batchWindowArrangement = .unchanged
+
+        await store.launchBatch(placeText: "12345", serverText: "")
+
+        let placementRequests = await windowPlacer.recordedRequests()
+        XCTAssertTrue(placementRequests.isEmpty)
+        XCTAssertEqual(windowLayout.assignment(for: account.id)?.region, .left)
     }
 
     func testStopAllStopsEveryRunningAccount() async throws {
@@ -782,6 +935,31 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertNil(fixture.store.runningLaunchSetID)
     }
 
+    func testLaunchSetCarriesItsWindowPolicyIntoADeferredBatchLaunch() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let assignment = WindowLayoutAssignment(
+            accountID: fixture.accounts[0].id,
+            displayID: "saved-display",
+            displayName: "Saved Display",
+            displayPixelWidth: 2560,
+            displayPixelHeight: 1440,
+            region: .right
+        )
+        let launchSet = LaunchSet(
+            name: "Choose Server",
+            accountIDs: fixture.accounts.map(\.id),
+            placeID: 12345,
+            serverStrategy: .browseBeforeLaunch,
+            windowArrangement: .custom([assignment])
+        )
+
+        await fixture.store.runLaunchSet(launchSet)
+
+        XCTAssertEqual(fixture.store.batchSelectedIDs, Set(fixture.accounts.map(\.id)))
+        XCTAssertEqual(fixture.store.batchWindowArrangement, .custom([assignment]))
+    }
+
     func testNormalClientExitClearsStaleRunningStatus() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -1347,6 +1525,7 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     private var running = Set<UUID>()
     private var urls: [URL] = []
     private var batchStopRequests: [[UUID]] = []
+    private var processIdentifiers: [UUID: Int32] = [:]
 
     init(failingAccountID: UUID?, launchDelayNanoseconds: UInt64 = 0) {
         self.failingAccountID = failingAccountID
@@ -1367,9 +1546,11 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
             try await Task.sleep(nanoseconds: launchDelayNanoseconds)
         }
         running.insert(accountID)
+        let processIdentifier = Int32(processIdentifiers.count + 1)
+        processIdentifiers[accountID] = processIdentifier
         return ParallelRobloxInstance(
             accountID: accountID,
-            processIdentifier: Int32(attempted.count),
+            processIdentifier: processIdentifier,
             applicationURL: URL(fileURLWithPath: "/tmp/Roblox.app")
         )
     }
@@ -1411,4 +1592,45 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     func attemptedURLs() -> [URL] { urls }
 
     func batchStopRequestCount() -> Int { batchStopRequests.count }
+
+    func processIdentifiersByAccount() -> [UUID: Int32] { processIdentifiers }
+}
+
+private var batchTestDisplay: ConnectedDisplay {
+    ConnectedDisplay(
+        id: "batch-display",
+        name: "Batch Display",
+        frame: CGRect(x: 0, y: 0, width: 1400, height: 1000),
+        visibleFrame: CGRect(x: 100, y: 50, width: 1200, height: 800),
+        pixelWidth: 2800,
+        pixelHeight: 2000,
+        usablePixelWidth: 2400,
+        usablePixelHeight: 1600
+    )
+}
+
+private final class BatchMemoryWindowLayoutRepository: WindowLayoutPersisting {
+    private var assignments: [WindowLayoutAssignment] = []
+    func load() -> [WindowLayoutAssignment] { assignments }
+    func save(_ assignments: [WindowLayoutAssignment]) { self.assignments = assignments }
+}
+
+private struct BatchStaticDisplayProvider: ConnectedDisplayProviding {
+    let snapshotValue: ConnectedDisplaySnapshot
+    @MainActor func snapshot() -> ConnectedDisplaySnapshot { snapshotValue }
+}
+
+private actor BatchRecordingWindowPlacer: RobloxWindowPlacing {
+    struct Request: Equatable {
+        let processIdentifier: Int32
+        let request: RobloxWindowPlacementRequest
+    }
+    private var requests: [Request] = []
+
+    func place(processIdentifier: Int32, request: RobloxWindowPlacementRequest) async -> WindowPlacementResult {
+        requests.append(Request(processIdentifier: processIdentifier, request: request))
+        return .placed
+    }
+
+    func recordedRequests() -> [Request] { requests }
 }

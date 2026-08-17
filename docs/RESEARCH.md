@@ -73,6 +73,14 @@ A clean repeat test stopped the official Roblox tray and every old per-copy menu
 
 Version 0.1.0 ports the account, storage, organization, and launch path. It does not copy Windows process injection, mutex control, registry access, Chromium download logic, Win32 window movement, local web control, or executor features. Those parts need separate Mac designs and separate safety review.
 
+Version 1.1.2 adds that separate Mac design for window placement. It does not port the Win32 implementation. The manager reads connected displays through AppKit, calculates snap frames inside `NSScreen.visibleFrame`, and uses the managed Roblox process ID with macOS Accessibility position and size attributes. It does not change Roblox code or automate gameplay.
+
+A live Roblox Player check on August 14, 2026 showed that the public Accessibility size write can return success while Roblox later replaces the requested frame with its own game-window size. The observed player settled near 800 × 628 or 800 × 630 for several smaller and larger requests. The exact constraint belongs to Roblox and can change by version or game state, so the manager does not hard-code that measurement. It polls for a stable frame first.
+
+Hammerspoon retries size, position, and size while temporarily changing the enhanced Accessibility mode. Roblox rejected that enhanced-mode change and still restored its native size. A separate WindowServer transform probe reported that a transform had been accepted, but the real Roblox window did not remain usable at the requested size. The app therefore does not ship that private scaling path. It keeps Roblox's final native size and anchors it inside the requested display region.
+
+A later full-screen Space proof used two harmless local test apps on macOS 27. A native full-screen host created a type-4 Space. Both the direct `SLSMoveWindowsToManagedSpace` call and the newer bridged move operation left the external test window in its original normal Space. The same bridged operation successfully moved that window to another normal desktop Space and back, which confirmed that the test could distinguish a working move from a rejected full-screen move. Current yabai source also refuses a type-4 destination. Separate native full-screen Spaces were tested as an alternative, but they did not provide the requested shared arrangement workflow and are not shipped.
+
 ## Parallel-instance follow-up
 
 The user supplied [Insadem/multi-roblox-macos](https://github.com/Insadem/multi-roblox-macos) as a prior Mac implementation. Its source was last pushed in 2024 and has no declared repository license. This project did not copy its source. The research used its observable method as a technical lead:

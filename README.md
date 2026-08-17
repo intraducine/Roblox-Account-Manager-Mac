@@ -8,6 +8,7 @@ This project is independent. Roblox Corporation does not make or approve it. Use
 
 - Save several Roblox accounts without saving their passwords.
 - Run several saved accounts at the same time in separate Roblox windows.
+- Assign profiles to halves, quarters, or the full usable area of any connected display.
 - Start one account, several selected accounts, or every account in a group.
 - Stop one managed Roblox window or close all managed windows with **Stop All**.
 - Give accounts easy-to-read names, encrypted profile notes, and membership in more than one group.
@@ -38,9 +39,11 @@ The app does not store passwords. It does not solve captchas, inject code, autom
 1. Open **Add Account** and sign in on the Roblox page.
 2. Repeat this for every account that you want to run.
 3. Use the checkboxes beside the account names to choose the accounts that should open together.
-4. Select **Choose Game**, paste the Roblox game link, and confirm its name and icon. You can also reuse a recent game.
-5. Keep **Let Roblox choose** or select another server option.
-6. Select the blue launch button. Each selected account opens in its own Roblox window.
+4. Optional: open **Arrange Windows** and drag profiles onto the monitor regions where they should open.
+5. Select **Choose Game**, paste the Roblox game link, and confirm its name and icon. You can also reuse a recent game.
+6. Keep **Let Roblox choose** or select another server option.
+7. Review the inline **Window placement** editor. It shows the placements from **Arrange Windows** by default. Move a profile only when this launch needs a different layout.
+8. Select the blue launch button. Each selected account opens in its own Roblox window.
 
 The app fills the Place ID after you choose a game. The number remains available as an advanced field. Most users do not need a Job ID. A Job ID is an advanced, temporary code for one server that is already running.
 
@@ -126,9 +129,23 @@ Open **Choose Server > Private Servers** to save a private-server link with a cl
 
 The bottom **Advanced fallback** changes copied app settings and applies a different signature. Roblox can detect that change. Use it only for recovery tests. Normal managed launches use unchanged copies.
 
+## Arrange Roblox windows
+
+Open **Arrange Windows** from the main toolbar, choose **Tools > Arrange Roblox Windows**, or press **Command-Shift-L**. The window lists each connected display with its current pixel resolution and usable workspace.
+
+Drag a profile onto Top Left, Top, Top Right, Left, Whole Screen, Right, Bottom Left, Bottom, or Bottom Right. Corners use one quarter of the usable display. Top, Bottom, Left, and Right use one half. Whole Screen fills the usable display without covering the menu bar or Dock. Selecting a profile and then selecting a region provides the same result without dragging.
+
+Larger regions replace assignments that they overlap. For example, placing one profile on the left half removes profiles from the top-left and bottom-left quarters. A disconnected monitor remains assigned by name and resolution, but the manager does not move that profile to the wrong display. Reconnect the display and launch again.
+
+macOS requires Accessibility permission before one app can move another app's windows. Select **Open Accessibility Settings** in Arrange Windows and turn on Roblox Account Manager. If it is already on but the app still reports that permission is missing, turn it off and on again, then select **Check Again**. This one-time reset can be necessary after the app's signing identity changes. The manager uses the launched Roblox process ID and the standard macOS window position and size attributes. If Roblox restores its own minimum size, the manager keeps that native size and anchors it as close as possible to the selected region. It does not scale the rendered window, edit Roblox, inject code, or change Roblox settings.
+
+Batch launches show the monitor and selected profiles directly below **Open Roblox**. The editor starts with the current per-account choices from **Arrange Windows**. Moving or removing a profile creates a temporary layout for that launch. **Use Saved Placements** removes the override. Launch Set settings use the same inline editor, but changes are saved with that Launch Set.
+
+The manager reads the current usable display area for every launch. This automatically accounts for the menu bar, Dock position, Dock auto-hide boundary, and camera housing. Global placements are local device preferences and are not included in backups. A custom layout saved inside a Launch Set is included with that Launch Set in metadata backups.
+
 ## Find Players
 
-Open **Find Players** in the toolbar or choose **View > Joinable Players**.
+Open **Find Players** in the toolbar or choose **Tools > Joinable Players**.
 
 The window checks the online friends that Roblox shows to each saved account, one account at a time. It merges duplicate players and shows which saved accounts can see each player. It does not guess hidden activity or scan public server pages.
 
@@ -170,7 +187,7 @@ Use this window when you want to browse as one saved account, start a game from 
 
 ## Launch Sets and experiences
 
-A Launch Set is a saved shortcut for accounts, one game, and one server choice. It does not save a public Job ID because that code stops working when the server closes. When a Launch Set uses a private server, you can choose a link from the saved private-server list. Private server links stay local and are excluded from normal backups.
+A Launch Set is a saved shortcut for accounts, one game, and one server choice. In Launch Set settings, selecting a group also selects its current members in the Accounts section. Clearing a group clears those members unless another selected group still contains them. It does not save a public Job ID because that code stops working when the server closes. When a Launch Set uses a private server, you can choose a link from the saved private-server list. Private server links stay local and are excluded from normal backups.
 
 The experience chooser records recent Place IDs and launch counts. It also saves the game's current name and icon when Roblox provides them. You can mark an entry as a favorite. A numeric Place ID stays the source of truth, so a metadata lookup is not required to launch.
 
@@ -200,6 +217,7 @@ The optional modified fallback does not meet the unchanged-copy rule. Roblox sta
 - Managed copies: `~/Library/Application Support/Roblox Account Manager/Instances`
 - Roblox sign-ins: one encrypted macOS Keychain item named `sessions-v2`
 - Profile notes: one separate encrypted macOS Keychain item named `notes-v1`
+- Window layout assignments: the app's local macOS preferences; these contain account IDs, display details, and snap regions only
 
 Removing an account deletes its Roblox sign-in and encrypted profile note from Keychain, then removes its local account details.
 
@@ -207,7 +225,7 @@ Removing an account deletes its Roblox sign-in and encrypted profile note from K
 
 [docs/V1_LIVE_TEST_REPORT.md](docs/V1_LIVE_TEST_REPORT.md) records the live checks completed for this release and the cases that still need controlled test accounts. [docs/V1_IMPLEMENTATION_SPEC.md](docs/V1_IMPLEMENTATION_SPEC.md) defines the release behavior. [docs/RESEARCH.md](docs/RESEARCH.md) records old experiments and current technical decisions. [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) is development history. These files do not replace this current guide.
 
-Windows-only features from the original project remain outside this release. These include Win32 window placement, Windows registry work, a local control API, process injection, and gameplay automation.
+The original Win32 window-placement code remains outside this release. The Mac app uses a separate native design based on connected displays, visible macOS workspace geometry, managed process IDs, and Accessibility window attributes. Windows registry work, private window scaling, a local control API, process injection, and gameplay automation remain outside this release.
 
 ## License
 

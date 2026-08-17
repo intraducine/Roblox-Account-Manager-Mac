@@ -59,6 +59,15 @@ struct ContentView: View {
                 }
                 .help("Open saved account and game combinations")
 
+                Button {
+                    openWindow(id: "window-layout")
+                } label: {
+                    Label("Arrange Windows", systemImage: "rectangle.on.rectangle")
+                        .labelStyle(.titleAndIcon)
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+                .help("Choose where each Roblox profile opens")
+
                 Menu {
                     Button("Diagnostics and Backup") { openWindow(id: "diagnostics") }
                     Divider()

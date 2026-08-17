@@ -75,6 +75,7 @@ final class AccountStore: ObservableObject {
     private struct AppLaunchOutcome: Sendable {
         let accountID: UUID
         let username: String
+        let processIdentifier: Int32?
         let errorMessage: String?
     }
 
@@ -89,6 +90,7 @@ final class AccountStore: ObservableObject {
     @Published private(set) var batchStates: [UUID: BatchLaunchState] = [:]
     @Published private(set) var isBatchLaunching = false
     @Published private(set) var isOpeningSelectedApps = false
+    @Published var batchWindowArrangement: WindowArrangementPolicy = .savedPlacements
     @Published private(set) var appOpeningAccountIDs = Set<UUID>()
     @Published private(set) var isStoppingAll = false
     @Published private(set) var batchStatus = "Select accounts from the shelf"
@@ -108,6 +110,8 @@ final class AccountStore: ObservableObject {
     @Published private(set) var experienceMetadataLoadingIDs = Set<Int64>()
     @Published private(set) var privateServers: [SavedPrivateServer] = []
     @Published private(set) var activeLaunchTargets: [UUID: ActiveLaunchTargetRecord] = [:]
+
+    let windowLayout: WindowLayoutController
 
     private let repository: AccountRepository
     private let vault: any SecretVault
@@ -147,7 +151,8 @@ final class AccountStore: ObservableObject {
         experienceRepository: ExperienceLibraryRepository? = nil,
         experienceMetadataProvider: (any ExperienceMetadataProviding)? = nil,
         privateServerRepository: PrivateServerRepository? = nil,
-        activeLaunchRepository: ActiveLaunchTargetRepository? = nil
+        activeLaunchRepository: ActiveLaunchTargetRepository? = nil,
+        windowLayout: WindowLayoutController? = nil
     ) {
         self.repository = repository
         self.vault = vault
@@ -168,8 +173,10 @@ final class AccountStore: ObservableObject {
         self.experienceMetadataProvider = experienceMetadataProvider ?? RobloxExperienceMetadataClient()
         self.privateServerRepository = privateServerRepository ?? PrivateServerRepository(dataDirectory: repository.dataDirectory)
         self.activeLaunchRepository = activeLaunchRepository ?? ActiveLaunchTargetRepository(dataDirectory: repository.dataDirectory)
+        self.windowLayout = windowLayout ?? WindowLayoutController()
         self.launchMode = launchMode == .modifiedParallel ? .modifiedParallel : .unmodifiedParallel
         load()
+        self.windowLayout.removeAssignmentsForMissingAccounts(validAccountIDs: Set(accounts.map(\.id)))
     }
 
     func setLaunchMode(_ mode: RobloxLaunchMode) {
@@ -364,6 +371,7 @@ final class AccountStore: ObservableObject {
         guard !isBatchLaunching, !isOpeningSelectedApps else { return }
         batchSelectedIDs.removeAll()
         batchStates.removeAll()
+        batchWindowArrangement = .savedPlacements
         updateBatchSelectionStatus()
     }
 
@@ -1129,6 +1137,7 @@ final class AccountStore: ObservableObject {
             notice = Notice(title: "No accounts are ready", message: "Every account in this Launch Set is missing or already running.")
             return
         }
+        batchWindowArrangement = launchSet.windowArrangement
         switch launchSet.serverStrategy {
         case .robloxChooses:
             await launchBatch(placeText: String(launchSet.placeID), server: .automatic)
@@ -1337,6 +1346,7 @@ final class AccountStore: ObservableObject {
             batchStates[account.id] = nil
             accountHealth[account.id] = nil
             activeLaunchTargets[account.id] = nil
+            windowLayout.clear(accountID: account.id)
             selectedID = accounts.first?.id
             Task {
                 await playerDiscovery.clearCache()
@@ -1481,7 +1491,7 @@ final class AccountStore: ObservableObject {
             }
             let ticket = try await api.authenticationTicket(cookie: cookie)
             let url = try builder.makeAppURL(ticket: ticket)
-            _ = try await launcher.launch(url, for: account.id, mode: launchMode)
+            let instance = try await launcher.launch(url, for: account.id, mode: launchMode)
 
             var updated = account
             updated.lastUsed = Date()
@@ -1501,6 +1511,7 @@ final class AccountStore: ObservableObject {
             if !runningAccountIDs.contains(account.id) {
                 runningAccountIDs.insert(account.id)
             }
+            await applyWindowPlacement(accountID: account.id, processIdentifier: instance.processIdentifier)
         } catch {
             launchStatus = "Open failed"
             notice = Notice(title: "Roblox did not open", message: error.localizedDescription)
@@ -1518,9 +1529,9 @@ final class AccountStore: ObservableObject {
             batchStatus = "Select accounts that are not running"
             return
         }
-
         let selectedIDs = Set(selectedAccounts.map(\.id))
         let total = selectedAccounts.count
+        let windowArrangement = batchWindowArrangement
         isOpeningSelectedApps = true
         appOpeningAccountIDs.formUnion(selectedIDs)
         batchStates = Dictionary(uniqueKeysWithValues: selectedAccounts.map { ($0.id, .starting) })
@@ -1545,6 +1556,7 @@ final class AccountStore: ObservableObject {
             return AppLaunchOutcome(
                 accountID: account.id,
                 username: account.username,
+                processIdentifier: nil,
                 errorMessage: message
             )
         }
@@ -1563,16 +1575,18 @@ final class AccountStore: ObservableObject {
                         }
                         let ticket = try await api.authenticationTicket(cookie: cookie)
                         let url = try builder.makeAppURL(ticket: ticket)
-                        _ = try await launcher.launch(url, for: account.id, mode: launchMode)
+                        let instance = try await launcher.launch(url, for: account.id, mode: launchMode)
                         return AppLaunchOutcome(
                             accountID: account.id,
                             username: account.username,
+                            processIdentifier: instance.processIdentifier,
                             errorMessage: nil
                         )
                     } catch {
                         return AppLaunchOutcome(
                             accountID: account.id,
                             username: account.username,
+                            processIdentifier: nil,
                             errorMessage: error.localizedDescription
                         )
                     }
@@ -1600,9 +1614,18 @@ final class AccountStore: ObservableObject {
             return AppLaunchOutcome(
                 accountID: outcome.accountID,
                 username: outcome.username,
+                processIdentifier: outcome.processIdentifier,
                 errorMessage: message
             )
         }
+
+        let placementResults = await presentLaunchedWindows(
+            outcomes.compactMap { outcome in
+                guard outcome.errorMessage == nil, let processIdentifier = outcome.processIdentifier else { return nil }
+                return (outcome.accountID, processIdentifier)
+            },
+            arrangement: windowArrangement
+        )
 
         let now = Date()
         for outcome in outcomes where outcome.errorMessage == nil {
@@ -1624,6 +1647,8 @@ final class AccountStore: ObservableObject {
             batchStates.removeAll()
             batchStatus = "Opened all \(total) apps"
             launchStatus = "Running \(total) Roblox apps"
+            showWindowPlacementNoticeIfNeeded(placementResults)
+            batchWindowArrangement = .savedPlacements
         } else {
             batchSelectedIDs = Set(failures.map(\.accountID))
             batchStates = batchStates.filter { batchSelectedIDs.contains($0.key) }
@@ -1757,6 +1782,7 @@ final class AccountStore: ObservableObject {
             case .modifiedParallel:
                 launchStatus = "Running @\(account.username) with the advanced fallback"
             }
+            await applyWindowPlacement(accountID: account.id, processIdentifier: instance.processIdentifier)
         } catch {
             launchStatus = "Launch failed"
             notice = Notice(title: "Roblox did not launch", message: error.localizedDescription)
@@ -1792,7 +1818,7 @@ final class AccountStore: ObservableObject {
             batchStatus = "Select accounts that are not running"
             return
         }
-
+        let windowArrangement = batchWindowArrangement
         if !skipHealthPreflight {
             await checkAccounts(Set(selectedAccounts.map(\.id)))
             let notReady = selectedAccounts.filter { accountHealth[$0.id]?.isReady != true }
@@ -1948,6 +1974,13 @@ final class AccountStore: ObservableObject {
                 errorMessage: message
             )
         }
+        let placementResults = await presentLaunchedWindows(
+            outcomes.compactMap { outcome in
+                guard outcome.errorMessage == nil, let processIdentifier = outcome.processIdentifier else { return nil }
+                return (outcome.accountID, processIdentifier)
+            },
+            arrangement: windowArrangement
+        )
         for outcome in outcomes where outcome.errorMessage == nil {
             let launchedPlaceID = outcome.placeID ?? placeID
             if let index = accounts.firstIndex(where: { $0.id == outcome.accountID }) {
@@ -1987,6 +2020,8 @@ final class AccountStore: ObservableObject {
             case .modifiedParallel:
                 launchStatus = "Running \(total) accounts with the advanced fallback"
             }
+            showWindowPlacementNoticeIfNeeded(placementResults)
+            batchWindowArrangement = .savedPlacements
         } else {
             batchSelectedIDs = Set(failures.map(\.accountID))
             batchStates = batchStates.filter { batchSelectedIDs.contains($0.key) }
@@ -2001,9 +2036,42 @@ final class AccountStore: ObservableObject {
 
     private func updateBatchSelectionStatus() {
         let count = batchSelectedIDs.count
+        if count == 0 { batchWindowArrangement = .savedPlacements }
         batchStatus = count == 0
             ? "Select accounts from the shelf"
             : "\(count) account\(count == 1 ? "" : "s") ready"
+    }
+
+    private func applyWindowPlacement(accountID: UUID, processIdentifier: Int32) async {
+        let result = await windowLayout.placeWindow(
+            accountID: accountID,
+            processIdentifier: processIdentifier
+        )
+        showWindowPlacementNoticeIfNeeded([accountID: result])
+    }
+
+    private func presentLaunchedWindows(
+        _ launches: [(accountID: UUID, processIdentifier: Int32)],
+        arrangement: WindowArrangementPolicy
+    ) async -> [UUID: WindowPlacementResult] {
+        switch arrangement {
+        case .savedPlacements:
+            return await windowLayout.placeWindows(launches)
+        case .custom(let assignments):
+            return await windowLayout.placeWindows(launches, with: assignments)
+        case .unchanged:
+            return Dictionary(uniqueKeysWithValues: launches.map { ($0.accountID, .noAssignment) })
+        }
+    }
+
+    private func showWindowPlacementNoticeIfNeeded(
+        _ results: [UUID: WindowPlacementResult]
+    ) {
+        guard let message = results.values.compactMap(\.requiresAttentionMessage).first else { return }
+        notice = Notice(
+            title: "Roblox opened without its saved layout",
+            message: message
+        )
     }
 
     private func clearRememberedFriendServer(_ jobID: String, accountIDs: Set<UUID>) {

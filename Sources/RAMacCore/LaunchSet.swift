@@ -52,6 +52,7 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
     public var placeID: Int64
     public var experienceName: String?
     public var serverStrategy: ServerStrategy
+    public var windowArrangement: WindowArrangementPolicy
     public let createdAt: Date
     public var updatedAt: Date
 
@@ -63,6 +64,7 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
         placeID: Int64,
         experienceName: String? = nil,
         serverStrategy: ServerStrategy = .robloxChooses,
+        windowArrangement: WindowArrangementPolicy = .savedPlacements,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -73,8 +75,72 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
         self.placeID = placeID
         self.experienceName = experienceName
         self.serverStrategy = serverStrategy
+        self.windowArrangement = windowArrangement
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    public mutating func setGroupSelection(
+        _ group: String,
+        selected: Bool,
+        accounts: [ManagedAccount]
+    ) {
+        guard let normalizedGroup = ManagedAccount.normalizedGroups([group]).first else { return }
+
+        let members = accounts.filter { $0.belongs(to: normalizedGroup) }
+        if selected {
+            groupNames = ManagedAccount.normalizedGroups(groupNames + [normalizedGroup])
+            var selectedIDs = Set(accountIDs)
+            for account in members where selectedIDs.insert(account.id).inserted {
+                accountIDs.append(account.id)
+            }
+            return
+        }
+
+        groupNames.removeAll { $0.caseInsensitiveCompare(normalizedGroup) == .orderedSame }
+        let remainingGroupMemberIDs = Set(accounts.compactMap { account in
+            groupNames.contains(where: { account.belongs(to: $0) }) ? account.id : nil
+        })
+        let removedGroupMemberIDs = Set(members.map(\.id)).subtracting(remainingGroupMemberIDs)
+        accountIDs.removeAll { removedGroupMemberIDs.contains($0) }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, accountIDs, groupNames, placeID, experienceName, serverStrategy
+        case windowArrangement, createdAt, updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        accountIDs = Array(Set(try values.decodeIfPresent([UUID].self, forKey: .accountIDs) ?? []))
+        groupNames = ManagedAccount.normalizedGroups(
+            try values.decodeIfPresent([String].self, forKey: .groupNames) ?? []
+        )
+        placeID = try values.decode(Int64.self, forKey: .placeID)
+        experienceName = try values.decodeIfPresent(String.self, forKey: .experienceName)
+        serverStrategy = try values.decodeIfPresent(ServerStrategy.self, forKey: .serverStrategy) ?? .robloxChooses
+        windowArrangement = try values.decodeIfPresent(
+            WindowArrangementPolicy.self,
+            forKey: .windowArrangement
+        ) ?? .savedPlacements
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+        updatedAt = try values.decode(Date.self, forKey: .updatedAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(name, forKey: .name)
+        try values.encode(accountIDs, forKey: .accountIDs)
+        try values.encode(groupNames, forKey: .groupNames)
+        try values.encode(placeID, forKey: .placeID)
+        try values.encodeIfPresent(experienceName, forKey: .experienceName)
+        try values.encode(serverStrategy, forKey: .serverStrategy)
+        try values.encode(windowArrangement, forKey: .windowArrangement)
+        try values.encode(createdAt, forKey: .createdAt)
+        try values.encode(updatedAt, forKey: .updatedAt)
     }
 }
 
