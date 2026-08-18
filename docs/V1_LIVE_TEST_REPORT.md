@@ -1,17 +1,28 @@
 # Release verification report
 
-Latest update: August 14, 2026
+Latest update: August 18, 2026
 
 This report uses saved account labels only. It does not contain usernames, cookies, private links, launch tickets, or personal account IDs.
 
-## Version 1.1.1 preparation
+## Version 1.1.2 transition re-audit
+
+- The public repository still marks version 1.1.1 as the latest final release. Its ZIP, checksum, and project-signature assets remain available.
+- A fresh download of the public version 1.1.1 ZIP matched its checksum. Its P-256 project update signature also passed against the public key embedded in the updater.
+- The exact certificate fingerprint pinned inside the published version 1.1.1 app matches the project certificate still installed on the release Mac.
+- The current version 1.1.2 release build uses that exact project certificate. The local signing-transition integration test accepted the published version 1.1.1 app and current version 1.1.2 candidate, then rejected a candidate changed to an ad hoc signer.
+- The current source suite passes 206 tests with zero failures. Six explicit integration tests remain opt-in because they use installed Roblox clients, a published update, a local signed-app transition, or macOS approval UI.
+- A temporary Keychain access-control integration test passed by authorizing a requirement-bound tool to read one disposable item. The test removed that item and did not change the app's saved session or profile-note items.
+- The current version 1.1.2 app reports build 112, contains Apple silicon and Intel code, and passes strict deep code-signature validation.
+- Every unpublished commit after version 1.1.1 uses a GitHub noreply address. Current source and commit-content scans found no personal email, user home path, token, Roblox session, or private release key.
+
+## Version 1.1.1 signing bridge
 
 - The source suite passes 162 tests with zero failures. Three installed-app integration tests remain opt-in.
 - The updater requires a project P-256 archive signature and pins version 1.1.2 and later to one project-owned certificate fingerprint stored in the signed v1.1.1 app.
 - The project signing key is held by the Mac Secure Enclave. A live sign-and-verify check passed and required user approval.
 - The unpublished legacy test key was removed from Keychain.
 - The project code-signing certificate contains the project name and no email address. Its private key stays in the release Mac's Keychain.
-- Version 1.1.1 remains unpublished until its pinned-certificate and Keychain access migration paths pass end-to-end tests.
+- Version 1.1.1 was published on August 14, 2026 and remains the GitHub release marked as latest so older updater clients cannot skip the bridge.
 
 ## Version 1.1.0 release readiness
 

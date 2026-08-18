@@ -360,10 +360,16 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["RAM_RUN_UPDATE_INTEGRATION"] == "1" else {
             throw XCTSkip("Set RAM_RUN_UPDATE_INTEGRATION=1 after publishing the release assets.")
         }
-        guard let sourcePath = ProcessInfo.processInfo.environment["RAM_UPDATE_CURRENT_APP"],
-              FileManager.default.fileExists(atPath: sourcePath) else {
-            throw XCTSkip("Set RAM_UPDATE_CURRENT_APP to the signed version 1.0.2 app.")
+        let environment = ProcessInfo.processInfo.environment
+        guard let sourcePath = environment["RAM_UPDATE_CURRENT_APP"],
+              FileManager.default.fileExists(atPath: sourcePath),
+              let expectedVersionText = environment["RAM_UPDATE_EXPECTED_VERSION"],
+              let expectedVersion = AppVersion(expectedVersionText) else {
+            throw XCTSkip(
+                "Set RAM_UPDATE_CURRENT_APP and RAM_UPDATE_EXPECTED_VERSION for the published transition."
+            )
         }
+        let sourceVersion = try XCTUnwrap(Self.bundleVersion(at: URL(fileURLWithPath: sourcePath)))
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("RAMac-Live-Update-Test-\(UUID().uuidString)", isDirectory: true)
         let currentURL = workspace.appendingPathComponent("Roblox Account Manager.app", isDirectory: true)
@@ -372,11 +378,11 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: workspace) }
 
         let service = GitHubSoftwareUpdateService()
-        let check = try await service.check(currentVersion: "1.0.2")
+        let check = try await service.check(currentVersion: sourceVersion)
         guard case .available(let release) = check else {
-            return XCTFail("Expected the published version 1.1.0 release")
+            return XCTFail("Expected the published version \(expectedVersion) release")
         }
-        XCTAssertEqual(release.version, AppVersion("1.1.0"))
+        XCTAssertEqual(release.version, expectedVersion)
 
         let prepared = try await service.downloadAndPrepare(
             release,
@@ -386,10 +392,10 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         let installer = SoftwareUpdateInstaller(service: service)
         let backupURL = try installer.install(prepared, replacing: currentURL)
 
-        XCTAssertEqual(Self.bundleVersion(at: currentURL), "1.1.0")
-        XCTAssertEqual(Self.bundleVersion(at: backupURL), "1.0.2")
+        XCTAssertEqual(Self.bundleVersion(at: currentURL), expectedVersion.description)
+        XCTAssertEqual(Self.bundleVersion(at: backupURL), sourceVersion)
         try installer.restorePreviousVersion(from: backupURL, to: currentURL)
-        XCTAssertEqual(Self.bundleVersion(at: currentURL), "1.0.2")
+        XCTAssertEqual(Self.bundleVersion(at: currentURL), sourceVersion)
     }
 
     func testLocalSigningBridgeWhenEnabled() throws {

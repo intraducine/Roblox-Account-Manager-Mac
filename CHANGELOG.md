@@ -1,7 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.1.2 - 2026-08-18
 
+- Added per-account window arrangements for connected displays.
+- Added automatic layouts for up to four profiles per display.
+- Added an optional native full-screen Space for each selected profile.
+- Added reusable window arrangements to Launch Sets and temporary overrides to batch launches.
+- Accounted for the menu bar, Dock, camera housing, disconnected displays, and Roblox window limits.
 - Added a visible Feedback toolbar button and an embedded Tally feedback form.
 - Let users choose whether to include the app version or basic Mac details before the form loads.
 - Kept Roblox accounts, sessions, private-server links, access codes, and launch data out of feedback submissions.
