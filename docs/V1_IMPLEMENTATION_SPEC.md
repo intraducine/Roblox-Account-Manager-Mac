@@ -126,18 +126,22 @@ Version 1.0.4 and later must:
 ### Version 1.1.2 native window layout
 
 - List every connected display with its name, physical pixel dimensions, and current usable workspace.
+- Offer a count-based automatic layout for up to four profiles per display before manual placement.
 - Let users drag a saved profile onto nine familiar snap targets: four quarters, four halves, and the whole usable display.
+- Call the whole usable display **Fill Desktop**. Present native **Full Screen** as a separate target because it creates a macOS Space instead of resizing a normal window.
 - Use `NSScreen.visibleFrame` at launch time. Do not cache menu bar, Dock, camera-housing, or monitor geometry.
 - Convert AppKit display coordinates into the top-left global coordinate system used by macOS Accessibility.
 - Bind placement to the exact process ID returned by the managed Roblox launch.
 - Set the standard Accessibility position and size attributes first. Do not edit, inject into, or patch Roblox window code.
 - Treat a successful Accessibility write as a request, then poll until Roblox reports a stable frame.
+- Start each account's placement as soon as that account returns its managed Roblox process ID. Run batch placements concurrently, prefer the Accessibility main window, and retry temporary missing or non-settable window states without activating Roblox.
+- For native full screen, move the normal window to the selected display, request a true Accessibility full-screen state, and queue transitions one at a time. Repeat this idempotent request while needed, and confirm the state before starting the next profile. Do not activate Roblox or change the user's current app or Space. Use the public Accessibility full-screen button only as a compatibility fallback.
 - If Roblox enforces another size, place its final native size against the selected edge or corner within `NSScreen.visibleFrame`. Record the adjustment as layout status, not as a Roblox launch failure.
 - Keep Arrange Windows as the separate global editor for saved per-account placements.
 - Show the monitor and selected profiles inline below the Launch Accounts action. Use saved placements by default and create a temporary custom override only after the user changes the inline layout.
 - Add the same inline editor to Launch Set settings. Let each set inherit saved placements or store its own custom layout.
 - Decode Launch Sets created before this field as saved placements. Remap account IDs inside imported custom layouts.
-- Do not install a helper, use private window scaling, inject into Roblox, modify Roblox, simulate input, or require reduced System Integrity Protection.
+- Do not install a helper, use private Space or window-scaling APIs, inject into Roblox, modify Roblox, simulate input, or require reduced System Integrity Protection.
 - Require explicit macOS Accessibility permission and keep launches functional when permission is absent.
 - Open the exact Accessibility settings pane when permission is missing, support a manual status refresh, and explain the one-time off/on reset needed after a signing-identity migration.
 - Keep global display assignments local to the Mac and outside normal backups. Include custom Launch Set layouts with their Launch Sets in metadata backups.

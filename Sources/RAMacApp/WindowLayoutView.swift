@@ -2,6 +2,10 @@ import AppKit
 import RAMacCore
 import SwiftUI
 
+private enum WindowControlSpacing {
+    static let contentInset: CGFloat = 12
+}
+
 struct InlineWindowArrangementEditor: View {
     @ObservedObject var controller: WindowLayoutController
     let accounts: [ManagedAccount]
@@ -18,7 +22,7 @@ struct InlineWindowArrangementEditor: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Window placement")
+                    Text("Window arrangement")
                         .fontWeight(.medium)
                     Text(statusText)
                         .font(.caption)
@@ -26,19 +30,59 @@ struct InlineWindowArrangementEditor: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 12)
-                if !usesSavedPlacements {
-                    Button("Use Saved Placements") {
-                        onUseSavedPlacements()
+                HStack(spacing: 8) {
+                    if !assignments.isEmpty {
+                        Button("Clear Placements") {
+                            onAssignmentsChange([])
+                        }
+                        .fixedSize()
                     }
-                    .fixedSize()
+                    if !usesSavedPlacements {
+                        Button("Use Saved Arrangement") {
+                            onUseSavedPlacements()
+                        }
+                        .fixedSize()
+                    }
                 }
             }
 
             if !accounts.isEmpty {
-                Text("Select a profile, then click a monitor region. You can also drag a profile onto the monitor.")
+                Text("Choose a quick layout, or select a profile and choose its place on a display.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 8) {
+                    Button("Arrange Automatically") {
+                        guard let planned = WindowArrangementPlanner.automaticAssignments(
+                            accountIDs: accountIDs,
+                            displays: controller.displays
+                        ) else { return }
+                        selectedAccountID = nil
+                        onAssignmentsChange(planned)
+                    }
+                    .disabled(!canArrangeAutomatically)
+                    .help(automaticArrangementHelp)
+
+                    Button("Full Screen All") {
+                        selectedAccountID = nil
+                        onAssignmentsChange(
+                            WindowArrangementPlanner.fullScreenAssignments(
+                                accountIDs: accountIDs,
+                                displays: controller.displays
+                            )
+                        )
+                    }
+                    .disabled(controller.displays.isEmpty)
+                    .help("Give each selected profile its own macOS full-screen Space")
+                }
+
+                if !canArrangeAutomatically, !controller.displays.isEmpty {
+                    Text("Automatic arrangement fits up to four profiles on each display. Use Full Screen All, or place the extra profiles yourself.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             if accounts.isEmpty {
@@ -48,7 +92,7 @@ struct InlineWindowArrangementEditor: View {
             } else {
                 HStack(alignment: .top, spacing: 12) {
                     profileShelf
-                        .frame(width: 210, height: 395)
+                        .frame(width: 210, height: 365)
 
                     VStack(spacing: 12) {
                         if controller.displays.isEmpty {
@@ -60,6 +104,7 @@ struct InlineWindowArrangementEditor: View {
                                     accounts: accounts,
                                     assignments: assignmentDictionary,
                                     selectedAccountID: $selectedAccountID,
+                                    compact: true,
                                     onAssign: assign
                                 )
                             }
@@ -69,6 +114,7 @@ struct InlineWindowArrangementEditor: View {
                 }
             }
         }
+        .padding(WindowControlSpacing.contentInset)
         .disabled(disabled)
         .onAppear {
             controller.refreshDisplays()
@@ -80,7 +126,7 @@ struct InlineWindowArrangementEditor: View {
 
     private var statusText: String {
         usesSavedPlacements
-            ? "Using saved placements. Move a profile to create an override."
+            ? "Using the saved arrangement. Move a profile to customize this launch."
             : customStatus
     }
 
@@ -94,7 +140,7 @@ struct InlineWindowArrangementEditor: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .padding(AppGeometry.panelEdgeControlInset)
+            .padding(WindowControlSpacing.contentInset)
 
             Divider()
 
@@ -138,16 +184,6 @@ struct InlineWindowArrangementEditor: View {
                 .padding(6)
             }
             .frame(maxHeight: .infinity)
-
-            if !assignments.isEmpty {
-                Divider()
-                Button("Clear Placements") {
-                    onAssignmentsChange([])
-                }
-                .buttonStyle(.borderless)
-                .padding(AppGeometry.panelEdgeControlInset)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            }
         }
         .background(.bar)
         .appRoundedPanel()
@@ -182,6 +218,17 @@ struct InlineWindowArrangementEditor: View {
 
     private var placementCountText: String {
         "\(assignments.count) of \(accounts.count) placed"
+    }
+
+    private var canArrangeAutomatically: Bool {
+        !controller.displays.isEmpty
+            && accounts.count <= controller.displays.count * WindowArrangementPlanner.maximumWindowedProfilesPerDisplay
+    }
+
+    private var automaticArrangementHelp: String {
+        canArrangeAutomatically
+            ? "Fit up to four Roblox windows on each connected display"
+            : "Automatic arrangement needs one display for every four selected profiles"
     }
 
     private func clearUnavailableSelection() {
@@ -224,8 +271,12 @@ struct InlineWindowArrangementEditor: View {
     private func placementMenus(for account: ManagedAccount) -> some View {
         ForEach(controller.displays) { display in
             Menu(display.name) {
-                ForEach(WindowPlacementRegion.allCases) { region in
+                ForEach(WindowPlacementRegion.windowedCases) { region in
                     Button(region.title) { assign(account.id, display, region) }
+                }
+                Divider()
+                Button(WindowPlacementRegion.fullScreen.title) {
+                    assign(account.id, display, .fullScreen)
                 }
             }
         }
@@ -283,7 +334,7 @@ struct WindowLayoutView: View {
                 } header: {
                     Text("Profiles")
                 } footer: {
-                    Text("Drag a profile onto a monitor region. A larger region replaces profiles in any area it overlaps.")
+                    Text("Choose a profile, then choose a windowed area or Full-screen Spaces. A larger windowed area replaces profiles in any area it overlaps.")
                 }
             }
             .listStyle(.sidebar)
@@ -308,11 +359,46 @@ struct WindowLayoutView: View {
             VStack(alignment: .leading, spacing: 18) {
                 permissionStatus
 
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Quick layouts")
+                        .font(.headline)
+                    Text("Start with a complete layout, then move individual profiles only when you need to.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Button("Arrange Automatically") {
+                            controller.arrangeAutomatically(accountIDs: store.accounts.map(\.id))
+                        }
+                        .disabled(!canArrangeAutomatically)
+                        .help(automaticArrangementHelp)
+
+                        Button("Full Screen All") {
+                            controller.makeFullScreen(accountIDs: store.accounts.map(\.id))
+                        }
+                        .disabled(controller.displays.isEmpty || store.accounts.isEmpty)
+                        .help("Give each profile its own macOS full-screen Space")
+                    }
+
+                    if !store.accounts.isEmpty,
+                       !controller.displays.isEmpty,
+                       !canArrangeAutomatically {
+                        Text("Automatic arrangement fits up to four profiles on each display. Use Full Screen All, or place the extra profiles yourself.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(WindowControlSpacing.contentInset)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .appRoundedPanel()
+
                 if let message = controller.lastMessage {
                     Text(message)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .padding(WindowControlSpacing.contentInset)
                 }
 
                 if controller.displays.isEmpty {
@@ -333,6 +419,7 @@ struct WindowLayoutView: View {
                             accounts: store.accounts,
                             assignments: controller.assignments,
                             selectedAccountID: $selectedAccountID,
+                            compact: false,
                             onAssign: { accountID, display, region in
                                 controller.assign(accountID: accountID, to: display, region: region)
                             }
@@ -340,15 +427,28 @@ struct WindowLayoutView: View {
                     }
                 }
 
-                Text("Window layouts use the area left by the menu bar, Dock, and camera housing. If Roblox keeps a larger minimum size, the app anchors that native size as close as possible to the selected region. Roblox stays unchanged.")
+                Text("Windowed layouts use the area left by the menu bar, Dock, and camera housing. Fill Desktop stays in the current desktop. Full Screen creates one macOS Space for each profile. Roblox stays unchanged.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(WindowControlSpacing.contentInset)
             }
             .frame(maxWidth: 900)
             .frame(maxWidth: .infinity, alignment: .top)
             .padding(AppGeometry.windowContentInset)
         }
+    }
+
+    private var canArrangeAutomatically: Bool {
+        !store.accounts.isEmpty
+            && !controller.displays.isEmpty
+            && store.accounts.count <= controller.displays.count * WindowArrangementPlanner.maximumWindowedProfilesPerDisplay
+    }
+
+    private var automaticArrangementHelp: String {
+        canArrangeAutomatically
+            ? "Fit up to four Roblox windows on each connected display"
+            : "Automatic arrangement needs one display for every four profiles"
     }
 
     @ViewBuilder
@@ -360,13 +460,13 @@ struct WindowLayoutView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Window control is ready")
                         .fontWeight(.medium)
-                    Text("Saved placements will apply after each Roblox launch.")
+                    Text("The saved arrangement will apply after each Roblox launch.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
             }
-            .padding(AppGeometry.panelEdgeControlInset)
+            .padding(WindowControlSpacing.contentInset)
             .background(Color(nsColor: .controlBackgroundColor))
             .appRoundedPanel()
         } else {
@@ -391,7 +491,7 @@ struct WindowLayoutView: View {
                     .buttonStyle(.link)
                 }
             }
-            .padding(AppGeometry.panelEdgeControlInset)
+            .padding(WindowControlSpacing.contentInset)
             .background(Color(nsColor: .controlBackgroundColor))
             .appRoundedPanel()
         }
@@ -401,10 +501,14 @@ struct WindowLayoutView: View {
     private func placementMenus(for account: ManagedAccount) -> some View {
         ForEach(controller.displays) { display in
             Menu(display.name) {
-                ForEach(WindowPlacementRegion.allCases) { region in
+                ForEach(WindowPlacementRegion.windowedCases) { region in
                     Button(region.title) {
                         controller.assign(accountID: account.id, to: display, region: region)
                     }
+                }
+                Divider()
+                Button(WindowPlacementRegion.fullScreen.title) {
+                    controller.assign(accountID: account.id, to: display, region: .fullScreen)
                 }
             }
         }
@@ -468,8 +572,10 @@ private struct MonitorLayoutCard: View {
     let accounts: [ManagedAccount]
     let assignments: [UUID: WindowLayoutAssignment]
     @Binding var selectedAccountID: UUID?
+    let compact: Bool
     let onAssign: (UUID, ConnectedDisplay, WindowPlacementRegion) -> Void
     @State private var targetedRegion: WindowPlacementRegion?
+    @State private var fullScreenTargeted = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -558,28 +664,126 @@ private struct MonitorLayoutCard: View {
                 .appRoundedPanel(radius: AppGeometry.panelCornerRadius)
                 .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
             }
-            .frame(height: 330)
+            .frame(height: compact ? 210 : 220)
+
+            fullScreenTarget
         }
-        .padding(AppGeometry.panelEdgeControlInset)
+        .padding(WindowControlSpacing.contentInset)
         .background(Color(nsColor: .controlBackgroundColor))
         .appRoundedPanel()
     }
 
     private var placedCountText: String {
-        let count = assignments.values.filter { $0.displayID == display.id }.count
-        return count == 1 ? "1 profile" : "\(count) profiles"
+        let windowedCount = placedProfiles.count
+        let fullScreenCount = fullScreenProfiles.count
+        if fullScreenCount == 0 {
+            return windowedCount == 1 ? "1 windowed" : "\(windowedCount) windowed"
+        }
+        return "\(windowedCount) windowed · \(fullScreenCount) full screen"
     }
 
     private var placedProfiles: [PlacedProfile] {
         assignments.values.compactMap { assignment in
             guard assignment.displayID == display.id,
+                  !assignment.region.isNativeFullScreen,
                   let account = accounts.first(where: { $0.id == assignment.accountID }) else { return nil }
             return PlacedProfile(account: account, region: assignment.region)
         }
     }
 
+    private var fullScreenProfiles: [ManagedAccount] {
+        assignments.values.compactMap { assignment in
+            guard assignment.displayID == display.id,
+                  assignment.region.isNativeFullScreen else { return nil }
+            return accounts.first(where: { $0.id == assignment.accountID })
+        }
+        .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    @ViewBuilder
+    private var fullScreenTarget: some View {
+        Group {
+            if let selectedAccountID {
+                Button {
+                    onAssign(selectedAccountID, display, .fullScreen)
+                    self.selectedAccountID = nil
+                } label: {
+                    fullScreenTargetLabel
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Put the selected profile in its own full-screen Space")
+            } else {
+                fullScreenTargetLabel
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: AppGeometry.controlCornerRadius, style: .continuous))
+        .dropDestination(for: String.self) { items, _ in
+            guard let value = items.first, let accountID = UUID(uuidString: value) else { return false }
+            onAssign(accountID, display, .fullScreen)
+            selectedAccountID = nil
+            return true
+        } isTargeted: { targeted in
+            fullScreenTargeted = targeted
+        }
+        .help("Each profile opens in its own native macOS full-screen Space")
+    }
+
+    private var fullScreenTargetLabel: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Full-screen Spaces")
+                    .font(.subheadline.weight(.semibold))
+                Text("Each profile gets its own macOS Space on this display.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            if fullScreenProfiles.isEmpty {
+                Text(fullScreenTargetIsActive ? "Place here" : "No profiles")
+                    .font(.caption)
+                    .foregroundStyle(fullScreenTargetIsActive ? Color.accentColor : Color.secondary)
+            } else {
+                HStack(spacing: 7) {
+                    ForEach(fullScreenProfiles.prefix(4)) { account in
+                        AccountAvatarView(
+                            url: account.avatarURL,
+                            size: 26,
+                            cornerRadius: AppGeometry.smallThumbnailRadius
+                        )
+                        .help(account.title)
+                    }
+                    if fullScreenProfiles.count > 4 {
+                        Text("+\(fullScreenProfiles.count - 4)")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(WindowControlSpacing.contentInset)
+        .background {
+            RoundedRectangle(cornerRadius: AppGeometry.controlCornerRadius, style: .continuous)
+                .fill(selectedAccountID == nil
+                    && !fullScreenTargeted
+                        ? Color(nsColor: .windowBackgroundColor)
+                        : Color.accentColor.opacity(0.08))
+        }
+        .overlay {
+            if fullScreenTargetIsActive {
+                RoundedRectangle(cornerRadius: AppGeometry.controlCornerRadius, style: .continuous)
+                    .stroke(Color.accentColor, lineWidth: 2)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Full-screen Spaces on \(display.name), \(fullScreenProfiles.count) profiles")
+    }
+
+    private var fullScreenTargetIsActive: Bool {
+        selectedAccountID != nil || fullScreenTargeted
+    }
+
     private func region(row: Int, column: Int) -> WindowPlacementRegion? {
-        WindowPlacementRegion.allCases.first { $0.gridRow == row && $0.gridColumn == column }
+        WindowPlacementRegion.windowedCases.first { $0.gridRow == row && $0.gridColumn == column }
     }
 
     private func fittedPreviewSize(in available: CGSize) -> CGSize {
@@ -680,6 +884,7 @@ private struct MonitorDropTarget: View {
                     targetLabel
                 }
                 .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityLabel(region.title)
                 .accessibilityHint("Place the selected profile here")
             } else {
@@ -687,7 +892,8 @@ private struct MonitorDropTarget: View {
                     .accessibilityHidden(true)
             }
         }
-        .contentShape(RoundedRectangle(cornerRadius: AppGeometry.controlCornerRadius, style: .continuous))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
         .dropDestination(for: String.self) { items, _ in
             guard let value = items.first, let accountID = UUID(uuidString: value) else { return false }
             onDrop(accountID)
@@ -705,5 +911,6 @@ private struct MonitorDropTarget: View {
             .opacity(showsLabel || isTargeted ? 1 : 0)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(isTargeted ? Color.accentColor.opacity(0.05) : Color.clear)
+            .contentShape(Rectangle())
     }
 }

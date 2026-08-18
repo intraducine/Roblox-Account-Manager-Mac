@@ -214,7 +214,7 @@ private struct LaunchSetEditor: View {
                     accounts: resolvedAccounts,
                     assignments: effectiveWindowAssignments,
                     usesSavedPlacements: draft.windowArrangement.usesSavedPlacements,
-                    customStatus: "Using the custom layout saved with this Launch Set.",
+                    customStatus: "Using the custom window arrangement saved with this Launch Set.",
                     disabled: false,
                     onAssignmentsChange: { assignments in
                         draft.windowArrangement = .custom(assignments)

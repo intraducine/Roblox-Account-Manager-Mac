@@ -42,7 +42,7 @@ The app does not store passwords. It does not solve captchas, inject code, autom
 4. Optional: open **Arrange Windows** and drag profiles onto the monitor regions where they should open.
 5. Select **Choose Game**, paste the Roblox game link, and confirm its name and icon. You can also reuse a recent game.
 6. Keep **Let Roblox choose** or select another server option.
-7. Review the inline **Window placement** editor. It shows the placements from **Arrange Windows** by default. Move a profile only when this launch needs a different layout.
+7. Review the inline **Window arrangement** editor. It shows the arrangement from **Arrange Windows** by default. Move a profile only when this launch needs a different layout.
 8. Select the blue launch button. Each selected account opens in its own Roblox window.
 
 The app fills the Place ID after you choose a game. The number remains available as an advanced field. Most users do not need a Job ID. A Job ID is an advanced, temporary code for one server that is already running.
@@ -133,13 +133,19 @@ The bottom **Advanced fallback** changes copied app settings and applies a diffe
 
 Open **Arrange Windows** from the main toolbar, choose **Tools > Arrange Roblox Windows**, or press **Command-Shift-L**. The window lists each connected display with its current pixel resolution and usable workspace.
 
-Drag a profile onto Top Left, Top, Top Right, Left, Whole Screen, Right, Bottom Left, Bottom, or Bottom Right. Corners use one quarter of the usable display. Top, Bottom, Left, and Right use one half. Whole Screen fills the usable display without covering the menu bar or Dock. Selecting a profile and then selecting a region provides the same result without dragging.
+Select **Arrange Automatically** to fit up to four profiles on each connected display. The app uses a full desktop, halves, a three-window layout, or quarters based on the number of profiles. Select **Full Screen All** when every profile should have its own native macOS full-screen Space.
+
+For a custom layout, drag a profile onto Top Left, Top, Top Right, Left, Fill Desktop, Right, Bottom Left, Bottom, or Bottom Right. Corners use one quarter of the usable display. Top, Bottom, Left, and Right use one half. Fill Desktop fills the usable display without covering the menu bar or Dock. The separate **Full-screen Spaces** target creates one Space per profile on that display. Selecting a profile and then selecting a target provides the same result without dragging.
 
 Larger regions replace assignments that they overlap. For example, placing one profile on the left half removes profiles from the top-left and bottom-left quarters. A disconnected monitor remains assigned by name and resolution, but the manager does not move that profile to the wrong display. Reconnect the display and launch again.
 
 macOS requires Accessibility permission before one app can move another app's windows. Select **Open Accessibility Settings** in Arrange Windows and turn on Roblox Account Manager. If it is already on but the app still reports that permission is missing, turn it off and on again, then select **Check Again**. This one-time reset can be necessary after the app's signing identity changes. The manager uses the launched Roblox process ID and the standard macOS window position and size attributes. If Roblox restores its own minimum size, the manager keeps that native size and anchors it as close as possible to the selected region. It does not scale the rendered window, edit Roblox, inject code, or change Roblox settings.
 
-Batch launches show the monitor and selected profiles directly below **Open Roblox**. The editor starts with the current per-account choices from **Arrange Windows**. Moving or removing a profile creates a temporary layout for that launch. **Use Saved Placements** removes the override. Launch Set settings use the same inline editor, but changes are saved with that Launch Set.
+Batch launches show the monitor and selected profiles below the **Launch Accounts** action. The editor starts with the current per-account choices from **Arrange Windows**. Moving or removing a profile creates a temporary layout for that launch. **Use Saved Arrangement** removes the override. Launch Set settings use the same inline editor, but changes are saved with that Launch Set.
+
+Each windowed Roblox placement starts as soon as its own managed process and game window are ready. A slow account does not delay other windowed placements. The manager retries temporary macOS Accessibility failures and does not activate Roblox for normal window movement. **Fill Desktop** uses the display's current usable desktop area.
+
+Native full-screen transitions are different. macOS creates a Space for each window, so the manager queues them and requests the full-screen state on the exact managed Roblox process. This request sets full screen to true. It is not a toggle, so the manager can repeat it safely while the user changes apps, windows, or Spaces. The manager waits for macOS to confirm the state before it starts the next profile. It does not activate Roblox or change the user's current app or Space. The standard full-screen control remains a compatibility fallback for windows that do not expose a writable full-screen state.
 
 The manager reads the current usable display area for every launch. This automatically accounts for the menu bar, Dock position, Dock auto-hide boundary, and camera housing. Global placements are local device preferences and are not included in backups. A custom layout saved inside a Launch Set is included with that Launch Set in metadata backups.
 

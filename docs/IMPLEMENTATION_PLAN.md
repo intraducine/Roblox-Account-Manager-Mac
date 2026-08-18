@@ -202,16 +202,20 @@ The phases below record how the product was built. They are not current usage in
 ### Phase 15: version 1.1.2 native window layouts
 
 - Show connected monitors with physical resolution and usable workspace.
+- Put **Arrange Automatically** and **Full Screen All** before manual placement. Automatic layouts support up to four profiles per display and use a count-based full, half, three-window, or quarter pattern.
 - Add drag-and-drop profile placement for halves, quarters, and the whole usable display.
+- Name the whole usable display **Fill Desktop**. Keep native **Full Screen** separate and show the profiles that will receive their own macOS Spaces.
 - Use current menu bar, Dock, camera-housing, scaling, and multi-monitor geometry for every launch.
 - Save monitor assignments as local preferences and exclude them from backups.
 - Bind every placement to the exact managed Roblox process ID.
 - Use macOS Accessibility window attributes first and leave Roblox code unchanged.
 - Wait for Roblox's settled frame after each resize. If Roblox enforces another size, anchor that native size inside the selected display region. Do not report the successful launch as failed.
+- Start each placement as soon as its own managed Roblox process is ready. Do not wait for the slowest account in a batch. Retry temporary Accessibility and startup-window states without activating Roblox.
 - Keep Arrange Windows as the global per-account placement editor.
 - Show the monitor and selected profiles inline below the Launch Accounts action for batch launches. Display saved placements until the user changes the inline layout, then use a temporary custom override.
 - Show the same inline editor inside Launch Set settings. Store custom Launch Set layouts with the set and remap their account IDs during metadata import.
-- Do not ship the rejected full-screen profile deck. Direct and bridged window moves into a type-4 full-screen Space were no-ops in the local proof, and separate full-screen Spaces did not match the requested workflow.
+- Do not ship the rejected shared full-screen profile deck. Direct and bridged window moves into one type-4 full-screen Space were no-ops in the local proof.
+- Support separate native full-screen Spaces through an idempotent Accessibility state request. Move the normal window to its display first, then serialize and confirm every Space transition without activating Roblox or changing the user's current Space. Keep the public Accessibility full-screen button as a compatibility fallback.
 - Keep launches working when permission is missing or a saved display is disconnected.
 - Test coordinate conversion, overlap replacement, persistence, PID binding, temporary batch overrides, legacy Launch Set decoding, and backup account-ID remapping.
 

@@ -114,7 +114,7 @@ struct BatchLaunchBar: View {
             accounts: selectedAccounts,
             assignments: effectiveWindowAssignments,
             usesSavedPlacements: store.batchWindowArrangement.usesSavedPlacements,
-            customStatus: "Using a custom layout for this launch.",
+            customStatus: "Using a custom window arrangement for this launch.",
             disabled: store.isBatchLaunching || store.isOpeningSelectedApps || store.isWorking,
             onAssignmentsChange: { assignments in
                 store.batchWindowArrangement = .custom(assignments)
