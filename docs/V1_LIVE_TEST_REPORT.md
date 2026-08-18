@@ -6,12 +6,14 @@ This report uses saved account labels only. It does not contain usernames, cooki
 
 ## Version 1.1.2 transition re-audit
 
-- The public repository still marks version 1.1.1 as the latest final release. Its ZIP, checksum, and project-signature assets remain available.
+- Version 1.1.2 was published as a final release on August 18, 2026. Its tag points to the release commit, and its ZIP, checksum, and project-signature assets are uploaded.
+- The public repository still marks version 1.1.1 as the latest release so older updater clients cannot skip the bridge.
 - A fresh download of the public version 1.1.1 ZIP matched its checksum. Its P-256 project update signature also passed against the public key embedded in the updater.
 - The exact certificate fingerprint pinned inside the published version 1.1.1 app matches the project certificate still installed on the release Mac.
 - The current version 1.1.2 release build uses that exact project certificate. The local signing-transition integration test accepted the published version 1.1.1 app and current version 1.1.2 candidate, then rejected a candidate changed to an ad hoc signer.
 - The current source suite passes 206 tests with zero failures. Six explicit integration tests remain opt-in because they use installed Roblox clients, a published update, a local signed-app transition, or macOS approval UI.
 - A temporary Keychain access-control integration test passed by authorizing a requirement-bound tool to read one disposable item. The test removed that item and did not change the app's saved session or profile-note items.
+- The published-update integration test downloaded version 1.1.2 through a disposable copy of the public version 1.1.1 bridge. It verified the remote asset digests, checksum, project update signature, app certificate, identifier, version, and processor support; replaced version 1.1.1; confirmed the backup; and restored version 1.1.1. The test preserved the real Keychain while the separate disposable-item test covered the access-control migration.
 - The current version 1.1.2 app reports build 112, contains Apple silicon and Intel code, and passes strict deep code-signature validation.
 - Every unpublished commit after version 1.1.1 uses a GitHub noreply address. Current source and commit-content scans found no personal email, user home path, token, Roblox session, or private release key.
 

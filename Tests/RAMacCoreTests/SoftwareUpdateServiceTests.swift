@@ -389,7 +389,21 @@ final class SoftwareUpdateServiceTests: XCTestCase {
             currentApplicationURL: currentURL
         )
         defer { service.discard(prepared) }
-        let installer = SoftwareUpdateInstaller(service: service)
+        let installer: SoftwareUpdateInstaller
+        if environment["RAM_UPDATE_PRESERVE_KEYCHAIN"] == "1" {
+            installer = SoftwareUpdateInstaller(
+                validateApplication: { candidateURL, release, currentApplicationURL in
+                    try service.validateApplication(
+                        candidateURL,
+                        release: release,
+                        currentApplicationURL: currentApplicationURL
+                    )
+                },
+                prepareProtectedKeychainAccess: { _, _, _ in }
+            )
+        } else {
+            installer = SoftwareUpdateInstaller(service: service)
+        }
         let backupURL = try installer.install(prepared, replacing: currentURL)
 
         XCTAssertEqual(Self.bundleVersion(at: currentURL), expectedVersion.description)
