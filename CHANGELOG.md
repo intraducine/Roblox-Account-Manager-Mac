@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a visible Feedback toolbar button and an embedded Tally feedback form.
+- Let users choose whether to include the app version or basic Mac details before the form loads.
+- Kept Roblox accounts, sessions, private-server links, access codes, and launch data out of feedback submissions.
+
 ## 1.1.1 - 2026-08-14
 
 - Added friend relay joining so selected accounts can follow existing friendships into one confirmed server.

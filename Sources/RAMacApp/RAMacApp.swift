@@ -55,6 +55,12 @@ struct RAMacApp: App {
         }
         .defaultSize(width: 1100, height: 650)
 
+        Window("Send Feedback", id: "feedback") {
+            FeedbackView()
+                .dismissTextInputOnOutsideClick()
+        }
+        .defaultSize(width: 860, height: 660)
+
         Window("Diagnostics and Backup", id: "diagnostics") {
             DiagnosticsView(store: store)
                 .dismissTextInputOnOutsideClick()
@@ -90,6 +96,7 @@ private struct V1ViewCommands: Commands {
             Button("Launch Sets") { openWindow(id: "launch-sets") }
             Button("Arrange Roblox Windows") { openWindow(id: "window-layout") }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+            Button("Send Feedback") { openWindow(id: "feedback") }
             Button("Diagnostics and Backup") { openWindow(id: "diagnostics") }
         }
         CommandGroup(after: .appInfo) {

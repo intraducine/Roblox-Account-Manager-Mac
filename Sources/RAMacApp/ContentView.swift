@@ -68,6 +68,14 @@ struct ContentView: View {
                 .keyboardShortcut("l", modifiers: [.command, .shift])
                 .help("Choose where each Roblox profile opens")
 
+                Button {
+                    openWindow(id: "feedback")
+                } label: {
+                    Label("Feedback", systemImage: "text.bubble")
+                        .labelStyle(.titleAndIcon)
+                }
+                .help("Send feedback about the app")
+
                 Menu {
                     Button("Diagnostics and Backup") { openWindow(id: "diagnostics") }
                     Divider()
