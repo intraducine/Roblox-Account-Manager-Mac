@@ -44,6 +44,16 @@ final class WindowArrangementTests: XCTestCase {
         XCTAssertFalse(policy.usesSavedPlacements)
     }
 
+    func testNativeFullScreenPlacementRoundTripsThroughSavedLaunchSetData() throws {
+        let original = assignment(accountID: UUID(), region: .fullScreen)
+
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(WindowLayoutAssignment.self, from: data)
+
+        XCTAssertEqual(decoded, original)
+        XCTAssertEqual(decoded.region, .fullScreen)
+    }
+
     private func assignment(
         accountID: UUID,
         region: WindowPlacementRegion

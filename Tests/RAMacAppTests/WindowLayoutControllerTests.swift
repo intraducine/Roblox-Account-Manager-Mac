@@ -1,3 +1,5 @@
+import AppKit
+import ApplicationServices
 import CoreGraphics
 import XCTest
 @testable import RAMacApp
@@ -87,6 +89,116 @@ final class WindowLayoutControllerTests: XCTestCase {
         XCTAssertFalse(WindowPlacementGeometry.regionsOverlap(.left, .right))
         XCTAssertFalse(WindowPlacementGeometry.regionsOverlap(.top, .bottom))
         XCTAssertFalse(WindowPlacementGeometry.regionsOverlap(.topLeft, .bottomLeft))
+        XCTAssertFalse(WindowPlacementGeometry.regionsOverlap(.fullScreen, .wholeScreen))
+        XCTAssertFalse(WindowPlacementGeometry.regionsOverlap(.fullScreen, .fullScreen))
+    }
+
+    func testAutomaticLayoutUsesAppleStyleThreeWindowArrangement() {
+        let fixture = makeControllerFixture()
+        let accountIDs = [UUID(), UUID(), UUID()]
+
+        let assignments = WindowArrangementPlanner.automaticAssignments(
+            accountIDs: accountIDs,
+            displays: [fixture.display]
+        )
+
+        XCTAssertEqual(assignments?.map(\.accountID), accountIDs)
+        XCTAssertEqual(assignments?.map(\.region), [.left, .topRight, .bottomRight])
+    }
+
+    func testAutomaticLayoutRefusesMoreThanFourProfilesPerDisplay() {
+        let fixture = makeControllerFixture()
+
+        XCTAssertNil(
+            WindowArrangementPlanner.automaticAssignments(
+                accountIDs: (0..<5).map { _ in UUID() },
+                displays: [fixture.display]
+            )
+        )
+    }
+
+    func testSeveralProfilesCanUseSeparateFullScreenSpacesOnOneDisplay() {
+        let fixture = makeControllerFixture()
+        let accountIDs = [UUID(), UUID(), UUID()]
+
+        for accountID in accountIDs {
+            fixture.controller.assign(accountID: accountID, to: fixture.display, region: .fullScreen)
+        }
+
+        XCTAssertEqual(fixture.controller.assignments.count, 3)
+        XCTAssertTrue(fixture.controller.assignments.values.allSatisfy { $0.region == .fullScreen })
+    }
+
+    func testLiveFullScreenPlacementSurvivesAppAndSpaceSwitchingWhenEnabled() async throws {
+        guard let rawProcessIdentifier = ProcessInfo.processInfo.environment[
+            "RAM_RUN_WINDOW_FULLSCREEN_INTEGRATION_PID"
+        ], let processIdentifier = Int32(rawProcessIdentifier) else {
+            throw XCTSkip("Set RAM_RUN_WINDOW_FULLSCREEN_INTEGRATION_PID to a windowed Roblox process ID.")
+        }
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("The test runner needs macOS Accessibility permission.")
+        }
+
+        let application = AXUIElementCreateApplication(processIdentifier)
+        var mainWindowValue: CFTypeRef?
+        let hasMainWindow = AXUIElementCopyAttributeValue(
+            application,
+            kAXMainWindowAttribute as CFString,
+            &mainWindowValue
+        ) == .success
+            && mainWindowValue.map { CFGetTypeID($0) == AXUIElementGetTypeID() } == true
+        var windowsValue: CFTypeRef?
+        let windowsReadSucceeded = AXUIElementCopyAttributeValue(
+            application,
+            kAXWindowsAttribute as CFString,
+            &windowsValue
+        ) == .success
+        let hasWindowListWindow = windowsReadSucceeded
+            && (windowsValue as? [AXUIElement])?.isEmpty == false
+        guard hasMainWindow || hasWindowListWindow else {
+            throw XCTSkip("The selected Roblox process must have a visible window before the test starts.")
+        }
+
+        let snapshot = SystemConnectedDisplayProvider().snapshot()
+        let display = try XCTUnwrap(snapshot.displays.first)
+        let targetFrame = WindowPlacementGeometry.accessibilityFrame(
+            from: display.visibleFrame,
+            referenceTop: snapshot.accessibilityReferenceTop
+        )
+        let request = RobloxWindowPlacementRequest(
+            targetFrame: targetFrame,
+            availableFrame: targetFrame,
+            screenFrame: WindowPlacementGeometry.accessibilityFrame(
+                from: display.frame,
+                referenceTop: snapshot.accessibilityReferenceTop
+            ),
+            region: .fullScreen
+        )
+
+        let interferenceProcess = ProcessInfo.processInfo.environment[
+            "RAM_WINDOW_FULLSCREEN_INTERFERENCE_PID"
+        ].flatMap(Int32.init).flatMap(NSRunningApplication.init(processIdentifier:))
+        let appSwitching = Task { @MainActor in
+            for _ in 0..<25 {
+                if let finder = NSRunningApplication.runningApplications(
+                    withBundleIdentifier: "com.apple.finder"
+                ).first {
+                    _ = finder.activate()
+                }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                if let interferenceProcess {
+                    _ = interferenceProcess.activate(options: [.activateAllWindows])
+                }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+        let result = await AccessibilityRobloxWindowPlacer().place(
+            processIdentifier: processIdentifier,
+            request: request
+        )
+        await appSwitching.value
+
+        XCTAssertEqual(result, .placed)
     }
 
     func testLargerRegionClearsProfilesInOverlappingRegions() {
@@ -153,6 +265,10 @@ final class WindowLayoutControllerTests: XCTestCase {
         XCTAssertEqual(
             requests.first?.request.availableFrame,
             CGRect(x: 100, y: 150, width: 1200, height: 800)
+        )
+        XCTAssertEqual(
+            requests.first?.request.screenFrame,
+            CGRect(x: 0, y: 0, width: 1400, height: 1000)
         )
         XCTAssertEqual(requests.first?.request.region, .topRight)
     }

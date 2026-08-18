@@ -70,6 +70,7 @@ final class AccountStore: ObservableObject {
         let processIdentifier: Int32?
         let placeID: Int64?
         let errorMessage: String?
+        let placementResult: WindowPlacementResult?
     }
 
     private struct AppLaunchOutcome: Sendable {
@@ -77,6 +78,7 @@ final class AccountStore: ObservableObject {
         let username: String
         let processIdentifier: Int32?
         let errorMessage: String?
+        let placementResult: WindowPlacementResult?
     }
 
     @Published private(set) var accounts: [ManagedAccount] = []
@@ -1557,7 +1559,8 @@ final class AccountStore: ObservableObject {
                 accountID: account.id,
                 username: account.username,
                 processIdentifier: nil,
-                errorMessage: message
+                errorMessage: message,
+                placementResult: nil
             )
         }
 
@@ -1566,6 +1569,7 @@ final class AccountStore: ObservableObject {
         let builder = self.builder
         let launcher = self.launcher
         let launchMode = self.launchMode
+        let windowLayout = self.windowLayout
         await withTaskGroup(of: AppLaunchOutcome.self) { group in
             for account in readyAccounts {
                 group.addTask {
@@ -1576,18 +1580,25 @@ final class AccountStore: ObservableObject {
                         let ticket = try await api.authenticationTicket(cookie: cookie)
                         let url = try builder.makeAppURL(ticket: ticket)
                         let instance = try await launcher.launch(url, for: account.id, mode: launchMode)
+                        let placementResult = await windowLayout.placeWindow(
+                            accountID: account.id,
+                            processIdentifier: instance.processIdentifier,
+                            arrangement: windowArrangement
+                        )
                         return AppLaunchOutcome(
                             accountID: account.id,
                             username: account.username,
                             processIdentifier: instance.processIdentifier,
-                            errorMessage: nil
+                            errorMessage: nil,
+                            placementResult: placementResult
                         )
                     } catch {
                         return AppLaunchOutcome(
                             accountID: account.id,
                             username: account.username,
                             processIdentifier: nil,
-                            errorMessage: error.localizedDescription
+                            errorMessage: error.localizedDescription,
+                            placementResult: nil
                         )
                     }
                 }
@@ -1615,16 +1626,15 @@ final class AccountStore: ObservableObject {
                 accountID: outcome.accountID,
                 username: outcome.username,
                 processIdentifier: outcome.processIdentifier,
-                errorMessage: message
+                errorMessage: message,
+                placementResult: outcome.placementResult
             )
         }
 
-        let placementResults = await presentLaunchedWindows(
-            outcomes.compactMap { outcome in
-                guard outcome.errorMessage == nil, let processIdentifier = outcome.processIdentifier else { return nil }
-                return (outcome.accountID, processIdentifier)
-            },
-            arrangement: windowArrangement
+        let placementResults = Dictionary(
+            uniqueKeysWithValues: outcomes.compactMap { outcome in
+                outcome.placementResult.map { (outcome.accountID, $0) }
+            }
         )
 
         let now = Date()
@@ -1888,6 +1898,7 @@ final class AccountStore: ObservableObject {
         let builder = self.builder
         let launcher = self.launcher
         let launchMode = self.launchMode
+        let windowLayout = self.windowLayout
         let privateTargets = preparedPrivateTargets
         let total = selectedAccounts.count
 
@@ -1928,12 +1939,18 @@ final class AccountStore: ObservableObject {
                             target: resolved.target
                         )
                         let instance = try await launcher.launch(url, for: account.id, mode: launchMode)
+                        let placementResult = await windowLayout.placeWindow(
+                            accountID: account.id,
+                            processIdentifier: instance.processIdentifier,
+                            arrangement: windowArrangement
+                        )
                         return BatchOutcome(
                             accountID: account.id,
                             username: account.username,
                             processIdentifier: instance.processIdentifier,
                             placeID: resolved.placeID,
-                            errorMessage: nil
+                            errorMessage: nil,
+                            placementResult: placementResult
                         )
                     } catch {
                         return BatchOutcome(
@@ -1941,7 +1958,8 @@ final class AccountStore: ObservableObject {
                             username: account.username,
                             processIdentifier: nil,
                             placeID: nil,
-                            errorMessage: error.localizedDescription
+                            errorMessage: error.localizedDescription,
+                            placementResult: nil
                         )
                     }
                 }
@@ -1971,15 +1989,14 @@ final class AccountStore: ObservableObject {
                 username: outcome.username,
                 processIdentifier: outcome.processIdentifier,
                 placeID: outcome.placeID,
-                errorMessage: message
+                errorMessage: message,
+                placementResult: outcome.placementResult
             )
         }
-        let placementResults = await presentLaunchedWindows(
-            outcomes.compactMap { outcome in
-                guard outcome.errorMessage == nil, let processIdentifier = outcome.processIdentifier else { return nil }
-                return (outcome.accountID, processIdentifier)
-            },
-            arrangement: windowArrangement
+        let placementResults = Dictionary(
+            uniqueKeysWithValues: outcomes.compactMap { outcome in
+                outcome.placementResult.map { (outcome.accountID, $0) }
+            }
         )
         for outcome in outcomes where outcome.errorMessage == nil {
             let launchedPlaceID = outcome.placeID ?? placeID
@@ -2050,27 +2067,28 @@ final class AccountStore: ObservableObject {
         showWindowPlacementNoticeIfNeeded([accountID: result])
     }
 
-    private func presentLaunchedWindows(
-        _ launches: [(accountID: UUID, processIdentifier: Int32)],
-        arrangement: WindowArrangementPolicy
-    ) async -> [UUID: WindowPlacementResult] {
-        switch arrangement {
-        case .savedPlacements:
-            return await windowLayout.placeWindows(launches)
-        case .custom(let assignments):
-            return await windowLayout.placeWindows(launches, with: assignments)
-        case .unchanged:
-            return Dictionary(uniqueKeysWithValues: launches.map { ($0.accountID, .noAssignment) })
-        }
-    }
-
     private func showWindowPlacementNoticeIfNeeded(
         _ results: [UUID: WindowPlacementResult]
     ) {
-        guard let message = results.values.compactMap(\.requiresAttentionMessage).first else { return }
+        let accountOrder = Dictionary(
+            uniqueKeysWithValues: accounts.enumerated().map { ($0.element.id, $0.offset) }
+        )
+        let failures = results.compactMap { accountID, result -> (UUID, String)? in
+            result.requiresAttentionMessage.map { (accountID, $0) }
+        }.sorted {
+            accountOrder[$0.0, default: .max] < accountOrder[$1.0, default: .max]
+        }
+        guard !failures.isEmpty else { return }
+        let lines = failures.map { accountID, message in
+            let handle = accounts.first(where: { $0.id == accountID }).map { "@\($0.username)" }
+                ?? "One account"
+            return "\(handle): \(message)"
+        }
         notice = Notice(
-            title: "Roblox opened without its saved layout",
-            message: message
+            title: failures.count == 1
+                ? "Roblox opened without its saved layout"
+                : "\(failures.count) Roblox windows need attention",
+            message: lines.joined(separator: "\n")
         )
     }
 

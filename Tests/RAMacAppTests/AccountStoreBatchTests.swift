@@ -200,6 +200,162 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertFalse(placements.contains { $0.processIdentifier == processIdentifiers[accounts[2].id] })
     }
 
+    func testBatchPlacementStartsBeforeTheSlowestRobloxLaunchFinishes() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-window-layout-pipeline-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let accounts = (0..<2).map { index in
+            ManagedAccount(
+                userID: Int64(index + 1),
+                username: "pipeline_\(index + 1)",
+                displayName: "Pipeline \(index + 1)",
+                group: "Pipeline"
+            )
+        }
+        try repository.save(accounts)
+        let vault = MemoryVault()
+        for account in accounts { try vault.save("cookie-\(account.userID)", for: account.id) }
+        let launcher = BatchMockLauncher(
+            failingAccountID: nil,
+            launchDelaysByAccountID: [accounts[1].id: 700_000_000]
+        )
+        let windowPlacer = BatchRecordingWindowPlacer()
+        let windowLayout = WindowLayoutController(
+            repository: BatchMemoryWindowLayoutRepository(),
+            displayProvider: BatchStaticDisplayProvider(
+                snapshotValue: ConnectedDisplaySnapshot(
+                    displays: [batchTestDisplay],
+                    accessibilityReferenceTop: 1000
+                )
+            ),
+            placer: windowPlacer
+        )
+        windowLayout.assign(accountID: accounts[0].id, to: batchTestDisplay, region: .left)
+        windowLayout.assign(accountID: accounts[1].id, to: batchTestDisplay, region: .right)
+        let store = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: BatchMockAPI(),
+            launcher: launcher,
+            windowLayout: windowLayout
+        )
+        store.toggleBatchGroup("Pipeline")
+
+        let launchTask = Task {
+            await store.launchBatch(
+                placeText: "12345",
+                server: .automatic,
+                skipHealthPreflight: true
+            )
+        }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let earlyRequests = await windowPlacer.recordedRequests()
+        XCTAssertEqual(earlyRequests.count, 1)
+
+        await launchTask.value
+        let finalRequests = await windowPlacer.recordedRequests()
+        XCTAssertEqual(finalRequests.count, 2)
+    }
+
+    func testBatchPlacementNoticeNamesEveryAccountThatNeedsAttention() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-window-layout-errors-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let accounts = (0..<2).map { index in
+            ManagedAccount(
+                userID: Int64(index + 1),
+                username: "layout_error_\(index + 1)",
+                displayName: "Layout Error \(index + 1)",
+                group: "Layout Errors"
+            )
+        }
+        try repository.save(accounts)
+        let vault = MemoryVault()
+        for account in accounts { try vault.save("cookie-\(account.userID)", for: account.id) }
+        let windowLayout = WindowLayoutController(
+            repository: BatchMemoryWindowLayoutRepository(),
+            displayProvider: BatchStaticDisplayProvider(
+                snapshotValue: ConnectedDisplaySnapshot(
+                    displays: [batchTestDisplay],
+                    accessibilityReferenceTop: 1000
+                )
+            ),
+            placer: BatchRecordingWindowPlacer(
+                result: .failed("The game window was still starting.")
+            )
+        )
+        windowLayout.assign(accountID: accounts[0].id, to: batchTestDisplay, region: .left)
+        windowLayout.assign(accountID: accounts[1].id, to: batchTestDisplay, region: .right)
+        let store = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: BatchMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil),
+            windowLayout: windowLayout
+        )
+        store.toggleBatchGroup("Layout Errors")
+
+        await store.launchBatch(
+            placeText: "12345",
+            server: .automatic,
+            skipHealthPreflight: true
+        )
+
+        XCTAssertEqual(store.notice?.title, "2 Roblox windows need attention")
+        XCTAssertTrue(store.notice?.message.contains("@layout_error_1") == true)
+        XCTAssertTrue(store.notice?.message.contains("@layout_error_2") == true)
+    }
+
+    func testFirstWindowArrangementLaunchExplainsMissingAccessibilityPermission() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-first-window-layout-launch-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let account = ManagedAccount(
+            userID: 1,
+            username: "first_window_layout",
+            displayName: "First Window Layout"
+        )
+        try repository.save([account])
+        let vault = MemoryVault()
+        try vault.save("cookie", for: account.id)
+        let windowLayout = WindowLayoutController(
+            repository: BatchMemoryWindowLayoutRepository(),
+            displayProvider: BatchStaticDisplayProvider(
+                snapshotValue: ConnectedDisplaySnapshot(
+                    displays: [batchTestDisplay],
+                    accessibilityReferenceTop: 1000
+                )
+            ),
+            placer: BatchRecordingWindowPlacer(result: .permissionRequired)
+        )
+        windowLayout.assign(accountID: account.id, to: batchTestDisplay, region: .left)
+        let store = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: BatchMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil),
+            windowLayout: windowLayout
+        )
+        store.toggleBatchSelection(account)
+
+        await store.launchBatch(
+            placeText: "12345",
+            server: .automatic,
+            skipHealthPreflight: true
+        )
+
+        XCTAssertEqual(store.runningAccountIDs, Set([account.id]))
+        XCTAssertEqual(store.notice?.title, "Roblox opened without its saved layout")
+        XCTAssertEqual(
+            store.notice?.message,
+            "@first_window_layout: Allow Window Control in System Settings so the app can arrange Roblox windows."
+        )
+    }
+
     func testBatchLaunchUsesTemporaryCustomArrangementAndResetsAfterSuccess() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-custom-window-launch-\(UUID().uuidString)", isDirectory: true)
@@ -1519,6 +1675,7 @@ private actor BatchMockAPI: RobloxAPIProviding {
 private actor BatchMockLauncher: ParallelRobloxLaunching {
     private let failingAccountID: UUID?
     private let launchDelayNanoseconds: UInt64
+    private let launchDelaysByAccountID: [UUID: UInt64]
     private var attempted = Set<UUID>()
     private var orderedAttempts: [UUID] = []
     private var modes = Set<RobloxLaunchMode>()
@@ -1527,9 +1684,14 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     private var batchStopRequests: [[UUID]] = []
     private var processIdentifiers: [UUID: Int32] = [:]
 
-    init(failingAccountID: UUID?, launchDelayNanoseconds: UInt64 = 0) {
+    init(
+        failingAccountID: UUID?,
+        launchDelayNanoseconds: UInt64 = 0,
+        launchDelaysByAccountID: [UUID: UInt64] = [:]
+    ) {
         self.failingAccountID = failingAccountID
         self.launchDelayNanoseconds = launchDelayNanoseconds
+        self.launchDelaysByAccountID = launchDelaysByAccountID
     }
 
     func launch(
@@ -1542,8 +1704,9 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
         modes.insert(mode)
         urls.append(url)
         if accountID == failingAccountID { throw RobloxLaunchError.openFailed }
-        if launchDelayNanoseconds > 0 {
-            try await Task.sleep(nanoseconds: launchDelayNanoseconds)
+        let delay = launchDelaysByAccountID[accountID] ?? launchDelayNanoseconds
+        if delay > 0 {
+            try await Task.sleep(nanoseconds: delay)
         }
         running.insert(accountID)
         let processIdentifier = Int32(processIdentifiers.count + 1)
@@ -1626,10 +1789,15 @@ private actor BatchRecordingWindowPlacer: RobloxWindowPlacing {
         let request: RobloxWindowPlacementRequest
     }
     private var requests: [Request] = []
+    private let result: WindowPlacementResult
+
+    init(result: WindowPlacementResult = .placed) {
+        self.result = result
+    }
 
     func place(processIdentifier: Int32, request: RobloxWindowPlacementRequest) async -> WindowPlacementResult {
         requests.append(Request(processIdentifier: processIdentifier, request: request))
-        return .placed
+        return result
     }
 
     func recordedRequests() -> [Request] { requests }

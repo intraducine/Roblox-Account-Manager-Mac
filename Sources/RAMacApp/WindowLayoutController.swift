@@ -11,31 +11,40 @@ extension WindowPlacementRegion {
         case .top: return "Top"
         case .topRight: return "Top Right"
         case .left: return "Left"
-        case .wholeScreen: return "Whole Screen"
+        case .wholeScreen: return "Fill Desktop"
         case .right: return "Right"
         case .bottomLeft: return "Bottom Left"
         case .bottom: return "Bottom"
         case .bottomRight: return "Bottom Right"
+        case .fullScreen: return "Full Screen"
         }
     }
 
     var shortTitle: String {
-        self == .wholeScreen ? "Whole" : title
+        self == .wholeScreen ? "Fill" : title
     }
 
-    var gridRow: Int {
+    var isNativeFullScreen: Bool { self == .fullScreen }
+
+    static var windowedCases: [WindowPlacementRegion] {
+        allCases.filter { !$0.isNativeFullScreen }
+    }
+
+    var gridRow: Int? {
         switch self {
         case .topLeft, .top, .topRight: return 0
         case .left, .wholeScreen, .right: return 1
         case .bottomLeft, .bottom, .bottomRight: return 2
+        case .fullScreen: return nil
         }
     }
 
-    var gridColumn: Int {
+    var gridColumn: Int? {
         switch self {
         case .topLeft, .left, .bottomLeft: return 0
         case .top, .wholeScreen, .bottom: return 1
         case .topRight, .right, .bottomRight: return 2
+        case .fullScreen: return nil
         }
     }
 }
@@ -101,7 +110,7 @@ enum WindowPlacementGeometry {
             return CGRect(x: visibleFrame.midX, y: visibleFrame.midY, width: halfWidth, height: halfHeight)
         case .left:
             return CGRect(x: visibleFrame.minX, y: visibleFrame.minY, width: halfWidth, height: visibleFrame.height)
-        case .wholeScreen:
+        case .wholeScreen, .fullScreen:
             return visibleFrame
         case .right:
             return CGRect(x: visibleFrame.midX, y: visibleFrame.minY, width: halfWidth, height: visibleFrame.height)
@@ -138,7 +147,7 @@ enum WindowPlacementGeometry {
             rawOrigin = CGPoint(x: availableFrame.maxX - size.width, y: availableFrame.minY)
         case .left:
             rawOrigin = CGPoint(x: availableFrame.minX, y: availableFrame.midY - size.height / 2)
-        case .wholeScreen:
+        case .wholeScreen, .fullScreen:
             rawOrigin = CGPoint(
                 x: availableFrame.midX - size.width / 2,
                 y: availableFrame.midY - size.height / 2
@@ -172,10 +181,90 @@ enum WindowPlacementGeometry {
     }
 
     static func regionsOverlap(_ first: WindowPlacementRegion, _ second: WindowPlacementRegion) -> Bool {
+        if first.isNativeFullScreen || second.isNativeFullScreen { return false }
         let unitFrame = CGRect(x: 0, y: 0, width: 2, height: 2)
         let intersection = frame(in: unitFrame, region: first)
             .intersection(frame(in: unitFrame, region: second))
         return !intersection.isNull && intersection.width > 0.001 && intersection.height > 0.001
+    }
+}
+
+enum WindowArrangementPlanner {
+    static let maximumWindowedProfilesPerDisplay = 4
+
+    static func automaticAssignments(
+        accountIDs: [UUID],
+        displays: [ConnectedDisplay]
+    ) -> [WindowLayoutAssignment]? {
+        guard !accountIDs.isEmpty else { return [] }
+        guard !displays.isEmpty,
+              accountIDs.count <= displays.count * maximumWindowedProfilesPerDisplay else { return nil }
+
+        var remainingAccounts = accountIDs
+        var assignments: [WindowLayoutAssignment] = []
+        for (displayIndex, display) in displays.enumerated() where !remainingAccounts.isEmpty {
+            let remainingDisplays = displays.count - displayIndex
+            let count = min(
+                maximumWindowedProfilesPerDisplay,
+                Int(ceil(Double(remainingAccounts.count) / Double(remainingDisplays)))
+            )
+            let displayAccounts = Array(remainingAccounts.prefix(count))
+            remainingAccounts.removeFirst(count)
+            let regions = automaticRegions(count: displayAccounts.count, display: display)
+            assignments.append(contentsOf: zip(displayAccounts, regions).map { accountID, region in
+                assignment(accountID: accountID, display: display, region: region)
+            })
+        }
+        return assignments
+    }
+
+    static func fullScreenAssignments(
+        accountIDs: [UUID],
+        displays: [ConnectedDisplay]
+    ) -> [WindowLayoutAssignment] {
+        guard !displays.isEmpty else { return [] }
+        return accountIDs.enumerated().map { index, accountID in
+            assignment(
+                accountID: accountID,
+                display: displays[index % displays.count],
+                region: .fullScreen
+            )
+        }
+    }
+
+    private static func automaticRegions(
+        count: Int,
+        display: ConnectedDisplay
+    ) -> [WindowPlacementRegion] {
+        switch count {
+        case 1:
+            return [.wholeScreen]
+        case 2:
+            return display.visibleFrame.width >= display.visibleFrame.height
+                ? [.left, .right]
+                : [.top, .bottom]
+        case 3:
+            return display.visibleFrame.width >= display.visibleFrame.height
+                ? [.left, .topRight, .bottomRight]
+                : [.top, .bottomLeft, .bottomRight]
+        default:
+            return [.topLeft, .topRight, .bottomLeft, .bottomRight]
+        }
+    }
+
+    private static func assignment(
+        accountID: UUID,
+        display: ConnectedDisplay,
+        region: WindowPlacementRegion
+    ) -> WindowLayoutAssignment {
+        WindowLayoutAssignment(
+            accountID: accountID,
+            displayID: display.id,
+            displayName: display.name,
+            displayPixelWidth: display.pixelWidth,
+            displayPixelHeight: display.pixelHeight,
+            region: region
+        )
     }
 }
 
@@ -283,10 +372,28 @@ protocol RobloxWindowPlacing: Sendable {
 struct RobloxWindowPlacementRequest: Equatable, Sendable {
     let targetFrame: CGRect
     let availableFrame: CGRect
+    let screenFrame: CGRect
     let region: WindowPlacementRegion
 }
 
 actor AccessibilityRobloxWindowPlacer: RobloxWindowPlacing {
+    private static let nativeFullScreenAttribute = "AXFullScreen" as CFString
+
+    private enum PlacementAttempt {
+        case retry
+        case finished(WindowPlacementResult)
+    }
+
+    private enum NativeFullScreenState {
+        case active
+        case inactive
+        case unknown
+        case cancelled
+    }
+
+    private var fullScreenTransitionInProgress = false
+    private var fullScreenWaiters: [CheckedContinuation<Void, Never>] = []
+
     func place(processIdentifier: Int32, request: RobloxWindowPlacementRequest) async -> WindowPlacementResult {
         guard processIdentifier > 0 else {
             return .failed("The Roblox process could not be identified.")
@@ -294,49 +401,104 @@ actor AccessibilityRobloxWindowPlacer: RobloxWindowPlacing {
         guard AXIsProcessTrusted() else { return .permissionRequired }
 
         let application = AXUIElementCreateApplication(processIdentifier)
+        var foundWindow = false
         for _ in 0..<60 {
             if Task.isCancelled { return .failed("Window placement was cancelled.") }
-            if let window = firstWindow(of: application) {
-                return await place(request, processIdentifier: processIdentifier, window: window)
+            let windows = candidateWindows(of: application)
+            foundWindow = foundWindow || !windows.isEmpty
+            for window in windows {
+                switch await attemptPlacement(
+                    request,
+                    window: window
+                ) {
+                case .retry:
+                    continue
+                case .finished(let result):
+                    return result
+                }
             }
             try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        if foundWindow {
+            return .failed("Roblox opened, but its game window did not become ready for arranging in time.")
         }
         return .failed("Roblox opened, but its window did not become available in time.")
     }
 
-    private func firstWindow(of application: AXUIElement) -> AXUIElement? {
+    private func candidateWindows(of application: AXUIElement) -> [AXUIElement] {
+        var candidates: [AXUIElement] = []
+        var mainValue: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            application,
+            kAXMainWindowAttribute as CFString,
+            &mainValue
+        ) == .success,
+           let mainValue,
+           CFGetTypeID(mainValue) == AXUIElementGetTypeID() {
+            let mainWindow = mainValue as! AXUIElement
+            candidates.append(mainWindow)
+        }
+
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
             application,
             kAXWindowsAttribute as CFString,
             &value
         ) == .success,
-        let windows = value as? [AXUIElement] else { return nil }
-        return windows.first
+        let windows = value as? [AXUIElement] else { return candidates }
+        for window in windows where !candidates.contains(where: { CFEqual($0, window) }) {
+            candidates.append(window)
+        }
+        return candidates
     }
 
-    private func place(
+    private func attemptPlacement(
         _ request: RobloxWindowPlacementRequest,
-        processIdentifier: Int32,
         window: AXUIElement
-    ) async -> WindowPlacementResult {
+    ) async -> PlacementAttempt {
+        if request.region.isNativeFullScreen {
+            if nativeFullScreenState(window, request: request) == .active {
+                return .finished(.placed)
+            }
+            let canSetFullScreenState = isAttributeSettable(
+                Self.nativeFullScreenAttribute,
+                on: window
+            )
+            let fullScreenButton = copyElement(
+                attribute: kAXFullScreenButtonAttribute as CFString,
+                from: window
+            )
+            guard canSetFullScreenState || fullScreenButton != nil else {
+                return .retry
+            }
+            await acquireFullScreenTransition()
+            let result = await enterNativeFullScreen(
+                request,
+                window: window,
+                canSetFullScreenState: canSetFullScreenState,
+                fullScreenButton: fullScreenButton
+            )
+            releaseFullScreenTransition()
+            return .finished(result)
+        }
+
         var sizeSettable = DarwinBoolean(false)
         var positionSettable = DarwinBoolean(false)
         guard AXUIElementIsAttributeSettable(window, kAXSizeAttribute as CFString, &sizeSettable) == .success,
               AXUIElementIsAttributeSettable(window, kAXPositionAttribute as CFString, &positionSettable) == .success,
               sizeSettable.boolValue,
               positionSettable.boolValue else {
-            return .failed("Roblox does not currently allow this window to be arranged.")
+            return .retry
         }
 
         guard setSize(request.targetFrame.size, for: window) == .success,
               setPosition(request.targetFrame.origin, for: window) == .success,
               setSize(request.targetFrame.size, for: window) == .success else {
-            return .failed("macOS could not apply the saved Roblox window layout.")
+            return .retry
         }
 
         guard let settledFrame = await waitForSettledFrame(of: window) else {
-            return .placed
+            return .retry
         }
 
         let anchoredFrame = WindowPlacementGeometry.anchoredAccessibilityFrame(
@@ -346,23 +508,219 @@ actor AccessibilityRobloxWindowPlacer: RobloxWindowPlacing {
         )
         if frameDifference(settledFrame, anchoredFrame) > 2 {
             guard setPosition(anchoredFrame.origin, for: window) == .success else {
-                return .failed("macOS could not move the Roblox window into its saved area.")
+                return .retry
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
             if let finalFrame = copyFrame(of: window),
                positionDifference(finalFrame.origin, anchoredFrame.origin) > 4 {
-                return .adjusted(
+                return .finished(.adjusted(
                     "Roblox kept this window at \(pixelSize(settledFrame.size)) and moved it as close as possible to \(request.region.title.lowercased())."
-                )
+                ))
             }
         }
 
         if sizeDifference(settledFrame.size, request.targetFrame.size) > 4 {
-            return .adjusted(
+            return .finished(.adjusted(
                 "Roblox kept this window at \(pixelSize(settledFrame.size)). The app placed that size in \(request.region.title.lowercased())."
-            )
+            ))
         }
-        return .placed
+        return .finished(.placed)
+    }
+
+    private func enterNativeFullScreen(
+        _ request: RobloxWindowPlacementRequest,
+        window: AXUIElement,
+        canSetFullScreenState: Bool,
+        fullScreenButton: AXUIElement?
+    ) async -> WindowPlacementResult {
+        if nativeFullScreenState(window, request: request) == .active {
+            return .placed
+        }
+
+        var sizeSettable = DarwinBoolean(false)
+        var positionSettable = DarwinBoolean(false)
+        let canResize = AXUIElementIsAttributeSettable(
+            window,
+            kAXSizeAttribute as CFString,
+            &sizeSettable
+        ) == .success && sizeSettable.boolValue
+        let canMove = AXUIElementIsAttributeSettable(
+            window,
+            kAXPositionAttribute as CFString,
+            &positionSettable
+        ) == .success && positionSettable.boolValue
+        guard canResize, canMove else {
+            return .failed("Roblox does not currently expose a window that macOS can move into full screen.")
+        }
+
+        guard setSize(request.targetFrame.size, for: window) == .success,
+              setPosition(request.targetFrame.origin, for: window) == .success else {
+            return .failed("macOS could not move Roblox onto the selected display before full screen.")
+        }
+        try? await Task.sleep(nanoseconds: 200_000_000)
+
+        if canSetFullScreenState {
+            return await requestNativeFullScreenState(window, request: request)
+        }
+
+        guard let fullScreenButton else {
+            return .failed("Roblox does not expose a macOS full-screen action for this window.")
+        }
+        var button = fullScreenButton
+        for attempt in 0..<2 {
+            if nativeFullScreenState(window, request: request) == .active {
+                return .placed
+            }
+            let pressResult = AXUIElementPerformAction(button, kAXPressAction as CFString)
+            guard pressResult == .success || pressResult == .cannotComplete else {
+                return .failed("Roblox does not support the standard macOS full-screen action for this window.")
+            }
+
+            let state = await waitForNativeFullScreen(window, request: request)
+            switch state {
+            case .active:
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                return .placed
+            case .cancelled:
+                return .failed("Full-screen placement was cancelled.")
+            case .unknown:
+                return .failed("macOS stopped exposing this Roblox window before the manager could confirm full screen. The manager did not press the control again because that could exit full screen.")
+            case .inactive:
+                break
+            }
+
+            if attempt == 0,
+               let refreshedButton = copyElement(
+                   attribute: kAXFullScreenButtonAttribute as CFString,
+                   from: window
+               ) {
+                button = refreshedButton
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+        return .failed("macOS did not finish putting Roblox in full screen. Try this profile again after its window finishes loading.")
+    }
+
+    private func requestNativeFullScreenState(
+        _ window: AXUIElement,
+        request: RobloxWindowPlacementRequest
+    ) async -> WindowPlacementResult {
+        var latestSetResult = AXError.success
+        for sampleIndex in 0..<75 {
+            if Task.isCancelled {
+                return .failed("Full-screen placement was cancelled.")
+            }
+            if nativeFullScreenState(window, request: request) == .active {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                return .placed
+            }
+
+            // Setting this state to true is idempotent. Repeating it cannot exit
+            // full screen when the user changes apps, windows, or Spaces.
+            if sampleIndex.isMultiple(of: 5) {
+                latestSetResult = AXUIElementSetAttributeValue(
+                    window,
+                    Self.nativeFullScreenAttribute,
+                    kCFBooleanTrue
+                )
+                guard latestSetResult == .success || latestSetResult == .cannotComplete else {
+                    return .failed("macOS rejected the full-screen request for this Roblox window.")
+                }
+            }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+
+        if nativeFullScreenState(window, request: request) == .active {
+            return .placed
+        }
+        if latestSetResult == .cannotComplete {
+            return .failed("macOS kept this Roblox window busy and did not finish its background full-screen request.")
+        }
+        return .failed("macOS did not finish the background full-screen request for this Roblox window.")
+    }
+
+    private func waitForNativeFullScreen(
+        _ window: AXUIElement,
+        request: RobloxWindowPlacementRequest
+    ) async -> NativeFullScreenState {
+        var latestState = NativeFullScreenState.unknown
+        for _ in 0..<50 {
+            if Task.isCancelled { return .cancelled }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            let state = nativeFullScreenState(window, request: request)
+            if state == .active { return .active }
+            latestState = state
+        }
+        return latestState
+    }
+
+    private func nativeFullScreenState(
+        _ window: AXUIElement,
+        request: RobloxWindowPlacementRequest
+    ) -> NativeFullScreenState {
+        if let value = copyBoolean(attribute: Self.nativeFullScreenAttribute, from: window) {
+            return value ? .active : .inactive
+        }
+
+        guard let frame = copyFrame(of: window) else { return .unknown }
+        var positionSettable = DarwinBoolean(true)
+        let positionStatus = AXUIElementIsAttributeSettable(
+            window,
+            kAXPositionAttribute as CFString,
+            &positionSettable
+        )
+        guard positionStatus == .success else { return .unknown }
+        if !positionSettable.boolValue,
+           frameMatchesScreen(frame, request.screenFrame)
+            || frameDifference(frame, request.availableFrame) <= 16 {
+            return .active
+        }
+        return .inactive
+    }
+
+    private func copyBoolean(attribute: CFString, from element: AXUIElement) -> Bool? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
+              let value,
+              CFGetTypeID(value) == CFBooleanGetTypeID() else { return nil }
+        return CFBooleanGetValue((value as! CFBoolean))
+    }
+
+    private func isAttributeSettable(_ attribute: CFString, on element: AXUIElement) -> Bool {
+        var settable = DarwinBoolean(false)
+        return AXUIElementIsAttributeSettable(element, attribute, &settable) == .success
+            && settable.boolValue
+    }
+
+    private func acquireFullScreenTransition() async {
+        if !fullScreenTransitionInProgress {
+            fullScreenTransitionInProgress = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            fullScreenWaiters.append(continuation)
+        }
+    }
+
+    private func releaseFullScreenTransition() {
+        guard !fullScreenWaiters.isEmpty else {
+            fullScreenTransitionInProgress = false
+            return
+        }
+        let next = fullScreenWaiters.removeFirst()
+        next.resume()
+    }
+
+    private func frameMatchesScreen(_ frame: CGRect, _ screenFrame: CGRect) -> Bool {
+        frameDifference(frame, screenFrame) <= 16
+    }
+
+    private func copyElement(attribute: CFString, from element: AXUIElement) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
+              let value,
+              CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return (value as! AXUIElement)
     }
 
     private func waitForSettledFrame(of window: AXUIElement) async -> CGRect? {
@@ -522,6 +880,39 @@ final class WindowLayoutController: ObservableObject {
         lastMessage = nil
     }
 
+    @discardableResult
+    func arrangeAutomatically(accountIDs: [UUID]) -> Bool {
+        guard let planned = WindowArrangementPlanner.automaticAssignments(
+            accountIDs: accountIDs,
+            displays: displays
+        ) else {
+            lastMessage = "Automatic arrangement supports up to four Roblox windows per connected display. Arrange the remaining profiles manually or use full screen."
+            return false
+        }
+        let targetIDs = Set(accountIDs)
+        assignments = assignments.filter { !targetIDs.contains($0.key) }
+        for assignment in planned { assignments[assignment.accountID] = assignment }
+        persist()
+        lastMessage = nil
+        return true
+    }
+
+    func makeFullScreen(accountIDs: [UUID]) {
+        let planned = WindowArrangementPlanner.fullScreenAssignments(
+            accountIDs: accountIDs,
+            displays: displays
+        )
+        guard !planned.isEmpty || accountIDs.isEmpty else {
+            lastMessage = "Connect a display before choosing full screen."
+            return
+        }
+        let targetIDs = Set(accountIDs)
+        assignments = assignments.filter { !targetIDs.contains($0.key) }
+        for assignment in planned { assignments[assignment.accountID] = assignment }
+        persist()
+        lastMessage = nil
+    }
+
     func clear(accountID: UUID) {
         assignments[accountID] = nil
         persist()
@@ -542,6 +933,25 @@ final class WindowLayoutController: ObservableObject {
     func placeWindow(accountID: UUID, processIdentifier: Int32) async -> WindowPlacementResult {
         let results = await placeWindows([(accountID, processIdentifier)])
         return results[accountID] ?? .noAssignment
+    }
+
+    func placeWindow(
+        accountID: UUID,
+        processIdentifier: Int32,
+        arrangement: WindowArrangementPolicy
+    ) async -> WindowPlacementResult {
+        switch arrangement {
+        case .savedPlacements:
+            return await placeWindow(accountID: accountID, processIdentifier: processIdentifier)
+        case .custom(let assignments):
+            let results = await placeWindows(
+                [(accountID, processIdentifier)],
+                with: assignments
+            )
+            return results[accountID] ?? .noAssignment
+        case .unchanged:
+            return .noAssignment
+        }
     }
 
     func placeWindows(_ launches: [(accountID: UUID, processIdentifier: Int32)]) async -> [UUID: WindowPlacementResult] {
@@ -584,6 +994,10 @@ final class WindowLayoutController: ObservableObject {
                 RobloxWindowPlacementRequest(
                     targetFrame: accessibilityFrame,
                     availableFrame: availableFrame,
+                    screenFrame: WindowPlacementGeometry.accessibilityFrame(
+                        from: display.frame,
+                        referenceTop: accessibilityReferenceTop
+                    ),
                     region: assignment.region
                 ),
                 nil

@@ -10,6 +10,7 @@ public enum WindowPlacementRegion: String, CaseIterable, Codable, Identifiable, 
     case bottomLeft
     case bottom
     case bottomRight
+    case fullScreen
 
     public var id: String { rawValue }
 }
