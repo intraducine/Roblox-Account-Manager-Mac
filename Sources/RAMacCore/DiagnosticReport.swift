@@ -60,6 +60,7 @@ public actor DiagnosticService {
         self.social = social
         self.servers = servers
         self.activeLaunchRepository = ActiveLaunchTargetRepository(
+            fileName: "ActiveLaunches.json",
             dataDirectory: accountRepository.dataDirectory,
             fileManager: fileManager
         )

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct JoinAssessmentService: JoinAssessing, Sendable {
+public struct JoinAssessmentService: Sendable {
     public init() {}
 
     public func assess(

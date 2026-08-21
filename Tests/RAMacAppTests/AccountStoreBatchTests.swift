@@ -494,7 +494,10 @@ final class AccountStoreBatchTests: XCTestCase {
             .appendingPathComponent("ram-experience-metadata-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let repository = AccountRepository(dataDirectory: directory)
-        let experienceRepository = ExperienceLibraryRepository(dataDirectory: directory)
+        let experienceRepository = ExperienceLibraryRepository(
+            fileName: "Experiences.json",
+            dataDirectory: directory
+        )
         try experienceRepository.save([ExperienceRecord(placeID: 1818, launchCount: 1)])
         let store = AccountStore(
             repository: repository,
@@ -519,7 +522,10 @@ final class AccountStoreBatchTests: XCTestCase {
             .appendingPathComponent("ram-experience-lookup-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let repository = AccountRepository(dataDirectory: directory)
-        let experienceRepository = ExperienceLibraryRepository(dataDirectory: directory)
+        let experienceRepository = ExperienceLibraryRepository(
+            fileName: "Experiences.json",
+            dataDirectory: directory
+        )
         try experienceRepository.save([
             ExperienceRecord(placeID: 1818, experienceName: "Saved game without an icon")
         ])
@@ -1315,7 +1321,10 @@ final class AccountStoreBatchTests: XCTestCase {
 
         reloaded.removePrivateServer(updated)
         XCTAssertTrue(reloaded.privateServers.isEmpty)
-        XCTAssertTrue(try PrivateServerRepository(dataDirectory: directory).load().isEmpty)
+        XCTAssertTrue(try PrivateServerRepository(
+            fileName: "PrivateServers.json",
+            dataDirectory: directory
+        ).load().isEmpty)
     }
 
     func testExistingAccountPrivateLinkMigratesIntoLibrary() throws {
@@ -1344,7 +1353,10 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(store.privateServers.count, 1)
         XCTAssertEqual(store.privateServers.first?.placeID, 999)
         XCTAssertEqual(store.privateServers.first?.link, link)
-        XCTAssertEqual(try PrivateServerRepository(dataDirectory: directory).load(), store.privateServers)
+        XCTAssertEqual(try PrivateServerRepository(
+            fileName: "PrivateServers.json",
+            dataDirectory: directory
+        ).load(), store.privateServers)
     }
 
     func testLegacyPlainTextProfileNoteMovesToKeychainAndIsScrubbedFromDisk() throws {

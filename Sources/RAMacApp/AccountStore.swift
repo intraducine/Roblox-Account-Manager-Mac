@@ -64,19 +64,11 @@ final class AccountStore: ObservableObject {
         }
     }
 
-    private struct BatchOutcome: Sendable {
+    private struct LaunchOutcome: Sendable {
         let accountID: UUID
         let username: String
         let processIdentifier: Int32?
         let placeID: Int64?
-        let errorMessage: String?
-        let placementResult: WindowPlacementResult?
-    }
-
-    private struct AppLaunchOutcome: Sendable {
-        let accountID: UUID
-        let username: String
-        let processIdentifier: Int32?
         let errorMessage: String?
         let placementResult: WindowPlacementResult?
     }
@@ -121,9 +113,9 @@ final class AccountStore: ObservableObject {
     private let api: any RobloxAPIProviding
     private let builder: RobloxLaunchURLBuilder
     private let launcher: any ParallelRobloxLaunching
-    private let playerDiscovery: any PlayerDiscovering
+    private let playerDiscovery: PlayerDiscoveryService
     private let friendRelay: any FriendRelayProviding
-    private let joinAssessor: any JoinAssessing
+    private let joinAssessor: JoinAssessmentService
     private let healthChecker: any AccountHealthChecking
     private let launchSetRepository: LaunchSetRepository
     private let experienceRepository: ExperienceLibraryRepository
@@ -131,7 +123,6 @@ final class AccountStore: ObservableObject {
     private let privateServerRepository: PrivateServerRepository
     private let activeLaunchRepository: ActiveLaunchTargetRepository
     private let archiveService = MetadataArchiveService()
-    private let experienceLibrary = ExperienceLibrary()
     private var serverPageCache: [String: PublicServerSnapshot] = [:]
     private let serverCacheLifetime: TimeInterval = 60
     private var didStartInitialAccountCheck = false
@@ -145,9 +136,9 @@ final class AccountStore: ObservableObject {
         builder: RobloxLaunchURLBuilder = RobloxLaunchURLBuilder(),
         launcher: (any ParallelRobloxLaunching)? = nil,
         launchMode: RobloxLaunchMode? = nil,
-        playerDiscovery: (any PlayerDiscovering)? = nil,
+        playerDiscovery: PlayerDiscoveryService? = nil,
         friendRelay: (any FriendRelayProviding)? = nil,
-        joinAssessor: (any JoinAssessing)? = nil,
+        joinAssessor: JoinAssessmentService? = nil,
         healthChecker: (any AccountHealthChecking)? = nil,
         launchSetRepository: LaunchSetRepository? = nil,
         experienceRepository: ExperienceLibraryRepository? = nil,
@@ -170,11 +161,23 @@ final class AccountStore: ObservableObject {
         self.friendRelay = friendRelay ?? FriendRelayService()
         self.joinAssessor = joinAssessor ?? JoinAssessmentService()
         self.healthChecker = healthChecker ?? AccountHealthService(vault: vault, api: api)
-        self.launchSetRepository = launchSetRepository ?? LaunchSetRepository(dataDirectory: repository.dataDirectory)
-        self.experienceRepository = experienceRepository ?? ExperienceLibraryRepository(dataDirectory: repository.dataDirectory)
+        self.launchSetRepository = launchSetRepository ?? LaunchSetRepository(
+            fileName: "LaunchSets.json",
+            dataDirectory: repository.dataDirectory
+        )
+        self.experienceRepository = experienceRepository ?? ExperienceLibraryRepository(
+            fileName: "Experiences.json",
+            dataDirectory: repository.dataDirectory
+        )
         self.experienceMetadataProvider = experienceMetadataProvider ?? RobloxExperienceMetadataClient()
-        self.privateServerRepository = privateServerRepository ?? PrivateServerRepository(dataDirectory: repository.dataDirectory)
-        self.activeLaunchRepository = activeLaunchRepository ?? ActiveLaunchTargetRepository(dataDirectory: repository.dataDirectory)
+        self.privateServerRepository = privateServerRepository ?? PrivateServerRepository(
+            fileName: "PrivateServers.json",
+            dataDirectory: repository.dataDirectory
+        )
+        self.activeLaunchRepository = activeLaunchRepository ?? ActiveLaunchTargetRepository(
+            fileName: "ActiveLaunches.json",
+            dataDirectory: repository.dataDirectory
+        )
         self.windowLayout = windowLayout ?? WindowLayoutController()
         self.launchMode = launchMode == .modifiedParallel ? .modifiedParallel : .unmodifiedParallel
         load()
@@ -1551,14 +1554,15 @@ final class AccountStore: ObservableObject {
         let readyAccounts = selectedAccounts.filter {
             skipHealthPreflight || accountHealth[$0.id]?.isReady == true
         }
-        var outcomes = selectedAccounts.compactMap { account -> AppLaunchOutcome? in
+        var outcomes = selectedAccounts.compactMap { account -> LaunchOutcome? in
             guard !readyAccounts.contains(where: { $0.id == account.id }) else { return nil }
             let message = "Sign in again before opening this account."
             batchStates[account.id] = .failed(message)
-            return AppLaunchOutcome(
+            return LaunchOutcome(
                 accountID: account.id,
                 username: account.username,
                 processIdentifier: nil,
+                placeID: nil,
                 errorMessage: message,
                 placementResult: nil
             )
@@ -1570,7 +1574,7 @@ final class AccountStore: ObservableObject {
         let launcher = self.launcher
         let launchMode = self.launchMode
         let windowLayout = self.windowLayout
-        await withTaskGroup(of: AppLaunchOutcome.self) { group in
+        await withTaskGroup(of: LaunchOutcome.self) { group in
             for account in readyAccounts {
                 group.addTask {
                     do {
@@ -1585,18 +1589,20 @@ final class AccountStore: ObservableObject {
                             processIdentifier: instance.processIdentifier,
                             arrangement: windowArrangement
                         )
-                        return AppLaunchOutcome(
+                        return LaunchOutcome(
                             accountID: account.id,
                             username: account.username,
                             processIdentifier: instance.processIdentifier,
+                            placeID: nil,
                             errorMessage: nil,
                             placementResult: placementResult
                         )
                     } catch {
-                        return AppLaunchOutcome(
+                        return LaunchOutcome(
                             accountID: account.id,
                             username: account.username,
                             processIdentifier: nil,
+                            placeID: nil,
                             errorMessage: error.localizedDescription,
                             placementResult: nil
                         )
@@ -1622,10 +1628,11 @@ final class AccountStore: ObservableObject {
                   !runningAccountIDs.contains(outcome.accountID) else { return outcome }
             let message = "Roblox closed before the manager could confirm that it was running."
             batchStates[outcome.accountID] = .failed(message)
-            return AppLaunchOutcome(
+            return LaunchOutcome(
                 accountID: outcome.accountID,
                 username: outcome.username,
                 processIdentifier: outcome.processIdentifier,
+                placeID: nil,
                 errorMessage: message,
                 placementResult: outcome.placementResult
             )
@@ -1666,7 +1673,7 @@ final class AccountStore: ObservableObject {
             launchStatus = "\(total - failures.count) running, \(failures.count) failed"
             notice = Notice(
                 title: "\(failures.count) account\(failures.count == 1 ? "" : "s") did not open",
-                message: appLaunchFailureMessage(failures)
+                message: launchFailureMessage(failures)
             )
         }
     }
@@ -1912,8 +1919,8 @@ final class AccountStore: ObservableObject {
             isBatchLaunching = false
         }
 
-        var outcomes: [BatchOutcome] = []
-        await withTaskGroup(of: BatchOutcome.self) { group in
+        var outcomes: [LaunchOutcome] = []
+        await withTaskGroup(of: LaunchOutcome.self) { group in
             for account in selectedAccounts {
                 group.addTask {
                     do {
@@ -1944,7 +1951,7 @@ final class AccountStore: ObservableObject {
                             processIdentifier: instance.processIdentifier,
                             arrangement: windowArrangement
                         )
-                        return BatchOutcome(
+                        return LaunchOutcome(
                             accountID: account.id,
                             username: account.username,
                             processIdentifier: instance.processIdentifier,
@@ -1953,7 +1960,7 @@ final class AccountStore: ObservableObject {
                             placementResult: placementResult
                         )
                     } catch {
-                        return BatchOutcome(
+                        return LaunchOutcome(
                             accountID: account.id,
                             username: account.username,
                             processIdentifier: nil,
@@ -1984,7 +1991,7 @@ final class AccountStore: ObservableObject {
                 ? RobloxLaunchError.officialParallelUnavailable.localizedDescription
                 : "Roblox closed before the manager could confirm that it was running."
             batchStates[outcome.accountID] = .failed(message)
-            return BatchOutcome(
+            return LaunchOutcome(
                 accountID: outcome.accountID,
                 username: outcome.username,
                 processIdentifier: outcome.processIdentifier,
@@ -2046,7 +2053,7 @@ final class AccountStore: ObservableObject {
             launchStatus = "\(total - failures.count) running, \(failures.count) failed"
             notice = Notice(
                 title: "\(failures.count) account\(failures.count == 1 ? "" : "s") did not start",
-                message: batchFailureMessage(failures)
+                message: launchFailureMessage(failures)
             )
         }
     }
@@ -2185,7 +2192,18 @@ final class AccountStore: ObservableObject {
     }
 
     private func recordExperienceLaunch(placeID: Int64) {
-        experiences = experienceLibrary.recordingLaunch(placeID: placeID, in: experiences)
+        let now = Date()
+        if let index = experiences.firstIndex(where: { $0.placeID == placeID }) {
+            experiences[index].lastLaunchedAt = now
+            experiences[index].launchCount += 1
+        } else {
+            experiences.append(ExperienceRecord(
+                placeID: placeID,
+                lastLaunchedAt: now,
+                launchCount: 1
+            ))
+        }
+        experiences.sort { $0.lastLaunchedAt > $1.lastLaunchedAt }
         try? experienceRepository.save(experiences)
         Task { await refreshExperienceMetadata(placeIDs: [placeID], force: true) }
     }
@@ -2250,16 +2268,7 @@ final class AccountStore: ObservableObject {
         }
     }
 
-    private func batchFailureMessage(_ failures: [BatchOutcome]) -> String {
-        let shown = failures.prefix(5).map { "@\($0.username): \($0.errorMessage ?? "Unknown error")" }
-        let remaining = failures.count - shown.count
-        if remaining > 0 {
-            return (shown + ["\(remaining) more failed."]).joined(separator: "\n")
-        }
-        return shown.joined(separator: "\n")
-    }
-
-    private func appLaunchFailureMessage(_ failures: [AppLaunchOutcome]) -> String {
+    private func launchFailureMessage(_ failures: [LaunchOutcome]) -> String {
         let shown = failures.prefix(5).map { "@\($0.username): \($0.errorMessage ?? "Unknown error")" }
         let remaining = failures.count - shown.count
         if remaining > 0 {

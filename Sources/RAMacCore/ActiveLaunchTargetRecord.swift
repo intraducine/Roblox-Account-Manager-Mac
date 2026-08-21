@@ -36,26 +36,4 @@ public struct ActiveLaunchTargetRecord: Codable, Identifiable, Equatable, Sendab
     }
 }
 
-public final class ActiveLaunchTargetRepository: @unchecked Sendable {
-    private let fileURL: URL
-    private let fileManager: FileManager
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
-
-    public init(dataDirectory: URL? = nil, fileManager: FileManager = .default) {
-        self.fileManager = fileManager
-        fileURL = (dataDirectory ?? AccountRepository.defaultDataDirectory(fileManager: fileManager))
-            .appendingPathComponent("ActiveLaunches.json")
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    }
-
-    public func load() throws -> [ActiveLaunchTargetRecord] {
-        guard fileManager.fileExists(atPath: fileURL.path) else { return [] }
-        return try decoder.decode([ActiveLaunchTargetRecord].self, from: Data(contentsOf: fileURL))
-    }
-
-    public func save(_ records: [ActiveLaunchTargetRecord]) throws {
-        try fileManager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try encoder.encode(records).write(to: fileURL, options: [.atomic, .completeFileProtection])
-    }
-}
+public typealias ActiveLaunchTargetRepository = JSONFileRepository<ActiveLaunchTargetRecord>

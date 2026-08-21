@@ -7,7 +7,10 @@ final class PrivateServerLibraryTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-private-server-tests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let repository = PrivateServerRepository(dataDirectory: directory)
+        let repository = PrivateServerRepository(
+            fileName: "PrivateServers.json",
+            dataDirectory: directory
+        )
         let server = SavedPrivateServer(
             name: "Friends server",
             placeID: 1818,

@@ -155,20 +155,14 @@ public struct PlayerDiscoveryResult: Equatable, Sendable {
 
 public struct PlayerDiscoveryConfiguration: Equatable, Sendable {
     public var presenceBatchSize: Int
-    public var maximumConcurrentRequests: Int
     public var cacheLifetime: TimeInterval
-    public var maximumServerPages: Int
 
     public init(
         presenceBatchSize: Int = 50,
-        maximumConcurrentRequests: Int = 2,
-        cacheLifetime: TimeInterval = 60,
-        maximumServerPages: Int = 3
+        cacheLifetime: TimeInterval = 60
     ) {
         self.presenceBatchSize = max(1, presenceBatchSize)
-        self.maximumConcurrentRequests = max(1, maximumConcurrentRequests)
         self.cacheLifetime = max(0, cacheLifetime)
-        self.maximumServerPages = max(1, maximumServerPages)
     }
 }
 
@@ -217,32 +211,4 @@ public struct PlayerJoinTarget: Equatable, Sendable {
         self.jobID = jobID
         self.verification = verification
     }
-}
-
-public protocol PlayerDiscovering: Sendable {
-    func discover(sources: [PlayerDiscoverySource]) async -> PlayerDiscoveryResult
-    func continueVerification(for player: DiscoveredPlayer) async -> PublicServerVerification
-    func refreshVerification(for player: DiscoveredPlayer) async -> PublicServerVerification
-    func clearCache() async
-}
-
-public extension PlayerDiscovering {
-    func continueVerification(for player: DiscoveredPlayer) async -> PublicServerVerification {
-        player.verification
-    }
-
-    func refreshVerification(for player: DiscoveredPlayer) async -> PublicServerVerification {
-        player.verification
-    }
-
-    func clearCache() async {}
-}
-
-public protocol JoinAssessing: Sendable {
-    func assess(
-        target: PlayerJoinTarget,
-        accounts: [ManagedAccount],
-        health: [UUID: AccountHealth],
-        runningAccountIDs: Set<UUID>
-    ) async -> [AccountJoinAssessment]
 }

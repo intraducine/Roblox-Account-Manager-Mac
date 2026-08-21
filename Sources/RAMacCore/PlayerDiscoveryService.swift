@@ -6,77 +6,7 @@ public protocol RobloxPublicServerProviding: Sendable {
 
 extension RobloxAPIClient: RobloxPublicServerProviding {}
 
-public actor PublicServerVerificationService {
-    private struct CacheEntry: Sendable {
-        let page: RobloxPublicServerPage
-        let fetchedAt: Date
-    }
-
-    private let provider: any RobloxPublicServerProviding
-    private let configuration: PlayerDiscoveryConfiguration
-    private var cache: [String: CacheEntry] = [:]
-
-    public init(
-        provider: any RobloxPublicServerProviding,
-        configuration: PlayerDiscoveryConfiguration = PlayerDiscoveryConfiguration()
-    ) {
-        self.provider = provider
-        self.configuration = configuration
-    }
-
-    public func verify(
-        placeID: Int64,
-        jobID: String,
-        continuePastBudget: Bool = false,
-        forceRefresh: Bool = false
-    ) async -> PublicServerVerification {
-        let cleanJobID = jobID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard placeID > 0, !cleanJobID.isEmpty else { return .noServerSupplied }
-
-        let pageLimit = continuePastBudget ? 100 : configuration.maximumServerPages
-        var cursor: String?
-        var searched = 0
-        do {
-            while searched < pageLimit {
-                try Task.checkCancellation()
-                let page = try await page(placeID: placeID, cursor: cursor, forceRefresh: forceRefresh)
-                searched += 1
-                if let server = page.data.first(where: { $0.id.caseInsensitiveCompare(cleanJobID) == .orderedSame }) {
-                    return .verifiedPublic(server)
-                }
-                guard let next = page.nextPageCursor, !next.isEmpty else {
-                    return .restrictedOrUnavailable
-                }
-                cursor = next
-            }
-            return .unconfirmed(pagesSearched: searched)
-        } catch is CancellationError {
-            return .verificationFailed("Checking stopped.")
-        } catch RobloxAPIError.requestBudgetPaused(let retryAfter) {
-            return .paused(pagesSearched: searched, retryAfter: retryAfter)
-        } catch {
-            return .verificationFailed(error.localizedDescription)
-        }
-    }
-
-    public func clearCache() {
-        cache.removeAll()
-    }
-
-    private func page(placeID: Int64, cursor: String?, forceRefresh: Bool) async throws -> RobloxPublicServerPage {
-        let key = "\(placeID):\(cursor ?? "first")"
-        if !forceRefresh,
-           let cached = cache[key],
-           Date().timeIntervalSince(cached.fetchedAt) < configuration.cacheLifetime {
-            return cached.page
-        }
-        let page = try await provider.publicServers(placeID: placeID, cursor: cursor)
-        cache[key] = CacheEntry(page: page, fetchedAt: Date())
-        return page
-    }
-}
-
-public actor PlayerDiscoveryService: PlayerDiscovering {
+public actor PlayerDiscoveryService {
     private struct FriendCacheEntry: Sendable {
         let friends: [RobloxVisibleFriend]
         let fetchedAt: Date

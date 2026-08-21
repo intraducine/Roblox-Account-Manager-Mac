@@ -138,18 +138,6 @@ final class PlayerDiscoveryServiceTests: XCTestCase {
         XCTAssertEqual(counts.presence, 0)
     }
 
-    func testManualPublicVerificationStillHasABoundedPageBudget() async {
-        let servers = EndlessServers()
-        let result = await PublicServerVerificationService(
-            provider: servers,
-            configuration: .init(maximumServerPages: 3)
-        ).verify(placeID: 100, jobID: jobID(9))
-
-        XCTAssertEqual(result, .unconfirmed(pagesSearched: 3))
-        let calls = await servers.callCount()
-        XCTAssertEqual(calls, 3)
-    }
-
     private func account(userID: Int64) -> ManagedAccount {
         ManagedAccount(userID: userID, username: "source\(userID)", displayName: "Source \(userID)")
     }
@@ -231,15 +219,4 @@ private actor MockSocial: RobloxSocialProviding {
     }
 
     func maximumConcurrentOnlineRequests() -> Int { maximumActiveOnlineRequests }
-}
-
-private actor EndlessServers: RobloxPublicServerProviding {
-    var calls = 0
-
-    func publicServers(placeID: Int64, cursor: String?) async throws -> RobloxPublicServerPage {
-        calls += 1
-        return RobloxPublicServerPage(nextPageCursor: "page-\(calls)", data: [])
-    }
-
-    func callCount() -> Int { calls }
 }
