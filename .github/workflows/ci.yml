@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test
+        run: swift test --parallel
+
+      - name: Check strict concurrency
+        run: |
+          strict_log=$(mktemp)
+          swift build -Xswiftc -strict-concurrency=complete -Xswiftc -warn-concurrency 2>&1 | tee "$strict_log"
+          if grep -E 'warning:.*(concurrency-safe|data races|Sendable|actor-isolated|nearly matches optional requirement)' "$strict_log"; then
+            echo "Strict concurrency warnings are not allowed."
+            exit 1
+          fi
+
+      - name: Build release
+        run: swift build -c release
+
+      - name: Check scripts and whitespace
+        run: |
+          zsh -n scripts/*.sh
+          git diff --check
+
+      - name: Test packaged app
+        run: ./scripts/smoke-test-app.sh
+
+      - name: Reject ad hoc release packaging
+        run: |
+          if RAM_ALLOW_AD_HOC_BUILD=1 ./scripts/package-release.sh; then
+            echo "Release packaging accepted an ad hoc signature."
+            exit 1
+          fi

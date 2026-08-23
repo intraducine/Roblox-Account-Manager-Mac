@@ -1,0 +1,133 @@
+# Port research
+
+Research date: 2026-08-10.
+
+This file records tests and earlier designs. It is not a user guide. See the README for current launch instructions.
+
+## Upstream findings
+
+The source is [ic3w0lf22/Roblox-Account-Manager](https://github.com/ic3w0lf22/Roblox-Account-Manager). The default branch is `master`. The latest published release found during research was 3.7.2. The project uses GNU GPL version 3.
+
+The upstream application is a Windows Forms program that targets .NET Framework 4.7.2. Its main account type and launch code are in `RBX Alt Manager/Classes/Account.cs`. The portable launch sequence is:
+
+1. Send `.ROBLOSECURITY` to `auth.roblox.com`.
+2. Read the `x-csrf-token` challenge response.
+3. Repeat the request with that token.
+4. Read `rbx-authentication-ticket`.
+5. Build a `roblox-player` launch URL with a Roblox PlaceLauncher URL.
+
+The Windows account file uses Windows Data Protection API or password-based libsodium encryption. A Mac cannot use the machine-bound Windows Data Protection API. The port stores all sessions in one versioned generic-password item in macOS Keychain and keeps only non-secret metadata in JSON. Older per-account items migrate when the app can read them.
+
+Version 1.0.2 fixed a separate app-update problem. The first shared item was created by an ad hoc app signature, so a later build could receive Keychain error `-25293` before it could add another account. The fix uses a new `sessions-v2` item and signs release builds with an installed Apple identity when one is available. If the old shared item is readable, the app moves its sessions. If macOS blocks it, the app leaves the item unchanged, keeps all account metadata, and allows each account to sign in once. A live test saved a real account, then changed the app code-directory hash while keeping the same Apple designated requirement. The updated app still read and validated the new session.
+
+Version 1.0.3 adds an updater for later public releases. It uses GitHub's public release endpoints without authentication, so it cannot read a private release and never stores a GitHub token. The app checks the latest final release when it opens and shows a notice only when the user can act on a newer version. The Update Center reads the paginated public release list so users can browse the date, version, and Markdown notes for every final release. Drafts, prereleases, invalid versions, and release pages outside this project are excluded. Release history loads only when the Update Center opens. The installer accepts only a final release with the exact versioned ZIP and checksum filenames. It compares the downloaded ZIP against both GitHub's SHA-256 asset digest and the checksum sidecar. After extraction, it requires the expected bundle identifier and version, Intel and Apple silicon code, a valid strict deep signature, and mutually compatible designated requirements between the current and new app. The app stages the new bundle beside the installed app before it moves the current bundle to a hidden previous-version backup. Version 1.0.4 also fixes the release scripts to a minimal trusted command path before building and signing.
+
+Version 1.0.4 requires the installed Roblox app to satisfy an Apple-anchored Developer ID requirement for Roblox Corporation team `2CFABCH843`. Exact copies must satisfy the same requirement and code-directory hash. The optional modified fallback is rebuilt from the verified installed app before every launch, so a writable old copy is never reused with a new account ticket.
+
+Managed Roblox website sessions use non-persistent WebKit stores. Version 1.0.4 marks the injected Roblox session cookie as Secure and HttpOnly, restricts native launch requests to the main page, and asks the user before it requests a fresh account ticket. The sign-in browser permits only secure Roblox domains in its main frame. Roblox child processes receive an allowlisted environment with isolated home and temporary folders instead of inheriting all manager environment values.
+
+[GitHub documents](https://docs.github.com/en/rest/releases/assets) the SHA-256 `digest` field on release assets and unauthenticated downloads for public repositories. [Apple documents](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements) designated requirements as the macOS identity used to recognize a later version of the same code. These checks do not make a development-signed build notarized. They prevent this updater from silently accepting a different signer or a changed archive.
+
+## Historical Mac findings
+
+The installed client is `/Applications/Roblox.app`, bundle ID `com.roblox.RobloxPlayer`. Its `Info.plist` registers the `roblox-player` and `roblox` URL schemes. It also sets `LSMultipleInstancesProhibited` to `true`.
+
+These facts support account-specific protocol launches. They do not support a promise of concurrent Roblox instances. Version 0.1.0 follows the platform declaration.
+
+Version 0.6.0 makes the exact installed app the default. It verifies the original Roblox Corporation signature and opens the protocol URL through AppKit. It does not copy, write, or sign the Roblox bundle in this mode. The app waits for Roblox's short launch process to hand off to the stable game process before it saves the process ID.
+
+A live test on 2026-08-10 launched two saved accounts toward place `1818` in official mode. One official client joined the game. The second official process did not stay open. The manager kept the first client marked as running and Stop All closed it. Before and after the test, the official `Info.plist` SHA-256 was `014e35df0f205938e50ebb10ebd9f7513906c183be305cca282bc1182cc33def`, the `RobloxPlayer` SHA-256 was `023659acbe36dec3b41503da5db5c37e70b995fbee1e2bf13f80893a0d3207cd`, and strict code-signature verification passed with Team ID `2CFABCH843`.
+
+The same build required an explicit warning before enabling Modified Parallel Fallback. Two saved accounts then joined place `1818` in two managed processes. Stop All closed both. The app was returned to Official mode after the test.
+
+## API behavior checked
+
+### Current friend-presence decision
+
+The current friend flow uses the authenticated online-friends response for each saved source account. It records the source account for each visible friend and uses the Place ID and Job ID that Roblox returns for that relationship.
+
+The flow now has these limits:
+
+- It checks source accounts one at a time and caches each result for one minute.
+- It does not call anonymous presence for friend discovery.
+- It does not search public-server pages before a friend join.
+- It starts one source account first, then passes the same reported Job ID to the other selected accounts.
+- It does not claim that another selected account has access or that the server has space. Roblox decides both during launch.
+- It does not guess hidden activity or query accounts that the user did not save.
+
+The earlier public-presence and public-server verification design remains useful only as development history. Public-server browsing is still available as a separate manual tool.
+
+An unauthenticated request to `https://users.roblox.com/v1/users/authenticated` returned HTTP 401 with an authentication-token error. The app uses this endpoint to reject an expired or incorrect imported session before Keychain storage.
+
+The automated test suite uses isolated mock URL sessions. It checks the authenticated-user request, the two-step CSRF ticket exchange, header isolation, launch URL encoding, private-link parsing, metadata round-tripping, and backup creation. No real account secret is part of the tests.
+
+Live testing on 2026-08-10 found that Roblox rejects the authentication-ticket POST with HTTP 415 when the request has no media type. Version 0.4.1 sends `{}` as `application/json` for both the CSRF challenge and ticket request. An end-to-end test then launched two saved accounts into place `1818` at the same time. macOS reported two running `Roblox Parallel` apps with distinct account-specific bundle IDs, and both Roblox windows loaded the experience.
+
+Apple documents that local-network privacy tracks macOS programs through their code signatures and that ad hoc signing is not reliable for this purpose. Version 0.5.0 uses an installed Apple code-signing identity when available, gives all managed Roblox copies one shared bundle ID, and keeps the signed copies in Application Support. Two real clients launched together with that shared identity. After `Stop All`, the same two clients launched again without rebuilding their app bundles. Their modification times and CDHash values stayed unchanged, and no password or privacy prompt appeared during the test. Restarting the manager while both clients ran also restored both account states from their saved process records.
+
+The same live logs showed that Roblox launched its bundled `RobloxMenuBar` helper. The helper registered the login item and requested notification permission. The current client ignored the old `FFlagEnableMacMenuBar` and `FFlagEnableMacDesktopNotifications` names. Roblox's live `MacDesktopClient` configuration showed the current names as `FFlagEnableMacMenuBar9` and `DFFlagEnableMacDesktopNotifications2`. The managed copies set both current settings to false, retain the old settings as a compatibility control, and remove the optional `RobloxMenuBar.app` helper before signing. The main Roblox executable is not modified.
+
+A clean repeat test stopped the official Roblox tray and every old per-copy menu-bar process before launch. Two real accounts still joined place `1818`. No new tray or `RobloxMenuBar` process appeared. No visible password, microphone, local-network, login-item, or notification prompt appeared. Roblox still logged its menu-bar experiment and a denied notification-permission check, so the code does not claim that Roblox stopped making those API calls. macOS kept the shared managed background item disabled and already notified. A second launch reused both prepared copies with unchanged modification times, CDHash, bundle ID, and Team ID.
+
+## Port boundary
+
+Version 0.1.0 ports the account, storage, organization, and launch path. It does not copy Windows process injection, mutex control, registry access, Chromium download logic, Win32 window movement, local web control, or executor features. Those parts need separate Mac designs and separate safety review.
+
+Version 1.1.2 adds that separate Mac design for window placement. It does not port the Win32 implementation. The manager reads connected displays through AppKit, calculates snap frames inside `NSScreen.visibleFrame`, and uses the managed Roblox process ID with macOS Accessibility position and size attributes. It does not change Roblox code or automate gameplay.
+
+A live Roblox Player check on August 14, 2026 showed that the public Accessibility size write can return success while Roblox later replaces the requested frame with its own game-window size. The observed player settled near 800 × 628 or 800 × 630 for several smaller and larger requests. The exact constraint belongs to Roblox and can change by version or game state, so the manager does not hard-code that measurement. It polls for a stable frame first.
+
+Batch placement starts when each account returns its own managed process ID instead of waiting for every selected account to finish launching. The Accessibility worker prefers the process main window and retries temporary non-settable startup windows and failed writes. Normal window placement does not activate Roblox. **Fill Desktop** means `NSScreen.visibleFrame`, not a native macOS full-screen Space.
+
+Hammerspoon retries size, position, and size while temporarily changing the enhanced Accessibility mode. Roblox rejected that enhanced-mode change and still restored its native size. A separate WindowServer transform probe reported that a transform had been accepted, but the real Roblox window did not remain usable at the requested size. The app therefore does not ship that private scaling path. It keeps Roblox's final native size and anchors it inside the requested display region.
+
+A later full-screen Space proof used two harmless local test apps on macOS 27. A native full-screen host created a type-4 Space. Both the direct `SLSMoveWindowsToManagedSpace` call and the newer bridged move operation left the external test window in its original normal Space. The same bridged operation successfully moved that window to another normal desktop Space and back, which confirmed that an external app cannot place several Roblox windows inside one shared full-screen Space through that private path. The app does not ship those private Space calls.
+
+The supported design uses separate native full-screen Spaces instead. Apple documents **Fill** and **Entire Screen** as separate window actions, and a full-screen app occupies its own Space. A live Roblox window exposes a writable Boolean `AXFullScreen` Accessibility state. The manager sets that state to true on the exact managed process, so retries are idempotent and cannot toggle full screen off. It first moves the normal window to its chosen display. It then queues full-screen transitions and confirms the state before it starts the next profile. It does not activate Roblox, change the user's current Space, simulate input, or change Roblox. The public `kAXFullScreenButtonAttribute` press action remains a fallback when a window does not expose the writable state. An August 18 live test alternated Finder and another profile's full-screen Space during the target transition; the background transition still completed. Sources: [Apple window tiling](https://support.apple.com/guide/mac-help/tile-app-windows-mchlef287e5d/mac), [Apple full-screen guide](https://support.apple.com/guide/mac-help/use-apps-in-full-screen-mchl9c21d2be/mac), [Apple full-screen accessibility button](https://developer.apple.com/documentation/applicationservices/kaxfullscreenbuttonattribute), and [Apple accessibility actions](https://developer.apple.com/documentation/applicationservices/1462091-axuielementperformaction).
+
+The layout editor follows the useful parts of established window tools without copying their power-user complexity. Apple's current tiling menu separates move-and-resize actions from full-screen actions. Microsoft FancyZones previews a layout on the selected monitor and offers layouts based on the window count. Rectangle keeps saved workspace layouts separate from one-off positioning. The app therefore shows automatic and full-screen starting points first, keeps a live display preview, and uses the same editor for saved defaults, one launch, and Launch Sets.
+
+## Parallel-instance follow-up
+
+The user supplied [Insadem/multi-roblox-macos](https://github.com/Insadem/multi-roblox-macos) as a prior Mac implementation. Its source was last pushed in 2024 and has no declared repository license. This project did not copy its source. The research used its observable method as a technical lead:
+
+- Handle `roblox-player` links.
+- Copy `/Applications/Roblox.app` into a temporary directory.
+- Remove the old `/RobloxPlayerUniq` named semaphore.
+- Allow multiple instances in the copy.
+
+Live testing on 2026-08-10 showed that the old method no longer works unchanged. A copied app with the original `com.roblox.RobloxPlayer` bundle ID was redirected to the installed tray client. The current Roblox build also did not create `/RobloxPlayerUniq` during the probes.
+
+The working version 0.2.0 method was:
+
+1. Make an APFS clone of the valid installed Roblox bundle.
+2. Assign the clone a unique bundle ID.
+3. Set `LSMultipleInstancesProhibited` to false in the clone.
+4. Apply an ad hoc local signature to the clone.
+5. Open the game URL with that exact bundle and require a new application instance.
+
+This produced two `RobloxPlayer` processes from different temporary bundles at the same time while the official `/Applications/Roblox.app` tray process stayed running. The test confirmed distinct process IDs, per-account process tracking, and selected-instance stop behavior. It used invalid tickets, so it could not join a game or expose an account. The test processes and bundles were removed afterward.
+
+Version 0.2.0 implements that method per account. It uses AppKit to send the launch URL so the authentication ticket does not appear in a shell command or process argument. It verifies the official Roblox signature and Team ID `2CFABCH843` before making any copy.
+
+Version 0.5.0 supersedes the temporary-copy and unique-ID parts of that method. It keeps one copy per account, gives every copy one shared stable ID, uses an installed Apple signing identity when available, and tracks each process by its saved PID and exact app path.
+
+## Exact-copy parallel launch
+
+Version 0.7.0 tests a different boundary. Every file in each managed Roblox app must stay byte-identical to `/Applications/Roblox.app`, and the copy must keep Roblox Corporation's original signature.
+
+`open -n` and `NSWorkspace.OpenConfiguration.createsNewApplicationInstance` did not keep two exact copies open. Launch Services still applied `LSMultipleInstancesProhibited` from Roblox's unchanged `Info.plist`. Direct execution of `Contents/MacOS/RobloxPlayer` from two exact copies did keep two processes open on the same desktop. The old `/RobloxPlayerUniq` semaphore was absent and did not need removal.
+
+A second isolated test launched two exact copies without URL arguments. It sent a `kInternetEventClass` and `kAEGetURL` Apple Event to each exact process ID. Each process received its own invalid test ticket and returned Roblox's expected HTTP 403 response. The URL was not present in either process argument list. This proves that the manager can route a launch link to one selected exact process without Launch Services and without command-line ticket exposure.
+
+The implementation makes an APFS clone per account, runs recursive file comparison, performs strict deep code-signature validation, and compares the Team ID and code-directory hash with the installed app. Its small manifest stays outside the copied app. A changed file, changed signature, changed source version, or failed comparison causes a new copy or a stopped launch. The modified fallback remains separate.
+
+The signed version 0.7.0 app then launched two saved accounts into place `1818` on the same desktop. Both clients reached the game in separate windows. Their process IDs were distinct, and each process ran from its own `Unmodified/Roblox.app` path. Recursive comparison against `/Applications/Roblox.app` found no changed files. Both copies passed strict deep signature validation with bundle ID `com.roblox.RobloxPlayer`, Team ID `2CFABCH843`, and CDHash `05d0d0f609d987b9d1812d310a5fd4f315090eb4`. Their `Info.plist` and `RobloxPlayer` SHA-256 values matched the installed app. No password, microphone, local-network, notification, login-item, or Automation prompt appeared during this test. Stop All closed both games and both copied menu helpers, and a system process check found no managed Roblox process afterward.
+
+## Current parallel interface
+
+Every manager launch uses a separate, unchanged copy of Roblox, even when only one account is selected. This lets another managed account start later without closing the first one. Opening `/Applications/Roblox.app` is outside the manager.
+
+The account format stores a `groups` array. It can also read the older single `group` value and convert it to a one-item array. A separate `Groups.json` file keeps empty groups available. Group names are trimmed, sorted, and deduplicated without case sensitivity.
+
+The native interface has a group filter, a visible New Group action, account-level membership checkboxes, and a right-click Groups menu. One account can belong to several groups. Shift-click toggles only the profile that the user clicks. The bottom launch area explains unchanged copies and the advanced modified fallback. A separate information control explains that a Job ID selects one running public server and is not a Place ID.
