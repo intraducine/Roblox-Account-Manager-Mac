@@ -62,7 +62,7 @@ struct RAMacApp: App {
         }
         .defaultSize(width: 980, height: 680)
 
-        Window("Arrange Roblox Windows", id: "window-layout") {
+        Window("Launch Defaults", id: "window-layout") {
             WindowLayoutView(store: store, controller: store.windowLayout)
                 .dismissTextInputOnOutsideClick()
         }
@@ -107,7 +107,7 @@ private struct V1ViewCommands: Commands {
             Button("Joinable Players") { openWindow(id: "joinable-players") }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
             Button("Launch Sets") { openWindow(id: "launch-sets") }
-            Button("Arrange Roblox Windows") { openWindow(id: "window-layout") }
+            Button("Launch Defaults") { openWindow(id: "window-layout") }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
             Button("Send Feedback") { openWindow(id: "feedback") }
             Button("Diagnostics and Backup") { openWindow(id: "diagnostics") }

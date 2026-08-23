@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0 - 2026-08-23
+
+- Add Launch Defaults for Roblox graphics quality, volume, and saved window placement.
+- Let batch launches use one-launch graphics and sound overrides, and let Launch Sets save their own overrides.
+- Apply graphics and volume through Roblox's current shared settings file while preserving settings the manager does not control.
+- Prevent overlapping single, batch, player, and app launches from starting duplicate clients or showing false failure alerts.
+- Keep failed friend-relay Launch Set overrides ready for retry and clear them after a complete launch.
+- Replace the feedback form details bar with one clear **Restart Form** action.
+- Rename **Arrange Windows** to **Launch Defaults** and align its launch controls with the existing action column.
+
 ## 1.1.3 - 2026-08-23
 
 - Recover Launch Sets, recent games, private servers, and active launch records from one valid backup generation instead of silently treating damaged JSON as empty.

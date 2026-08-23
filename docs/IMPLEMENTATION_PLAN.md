@@ -211,13 +211,22 @@ The phases below record how the product was built. They are not current usage in
 - Use macOS Accessibility window attributes first and leave Roblox code unchanged.
 - Wait for Roblox's settled frame after each resize. If Roblox enforces another size, anchor that native size inside the selected display region. Do not report the successful launch as failed.
 - Start each placement as soon as its own managed Roblox process is ready. Do not wait for the slowest account in a batch. Retry temporary Accessibility and startup-window states without activating Roblox.
-- Keep Arrange Windows as the global per-account placement editor.
 - Show the monitor and selected profiles inline below the Launch Accounts action for batch launches. Display saved placements until the user changes the inline layout, then use a temporary custom override.
 - Show the same inline editor inside Launch Set settings. Store custom Launch Set layouts with the set and remap their account IDs during metadata import.
 - Do not ship the rejected shared full-screen profile deck. Direct and bridged window moves into one type-4 full-screen Space were no-ops in the local proof.
 - Support separate native full-screen Spaces through an idempotent Accessibility state request. Move the normal window to its display first, then serialize and confirm every Space transition without activating Roblox or changing the user's current Space. Keep the public Accessibility full-screen button as a compatibility fallback.
 - Keep launches working when permission is missing or a saved display is disconnected.
 - Test coordinate conversion, overlap replacement, persistence, PID binding, temporary batch overrides, legacy Launch Set decoding, and backup account-ID remapping.
+
+### Phase 16: version 1.2.0 launch defaults
+
+- Rename **Arrange Windows** to **Launch Defaults** and keep saved window placement in that window.
+- Add clear graphics quality and volume defaults that run before every managed Roblox launch.
+- Preserve every Roblox setting the manager does not control.
+- Let batch launches use a one-launch graphics and sound override.
+- Let Launch Sets save their own graphics and sound override and use it for direct and friend-relay launches.
+- Prevent overlapping launch requests from starting duplicate clients or reporting a failed launch while another request succeeds.
+- Replace the loaded feedback form details bar with one **Restart Form** action.
 
 ### Not planned without further research
 

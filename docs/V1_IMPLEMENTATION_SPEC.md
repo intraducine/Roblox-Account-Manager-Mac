@@ -137,7 +137,6 @@ Version 1.0.4 and later must:
 - Start each account's placement as soon as that account returns its managed Roblox process ID. Run batch placements concurrently, prefer the Accessibility main window, and retry temporary missing or non-settable window states without activating Roblox.
 - For native full screen, move the normal window to the selected display, request a true Accessibility full-screen state, and queue transitions one at a time. Repeat this idempotent request while needed, and confirm the state before starting the next profile. Do not activate Roblox or change the user's current app or Space. Use the public Accessibility full-screen button only as a compatibility fallback.
 - If Roblox enforces another size, place its final native size against the selected edge or corner within `NSScreen.visibleFrame`. Record the adjustment as layout status, not as a Roblox launch failure.
-- Keep Arrange Windows as the separate global editor for saved per-account placements.
 - Show the monitor and selected profiles inline below the Launch Accounts action. Use saved placements by default and create a temporary custom override only after the user changes the inline layout.
 - Add the same inline editor to Launch Set settings. Let each set inherit saved placements or store its own custom layout.
 - Decode Launch Sets created before this field as saved placements. Remap account IDs inside imported custom layouts.
@@ -148,6 +147,16 @@ Version 1.0.4 and later must:
 - Do not silently move an assignment to a different display when its saved monitor is disconnected.
 - Clear overlapping assignments when a larger snap region replaces smaller regions.
 - Clear an account's assignment when the account is removed.
+
+### Version 1.2.0 launch defaults
+
+- Use one **Launch Defaults** window for graphics, sound, and saved per-account placements.
+- Write only the selected graphics and volume values before launch. Preserve every other value in Roblox's shared settings file.
+- Treat a missing batch override or Launch Set override as **Use Launch Defaults**.
+- Keep a batch override only for its current launch. Save a Launch Set override with that set.
+- Apply Launch Set settings to automatic, public, private, direct player, and friend-relay launches.
+- Keep failed Launch Set settings ready for retry and clear them after every selected account starts.
+- Allow only one launch workflow to own launch state at a time.
 
 ## 3. Version 1.0 scope
 

@@ -4,6 +4,15 @@ Latest update: August 23, 2026
 
 This report uses saved account labels only. It does not contain usernames, cookies, private links, launch tickets, or personal account IDs.
 
+## Version 1.2.0 candidate verification
+
+- The source suite passes 222 tests with zero failures and six explicit integration skips.
+- The universal ad hoc packaged-app smoke test passes for version 1.2.0 build 120 without reading saved accounts or Keychain items.
+- The installed Roblox client contains the `GlobalBasicSettings_13.xml`, `SavedQualityLevel`, and `MasterVolume` setting names used by Launch Defaults.
+- Tests confirm that launch settings preserve unrelated values in an existing Roblox settings file.
+- Tests confirm that overlapping launch requests start each account only once and do not show a false failure notice.
+- No saved Roblox account was launched during this candidate check.
+
 ## August 23 maintenance verification
 
 - The current source suite passes 213 tests with zero failures and six explicit integration skips.

@@ -50,6 +50,11 @@ struct BatchLaunchBar: View {
 
                         Divider()
 
+                        launchSettingsRow
+                            .padding(.vertical, 8)
+
+                        Divider()
+
                         launchRow
                             .padding(.vertical, 8)
 
@@ -123,6 +128,19 @@ struct BatchLaunchBar: View {
                 store.batchWindowArrangement = .savedPlacements
             }
         )
+    }
+
+    private var launchSettingsRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Graphics and sound")
+                .fontWeight(.medium)
+            LaunchSettingsOverrideEditor(
+                defaults: store.launchSettings,
+                overrideSettings: $store.batchLaunchSettingsOverride,
+                customDescription: "Using custom settings for this launch."
+            )
+        }
+        .disabled(store.isBatchLaunching || store.isOpeningSelectedApps || store.isWorking)
     }
 
     private var launchRow: some View {

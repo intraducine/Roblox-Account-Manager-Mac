@@ -76,7 +76,7 @@ struct FeedbackView: View {
     @State private var includesAppVersion = true
     @State private var includesSystemInformation = false
     @State private var hasOpenedForm = false
-    @State private var showsChangeDetailsConfirmation = false
+    @State private var showsRestartConfirmation = false
     private let metadata = FeedbackMetadata.current
 
     private var formURL: URL? {
@@ -118,16 +118,16 @@ struct FeedbackView: View {
             Text("The feedback form requested a secure page on \(browser.pendingExternalURL?.host ?? "another site").")
         }
         .confirmationDialog(
-            "Start the feedback form again?",
-            isPresented: $showsChangeDetailsConfirmation
+            "Restart the feedback form?",
+            isPresented: $showsRestartConfirmation
         ) {
-            Button("Start Over", role: .destructive) {
+            Button("Restart Form", role: .destructive) {
                 browser.reset()
                 hasOpenedForm = false
             }
             Button("Keep Editing", role: .cancel) {}
         } message: {
-            Text("Changing the included details clears anything already entered in the form.")
+            Text("Restarting clears anything already entered in the form.")
         }
     }
 
@@ -198,13 +198,9 @@ struct FeedbackView: View {
     private func embeddedForm(_ url: URL) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Text(includedDetailsDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
                 Spacer()
-                Button("Change Included Details…") {
-                    showsChangeDetailsConfirmation = true
+                Button("Restart Form") {
+                    showsRestartConfirmation = true
                 }
             }
             .padding(.horizontal, AppGeometry.windowEdgeControlInset)
@@ -239,14 +235,6 @@ struct FeedbackView: View {
         }
     }
 
-    private var includedDetailsDescription: String {
-        var values = [String]()
-        if includesAppVersion { values.append("app version") }
-        if includesSystemInformation { values.append("Mac details") }
-        return values.isEmpty
-            ? "No technical details included"
-            : "Included: \(values.joined(separator: ", "))"
-    }
 }
 
 @MainActor

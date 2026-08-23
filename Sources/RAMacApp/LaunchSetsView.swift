@@ -208,6 +208,13 @@ private struct LaunchSetEditor: View {
                     }
                 }
             }
+            Section("Graphics and sound") {
+                LaunchSettingsOverrideEditor(
+                    defaults: store.launchSettings,
+                    overrideSettings: $draft.launchSettings,
+                    customDescription: "Using settings saved with this Launch Set."
+                )
+            }
             Section("Windows") {
                 InlineWindowArrangementEditor(
                     controller: store.windowLayout,

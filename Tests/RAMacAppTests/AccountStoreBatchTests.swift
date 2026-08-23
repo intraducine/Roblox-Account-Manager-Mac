@@ -59,6 +59,76 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(reloaded.launchMode, .unmodifiedParallel)
     }
 
+    func testLaunchSettingsAreRememberedAndUsedForEverySelectedAccount() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-settings-tests-\(UUID().uuidString)", isDirectory: true)
+        let suiteName = "ram-settings-tests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let repository = AccountRepository(dataDirectory: directory)
+        let accounts = [
+            ManagedAccount(userID: 1, username: "first", displayName: "First"),
+            ManagedAccount(userID: 2, username: "second", displayName: "Second")
+        ]
+        try repository.save(accounts)
+        let vault = MemoryVault()
+        for account in accounts { try vault.save("cookie", for: account.id) }
+        let launcher = BatchMockLauncher(failingAccountID: nil)
+        let expected = RobloxLaunchSettings(
+            graphics: .manual,
+            graphicsQuality: 2,
+            overridesVolume: true,
+            volume: 0.15
+        )
+        let store = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: BatchMockAPI(),
+            launcher: launcher,
+            settingsDefaults: defaults
+        )
+        store.launchSettings = expected
+        for account in accounts { store.toggleBatchSelection(account) }
+
+        await store.launchSelectedApps(skipHealthPreflight: true)
+
+        let attemptedSettings = await launcher.attemptedLaunchSettings()
+        XCTAssertEqual(attemptedSettings, [expected, expected])
+        let reloaded = AccountStore(
+            repository: repository,
+            vault: vault,
+            api: BatchMockAPI(),
+            launcher: BatchMockLauncher(failingAccountID: nil),
+            settingsDefaults: defaults
+        )
+        XCTAssertEqual(reloaded.launchSettings, expected)
+    }
+
+    func testBatchLaunchCanTemporarilyOverrideLaunchDefaults() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let defaults = RobloxLaunchSettings(graphics: .automatic)
+        let override = RobloxLaunchSettings(
+            graphics: .manual,
+            graphicsQuality: 8,
+            overridesVolume: true,
+            volume: 0.75
+        )
+        fixture.store.launchSettings = defaults
+        fixture.store.batchLaunchSettingsOverride = override
+        for account in fixture.accounts { fixture.store.toggleBatchSelection(account) }
+
+        await fixture.store.launchSelectedApps(skipHealthPreflight: true)
+
+        let attemptedSettings = await fixture.launcher.attemptedLaunchSettings()
+        XCTAssertEqual(attemptedSettings, Array(repeating: override, count: fixture.accounts.count))
+        XCTAssertEqual(fixture.store.launchSettings, defaults)
+        XCTAssertNil(fixture.store.batchLaunchSettingsOverride)
+    }
+
     func testDamagedLaunchSetsAreReportedWithoutChangingTheFile() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-damaged-launch-sets-\(UUID().uuidString)", isDirectory: true)
@@ -628,6 +698,19 @@ final class AccountStoreBatchTests: XCTestCase {
             verification: .friendTarget,
             isPubliclyVisible: false
         )
+        let launchOverride = RobloxLaunchSettings(
+            graphics: .manual,
+            graphicsQuality: 4,
+            overridesVolume: true,
+            volume: 0.3
+        )
+        await fixture.store.runLaunchSet(LaunchSet(
+            name: "Join Friend",
+            accountIDs: fixture.accounts.map(\.id),
+            placeID: 1818,
+            serverStrategy: .joinPlayer,
+            launchSettings: launchOverride
+        ))
 
         await fixture.store.launchFriendPlayer(
             player,
@@ -642,6 +725,12 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(fixture.store.runningAccountIDs, Set(fixture.accounts.map(\.id)))
         XCTAssertEqual(fixture.store.batchStatus, "Joined all 3 accounts")
         XCTAssertEqual(fixture.store.launchStatus, "Confirmed 3 accounts in the friend server")
+        let attemptedSettings = await fixture.launcher.attemptedLaunchSettings()
+        XCTAssertEqual(
+            attemptedSettings,
+            Array(repeating: launchOverride, count: fixture.accounts.count)
+        )
+        XCTAssertNil(fixture.store.batchLaunchSettingsOverride)
 
         let saved = try fixture.repository.load()
         let sourceAfterLaunch = try XCTUnwrap(saved.first(where: { $0.id == sourceAccount.id }))
@@ -745,6 +834,8 @@ final class AccountStoreBatchTests: XCTestCase {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let selectedIDs = Set(fixture.accounts.map(\.id))
+        let launchOverride = RobloxLaunchSettings(graphics: .automatic, overridesVolume: true, volume: 0.2)
+        fixture.store.batchLaunchSettingsOverride = launchOverride
         for account in fixture.accounts {
             await fixture.friendRelay.setArrival(.timedOut, for: account.id)
         }
@@ -771,6 +862,7 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(fixture.store.batchSelectedIDs, selectedIDs)
         XCTAssertEqual(fixture.store.notice?.title, "Some accounts could not join")
         XCTAssertTrue(fixture.store.runningAccountIDs.isEmpty)
+        XCTAssertEqual(fixture.store.batchLaunchSettingsOverride, launchOverride)
         for account in fixture.accounts {
             guard case .failed(let message) = fixture.store.friendRelayStates[account.id] else {
                 return XCTFail("Expected @\(account.username) to have a visible relay failure.")
@@ -1143,6 +1235,47 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertNil(fixture.store.runningLaunchSetID)
     }
 
+    func testConcurrentBatchRequestsStartEachAccountOnlyOnce() async throws {
+        let healthChecker = SlowReadyHealthChecker()
+        let fixture = try makeFixture(healthChecker: healthChecker)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        fixture.store.toggleBatchGroup("Wave")
+
+        async let firstRun: Void = fixture.store.launchBatch(placeText: "12345", server: .automatic)
+        async let secondRun: Void = fixture.store.launchBatch(placeText: "12345", server: .automatic)
+        _ = await (firstRun, secondRun)
+
+        let attempts = await fixture.launcher.orderedAttemptedAccountIDs()
+        let healthCheckCount = await healthChecker.checkCount()
+        XCTAssertEqual(attempts.count, fixture.accounts.count)
+        XCTAssertEqual(healthCheckCount, fixture.accounts.count)
+    }
+
+    func testConcurrentSingleRequestsStartTheAccountOnlyOnce() async throws {
+        let healthChecker = SlowReadyHealthChecker()
+        let fixture = try makeFixture(healthChecker: healthChecker)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let account = fixture.accounts[0]
+
+        async let firstRun: Void = fixture.store.launch(
+            account: account,
+            placeText: "12345",
+            server: .automatic
+        )
+        async let secondRun: Void = fixture.store.launch(
+            account: account,
+            placeText: "12345",
+            server: .automatic
+        )
+        _ = await (firstRun, secondRun)
+
+        let attempts = await fixture.launcher.orderedAttemptedAccountIDs()
+        let healthCheckCount = await healthChecker.checkCount()
+        XCTAssertEqual(attempts, [account.id])
+        XCTAssertEqual(healthCheckCount, 1)
+        XCTAssertNil(fixture.store.notice)
+    }
+
     func testLaunchSetCarriesItsWindowPolicyIntoADeferredBatchLaunch() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -1154,11 +1287,18 @@ final class AccountStoreBatchTests: XCTestCase {
             displayPixelHeight: 1440,
             region: .right
         )
+        let launchSettings = RobloxLaunchSettings(
+            graphics: .manual,
+            graphicsQuality: 7,
+            overridesVolume: true,
+            volume: 0.4
+        )
         let launchSet = LaunchSet(
             name: "Choose Server",
             accountIDs: fixture.accounts.map(\.id),
             placeID: 12345,
             serverStrategy: .browseBeforeLaunch,
+            launchSettings: launchSettings,
             windowArrangement: .custom([assignment])
         )
 
@@ -1166,6 +1306,30 @@ final class AccountStoreBatchTests: XCTestCase {
 
         XCTAssertEqual(fixture.store.batchSelectedIDs, Set(fixture.accounts.map(\.id)))
         XCTAssertEqual(fixture.store.batchWindowArrangement, .custom([assignment]))
+        XCTAssertEqual(fixture.store.batchLaunchSettingsOverride, launchSettings)
+    }
+
+    func testLaunchSetUsesItsSavedLaunchSettingsOverride() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let expected = RobloxLaunchSettings(
+            graphics: .manual,
+            graphicsQuality: 3,
+            overridesVolume: true,
+            volume: 0.25
+        )
+        let launchSet = LaunchSet(
+            name: "Custom settings",
+            accountIDs: fixture.accounts.map(\.id),
+            placeID: 12345,
+            launchSettings: expected
+        )
+
+        await fixture.store.runLaunchSet(launchSet)
+
+        let attemptedSettings = await fixture.launcher.attemptedLaunchSettings()
+        XCTAssertEqual(attemptedSettings, Array(repeating: expected, count: fixture.accounts.count))
+        XCTAssertNil(fixture.store.batchLaunchSettingsOverride)
     }
 
     func testNormalClientExitClearsStaleRunningStatus() async throws {
@@ -1459,7 +1623,8 @@ final class AccountStoreBatchTests: XCTestCase {
 
     private func makeFixture(
         failingIndex: Int? = nil,
-        launchDelayNanoseconds: UInt64 = 0
+        launchDelayNanoseconds: UInt64 = 0,
+        healthChecker: (any AccountHealthChecking)? = nil
     ) throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-batch-tests-\(UUID().uuidString)", isDirectory: true)
@@ -1491,7 +1656,8 @@ final class AccountStoreBatchTests: XCTestCase {
             api: api,
             launcher: launcher,
             launchMode: .unmodifiedParallel,
-            friendRelay: friendRelay
+            friendRelay: friendRelay,
+            healthChecker: healthChecker
         )
         return Fixture(
             directory: directory,
@@ -1503,6 +1669,18 @@ final class AccountStoreBatchTests: XCTestCase {
             store: store
         )
     }
+}
+
+private actor SlowReadyHealthChecker: AccountHealthChecking {
+    private var checks = 0
+
+    func check(_ account: ManagedAccount) async -> AccountHealth {
+        checks += 1
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        return .ready(lastChecked: Date())
+    }
+
+    func checkCount() -> Int { checks }
 }
 
 private actor CountingHealthChecker: AccountHealthChecking {
@@ -1758,6 +1936,7 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     private var attempted = Set<UUID>()
     private var orderedAttempts: [UUID] = []
     private var modes = Set<RobloxLaunchMode>()
+    private var launchSettings: [RobloxLaunchSettings] = []
     private var running = Set<UUID>()
     private var urls: [URL] = []
     private var batchStopRequests: [[UUID]] = []
@@ -1776,11 +1955,13 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     func launch(
         _ url: URL,
         for accountID: UUID,
-        mode: RobloxLaunchMode
+        mode: RobloxLaunchMode,
+        settings: RobloxLaunchSettings
     ) async throws -> ParallelRobloxInstance {
         attempted.insert(accountID)
         orderedAttempts.append(accountID)
         modes.insert(mode)
+        launchSettings.append(settings)
         urls.append(url)
         if accountID == failingAccountID { throw RobloxLaunchError.openFailed }
         let delay = launchDelaysByAccountID[accountID] ?? launchDelayNanoseconds
@@ -1830,6 +2011,8 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     func attemptedModes() -> Set<RobloxLaunchMode> {
         modes
     }
+
+    func attemptedLaunchSettings() -> [RobloxLaunchSettings] { launchSettings }
 
     func attemptedURLs() -> [URL] { urls }
 

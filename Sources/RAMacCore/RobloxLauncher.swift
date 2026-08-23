@@ -77,6 +77,37 @@ public enum RobloxLaunchMode: String, Codable, CaseIterable, Hashable, Sendable 
     }
 }
 
+public enum RobloxGraphicsSetting: String, Codable, CaseIterable, Hashable, Sendable {
+    case unchanged
+    case automatic
+    case manual
+}
+
+public struct RobloxLaunchSettings: Codable, Equatable, Sendable {
+    public var graphics: RobloxGraphicsSetting
+    public var graphicsQuality: Int
+    public var overridesVolume: Bool
+    public var volume: Double
+
+    public init(
+        graphics: RobloxGraphicsSetting = .unchanged,
+        graphicsQuality: Int = 5,
+        overridesVolume: Bool = false,
+        volume: Double = 0.5
+    ) {
+        self.graphics = graphics
+        self.graphicsQuality = min(max(graphicsQuality, 1), 10)
+        self.overridesVolume = overridesVolume
+        self.volume = min(max(volume, 0), 1)
+    }
+
+    public static let unchanged = RobloxLaunchSettings()
+
+    public var hasOverrides: Bool {
+        graphics != .unchanged || overridesVolume
+    }
+}
+
 public enum RobloxServerTarget: Equatable, Sendable {
     case publicServer
     case job(String)
@@ -177,7 +208,12 @@ public struct ParallelRobloxInstance: Equatable, Sendable {
 }
 
 public protocol ParallelRobloxLaunching: Sendable {
-    func launch(_ url: URL, for accountID: UUID, mode: RobloxLaunchMode) async throws -> ParallelRobloxInstance
+    func launch(
+        _ url: URL,
+        for accountID: UUID,
+        mode: RobloxLaunchMode,
+        settings: RobloxLaunchSettings
+    ) async throws -> ParallelRobloxInstance
     func runningAccountIDs(from accountIDs: [UUID]) async -> Set<UUID>
     func stop(accountID: UUID) async -> Bool
     func stop(accountIDs: [UUID]) async -> Set<UUID>
@@ -241,13 +277,18 @@ public actor ParallelRobloxLauncher {
 
     private let fileManager: FileManager
     private let instancesRoot: URL
+    private let robloxSettingsDirectory: URL
     private var officialLaunchInProgress = false
 
     public init(
         fileManager: FileManager = .default,
-        instancesRoot: URL? = nil
+        instancesRoot: URL? = nil,
+        robloxSettingsDirectory: URL? = nil
     ) {
         self.fileManager = fileManager
+        self.robloxSettingsDirectory = robloxSettingsDirectory
+            ?? fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first!
+                .appendingPathComponent("Roblox", isDirectory: true)
         if let instancesRoot {
             self.instancesRoot = instancesRoot
         } else {
@@ -282,7 +323,8 @@ public actor ParallelRobloxLauncher {
     public func launch(
         _ url: URL,
         for accountID: UUID,
-        mode: RobloxLaunchMode
+        mode: RobloxLaunchMode,
+        settings: RobloxLaunchSettings = .unchanged
     ) async throws -> ParallelRobloxInstance {
         guard fileManager.fileExists(atPath: Self.officialApplicationURL.path) else {
             throw RobloxLaunchError.robloxNotInstalled
@@ -302,6 +344,7 @@ public actor ParallelRobloxLauncher {
         try ensureManagedRootsAreSafe(for: accountID)
         try verifyOfficialApplication()
         let environment = try prepareIsolatedEnvironment(for: accountID)
+        try prepareLaunchSettings(settings, for: accountID)
         let applicationURL: URL
         let openedProcessIdentifier: Int32
         switch mode {
@@ -1009,6 +1052,83 @@ public actor ParallelRobloxLauncher {
         try prepareIsolatedKeychain(at: keychainsURL, environment: environment)
         return environment
     }
+
+    func prepareLaunchSettings(_ settings: RobloxLaunchSettings, for _: UUID) throws {
+        guard settings.hasOverrides else { return }
+        let settingsURL = robloxSettingsDirectory.appendingPathComponent("GlobalBasicSettings_13.xml")
+
+        do {
+            try rejectSymbolicLink(at: robloxSettingsDirectory)
+            try rejectSymbolicLink(at: settingsURL)
+            try fileManager.createDirectory(at: robloxSettingsDirectory, withIntermediateDirectories: true)
+            try rejectSymbolicLink(at: robloxSettingsDirectory)
+            let document = if fileManager.fileExists(atPath: settingsURL.path) {
+                try XMLDocument(data: Data(contentsOf: settingsURL), options: .nodePreserveAll)
+            } else {
+                try XMLDocument(xmlString: Self.defaultUserSettingsXML, options: .nodePreserveAll)
+            }
+            guard let properties = try document.nodes(
+                forXPath: "/roblox/Item[@class='UserGameSettings']/Properties"
+            ).first as? XMLElement else {
+                throw RobloxLaunchError.copyFailed("The Roblox settings file has an unsupported format.")
+            }
+
+            switch settings.graphics {
+            case .unchanged:
+                break
+            case .automatic:
+                Self.setXMLSetting("SavedQualityLevel", type: "token", value: "0", in: properties)
+            case .manual:
+                let quality = min(max(settings.graphicsQuality, 1), 10)
+                Self.setXMLSetting("SavedQualityLevel", type: "token", value: String(quality), in: properties)
+            }
+            if settings.overridesVolume {
+                let volume = min(max(settings.volume, 0), 1)
+                Self.setXMLSetting("MasterVolume", type: "float", value: String(volume), in: properties)
+            }
+
+            try document.xmlData(options: .nodePrettyPrint).write(to: settingsURL, options: .atomic)
+            try rejectSymbolicLink(at: settingsURL)
+        } catch let error as RobloxLaunchError {
+            throw error
+        } catch {
+            throw RobloxLaunchError.copyFailed("The Roblox graphics and volume settings could not be saved. \(error.localizedDescription)")
+        }
+    }
+
+    private static func setXMLSetting(
+        _ name: String,
+        type: String,
+        value: String,
+        in properties: XMLElement
+    ) {
+        if let element = properties.children?
+            .compactMap({ $0 as? XMLElement })
+            .first(where: { $0.attribute(forName: "name")?.stringValue == name }) {
+            element.name = type
+            element.stringValue = value
+            return
+        }
+        let element = XMLElement(name: type, stringValue: value)
+        let attribute = XMLNode(kind: .attribute)
+        attribute.name = "name"
+        attribute.stringValue = name
+        element.addAttribute(attribute)
+        properties.addChild(element)
+    }
+
+    private static let defaultUserSettingsXML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <roblox version="4">
+      <External>null</External>
+      <External>nil</External>
+      <Item class="UserGameSettings" referent="RBX0">
+        <Properties>
+          <string name="Name">GameSettings</string>
+        </Properties>
+      </Item>
+    </roblox>
+    """
 
     private func prepareIsolatedKeychain(
         at keychainsURL: URL,

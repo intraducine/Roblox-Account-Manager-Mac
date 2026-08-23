@@ -73,11 +73,11 @@ struct ContentView: View {
                 Button {
                     openWindow(id: "window-layout")
                 } label: {
-                    Label("Arrange Windows", systemImage: "rectangle.on.rectangle")
+                    Label("Launch Defaults", systemImage: "slider.horizontal.3")
                         .labelStyle(.titleAndIcon)
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
-                .help("Choose where each Roblox profile opens")
+                .help("Set graphics, sound, and window placement for Roblox launches")
 
                 Button {
                     openWindow(id: "feedback")

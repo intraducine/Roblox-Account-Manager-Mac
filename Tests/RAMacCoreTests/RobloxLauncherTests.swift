@@ -272,6 +272,105 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertTrue(secondHome.path.hasSuffix("/\(second.uuidString)/Home"))
     }
 
+    func testLaunchSettingsDoNotCreateAFileWithoutOverrides() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-launch-settings-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let accountID = UUID()
+        let settingsDirectory = root.appendingPathComponent("User Library/Roblox", isDirectory: true)
+        let launcher = ParallelRobloxLauncher(
+            instancesRoot: root.appendingPathComponent("Instances", isDirectory: true),
+            robloxSettingsDirectory: settingsDirectory
+        )
+        _ = try await launcher.prepareIsolatedEnvironment(for: accountID)
+
+        try await launcher.prepareLaunchSettings(.unchanged, for: accountID)
+
+        let settingsURL = settingsDirectory.appendingPathComponent("GlobalBasicSettings_13.xml")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: settingsURL.path))
+    }
+
+    func testLaunchSettingsCreateFirstFileAndPreserveUnselectedValues() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-launch-settings-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let accountID = UUID()
+        let instancesRoot = root.appendingPathComponent("Instances", isDirectory: true)
+        let settingsDirectory = root.appendingPathComponent("User Library/Roblox", isDirectory: true)
+        let launcher = ParallelRobloxLauncher(
+            instancesRoot: instancesRoot,
+            robloxSettingsDirectory: settingsDirectory
+        )
+        _ = try await launcher.prepareIsolatedEnvironment(for: accountID)
+        let settingsURL = settingsDirectory.appendingPathComponent("GlobalBasicSettings_13.xml")
+        try FileManager.default.createDirectory(at: settingsDirectory, withIntermediateDirectories: true)
+        try """
+        <roblox version="4">
+          <Item class="UserGameSettings">
+            <Properties>
+              <int name="GraphicsQualityLevel">21</int>
+              <token name="SavedQualityLevel">10</token>
+              <float name="MasterVolume">1</float>
+              <string name="UnrelatedSetting">keep-me</string>
+            </Properties>
+          </Item>
+        </roblox>
+        """.write(to: settingsURL, atomically: true, encoding: .utf8)
+
+        try await launcher.prepareLaunchSettings(
+            RobloxLaunchSettings(graphics: .manual, graphicsQuality: 3),
+            for: accountID
+        )
+        var document = try XMLDocument(data: Data(contentsOf: settingsURL))
+        XCTAssertEqual(try settingValue("SavedQualityLevel", in: document), "3")
+        XCTAssertEqual(try settingValue("MasterVolume", in: document), "1")
+        XCTAssertEqual(try settingValue("GraphicsQualityLevel", in: document), "21")
+        XCTAssertEqual(try settingValue("UnrelatedSetting", in: document), "keep-me")
+
+        try await launcher.prepareLaunchSettings(
+            RobloxLaunchSettings(graphics: .unchanged, overridesVolume: true, volume: 0.25),
+            for: accountID
+        )
+        document = try XMLDocument(data: Data(contentsOf: settingsURL))
+        XCTAssertEqual(try settingValue("SavedQualityLevel", in: document), "3")
+        XCTAssertEqual(try settingValue("MasterVolume", in: document), "0.25")
+        XCTAssertEqual(try settingValue("GraphicsQualityLevel", in: document), "21")
+        XCTAssertEqual(try settingValue("UnrelatedSetting", in: document), "keep-me")
+        let unusedIsolatedURL = ParallelRobloxLauncher.isolatedHomeURL(
+            instancesRoot: instancesRoot,
+            accountID: accountID
+        ).appendingPathComponent("Library/Roblox/GlobalBasicSettings_13.xml")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: unusedIsolatedURL.path))
+    }
+
+    func testLaunchSettingsClampValuesAndSupportAutomaticGraphics() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-launch-settings-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let accountID = UUID()
+        let settingsDirectory = root.appendingPathComponent("User Library/Roblox", isDirectory: true)
+        let launcher = ParallelRobloxLauncher(
+            instancesRoot: root.appendingPathComponent("Instances", isDirectory: true),
+            robloxSettingsDirectory: settingsDirectory
+        )
+        _ = try await launcher.prepareIsolatedEnvironment(for: accountID)
+
+        try await launcher.prepareLaunchSettings(
+            RobloxLaunchSettings(
+                graphics: .automatic,
+                graphicsQuality: 50,
+                overridesVolume: true,
+                volume: -4
+            ),
+            for: accountID
+        )
+
+        let settingsURL = settingsDirectory.appendingPathComponent("GlobalBasicSettings_13.xml")
+        let document = try XMLDocument(data: Data(contentsOf: settingsURL))
+        XCTAssertEqual(try settingValue("SavedQualityLevel", in: document), "0")
+        XCTAssertEqual(try settingValue("MasterVolume", in: document), "0.0")
+    }
+
     func testRobloxChildEnvironmentDoesNotInheritParentSecrets() {
         let home = URL(fileURLWithPath: "/tmp/ram-test-home", isDirectory: true)
         let temporary = home.appendingPathComponent("tmp", isDirectory: true)
@@ -630,6 +729,12 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertTrue(runningAfterStop.isEmpty)
         await launcher.removeStaleCopies()
     }
+}
+
+private func settingValue(_ name: String, in document: XMLDocument) throws -> String? {
+    try document.nodes(
+        forXPath: "/roblox/Item[@class='UserGameSettings']/Properties/*[@name='\(name)']"
+    ).first?.stringValue
 }
 
 @discardableResult

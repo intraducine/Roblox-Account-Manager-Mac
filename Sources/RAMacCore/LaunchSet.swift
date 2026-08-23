@@ -52,6 +52,7 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
     public var placeID: Int64
     public var experienceName: String?
     public var serverStrategy: ServerStrategy
+    public var launchSettings: RobloxLaunchSettings?
     public var windowArrangement: WindowArrangementPolicy
     public let createdAt: Date
     public var updatedAt: Date
@@ -64,6 +65,7 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
         placeID: Int64,
         experienceName: String? = nil,
         serverStrategy: ServerStrategy = .robloxChooses,
+        launchSettings: RobloxLaunchSettings? = nil,
         windowArrangement: WindowArrangementPolicy = .savedPlacements,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -75,6 +77,7 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
         self.placeID = placeID
         self.experienceName = experienceName
         self.serverStrategy = serverStrategy
+        self.launchSettings = launchSettings
         self.windowArrangement = windowArrangement
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -106,7 +109,7 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, accountIDs, groupNames, placeID, experienceName, serverStrategy
+        case id, name, accountIDs, groupNames, placeID, experienceName, serverStrategy, launchSettings
         case windowArrangement, createdAt, updatedAt
     }
 
@@ -121,6 +124,7 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
         placeID = try values.decode(Int64.self, forKey: .placeID)
         experienceName = try values.decodeIfPresent(String.self, forKey: .experienceName)
         serverStrategy = try values.decodeIfPresent(ServerStrategy.self, forKey: .serverStrategy) ?? .robloxChooses
+        launchSettings = try values.decodeIfPresent(RobloxLaunchSettings.self, forKey: .launchSettings)
         windowArrangement = try values.decodeIfPresent(
             WindowArrangementPolicy.self,
             forKey: .windowArrangement
@@ -138,6 +142,7 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
         try values.encode(placeID, forKey: .placeID)
         try values.encodeIfPresent(experienceName, forKey: .experienceName)
         try values.encode(serverStrategy, forKey: .serverStrategy)
+        try values.encodeIfPresent(launchSettings, forKey: .launchSettings)
         try values.encode(windowArrangement, forKey: .windowArrangement)
         try values.encode(createdAt, forKey: .createdAt)
         try values.encode(updatedAt, forKey: .updatedAt)

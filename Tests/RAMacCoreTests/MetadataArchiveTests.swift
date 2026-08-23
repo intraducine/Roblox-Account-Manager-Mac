@@ -180,5 +180,6 @@ final class MetadataArchiveTests: XCTestCase {
         let decoded = try JSONDecoder().decode(LaunchSet.self, from: legacyData)
 
         XCTAssertEqual(decoded.windowArrangement, .savedPlacements)
+        XCTAssertNil(decoded.launchSettings)
     }
 }

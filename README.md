@@ -39,10 +39,10 @@ The app does not store passwords. It does not solve captchas, inject code, autom
 1. Open **Add Account** and sign in on the Roblox page.
 2. Repeat this for every account that you want to run.
 3. Use the checkboxes beside the account names to choose the accounts that should open together.
-4. Optional: open **Arrange Windows** and drag profiles onto the monitor regions where they should open.
+4. Optional: open **Launch Defaults** to set graphics, sound, and saved window placements.
 5. Select **Choose Game**, paste the Roblox game link, and confirm its name and icon. You can also reuse a recent game.
 6. Keep **Let Roblox choose** or select another server option.
-7. Review the inline **Window arrangement** editor. It shows the arrangement from **Arrange Windows** by default. Move a profile only when this launch needs a different layout.
+7. Review the inline **Window arrangement** editor. It shows the arrangement from **Launch Defaults** by default. Move a profile only when this launch needs a different layout.
 8. Select the blue launch button. Each selected account opens in its own Roblox window.
 
 The app fills the Place ID after you choose a game. The number remains available as an advanced field. Most users do not need a Job ID. A Job ID is an advanced, temporary code for one server that is already running.
@@ -66,7 +66,7 @@ Release maintainers create the ZIP, checksum, and project signature with:
 ```sh
 ./scripts/create-project-signing-identity.sh
 ./scripts/package-release.sh
-(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-1.1.3.zip.sha256")
+(cd dist && shasum -a 256 -c "Roblox-Account-Manager-for-Mac-1.2.0.zip.sha256")
 ```
 
 Run the identity script only once on the release Mac. It creates a 20-year project certificate and non-exportable private key through a temporary memory disk, imports them into the user's Keychain, and leaves no private-key file in the repository or normal disk storage. The certificate subject contains the project name and no email address. Keychain can ask for approval when the release build uses this private key.
@@ -97,7 +97,7 @@ The Update Center lists every published final release with its date and version.
 
 The app checks only final releases from this project's public GitHub page. It compares all final releases by version, so a bridge install can find a newer release even when GitHub does not mark that release as latest. When a newer version exists, it downloads the release ZIP, checksum, and project signature. It checks GitHub's file fingerprints, the published checksum, the project signature, app name, version, bundle identifier, and Intel and Apple silicon support before showing **Install and Restart**. Version 1.1.1 also records the approved project certificate fingerprint. It accepts version 1.1.2 and later only when the app has a valid signature from that exact certificate. Before the bridge installs 1.1.2, it also prepares the saved sign-ins and encrypted notes for the new stable app identity.
 
-Version 1.1.1 was the temporary signing bridge from version 1.1.0. Version 1.1.2 completed that transition. Version 1.1.3 is now the only public release and is marked as latest. The updater compares all final project releases by version instead of trusting only GitHub's latest marker.
+Version 1.1.1 was the temporary signing bridge from version 1.1.0. Version 1.1.2 completed that transition. Current releases use the stable project certificate and update signature. The updater compares all final project releases by version instead of trusting only GitHub's latest marker.
 
 ```sh
 release_version=$(tr -d '[:space:]' < VERSION)
@@ -134,9 +134,9 @@ Open **Choose Server > Private Servers** to save a private-server link with a cl
 
 The bottom **Advanced fallback** changes copied app settings and applies a different signature. Roblox can detect that change. Use it only for recovery tests. Normal managed launches use unchanged copies.
 
-## Arrange Roblox windows
+## Launch defaults
 
-Open **Arrange Windows** from the main toolbar, choose **Tools > Arrange Roblox Windows**, or press **Command-Shift-L**. The window lists each connected display with its current pixel resolution and usable workspace.
+Open **Launch Defaults** from the main toolbar, choose **Tools > Launch Defaults**, or press **Command-Shift-L**. Set the graphics and sound defaults that apply before each launch. The window also lists each connected display with its current pixel resolution and usable workspace.
 
 Select **Arrange Automatically** to fit up to four profiles on each connected display. The app uses a full desktop, halves, a three-window layout, or quarters based on the number of profiles. Select **Full Screen All** when every profile should have its own native macOS full-screen Space.
 
@@ -144,9 +144,9 @@ For a custom layout, drag a profile onto Top Left, Top, Top Right, Left, Fill De
 
 Larger regions replace assignments that they overlap. For example, placing one profile on the left half removes profiles from the top-left and bottom-left quarters. A disconnected monitor remains assigned by name and resolution, but the manager does not move that profile to the wrong display. Reconnect the display and launch again.
 
-macOS requires Accessibility permission before one app can move another app's windows. Select **Open Accessibility Settings** in Arrange Windows and turn on Roblox Account Manager. If it is already on but the app still reports that permission is missing, turn it off and on again, then select **Check Again**. This one-time reset can be necessary after the app's signing identity changes. The manager uses the launched Roblox process ID and the standard macOS window position and size attributes. If Roblox restores its own minimum size, the manager keeps that native size and anchors it as close as possible to the selected region. It does not scale the rendered window, edit Roblox, inject code, or change Roblox settings.
+macOS requires Accessibility permission before one app can move another app's windows. Select **Open Accessibility Settings** in Launch Defaults and turn on Roblox Account Manager. If it is already on but the app still reports that permission is missing, turn it off and on again, then select **Check Again**. This one-time reset can be necessary after the app's signing identity changes. The manager uses the launched Roblox process ID and the standard macOS window position and size attributes. If Roblox restores its own minimum size, the manager keeps that native size and anchors it as close as possible to the selected region. Window placement does not scale the rendered window, edit Roblox, inject code, or change Roblox settings.
 
-Batch launches show the monitor and selected profiles below the **Launch Accounts** action. The editor starts with the current per-account choices from **Arrange Windows**. Moving or removing a profile creates a temporary layout for that launch. **Use Saved Arrangement** removes the override. Launch Set settings use the same inline editor, but changes are saved with that Launch Set.
+Batch launches show the graphics and sound choices from **Launch Defaults**. Changing a value creates a temporary override for that batch. **Use Launch Defaults** removes it. Batch launches also show the monitor and selected profiles below the **Launch Accounts** action. Moving or removing a profile creates a temporary layout for that launch. **Use Saved Arrangement** removes the window override. Launch Set settings can save their own graphics, sound, and window overrides with the set.
 
 Each windowed Roblox placement starts as soon as its own managed process and game window are ready. A slow account does not delay other windowed placements. The manager retries temporary macOS Accessibility failures and does not activate Roblox for normal window movement. **Fill Desktop** uses the display's current usable desktop area.
 
@@ -198,7 +198,7 @@ Use this window when you want to browse as one saved account, start a game from 
 
 ## Launch Sets and experiences
 
-A Launch Set is a saved shortcut for accounts, one game, and one server choice. In Launch Set settings, selecting a group also selects its current members in the Accounts section. Clearing a group clears those members unless another selected group still contains them. It does not save a public Job ID because that code stops working when the server closes. When a Launch Set uses a private server, you can choose a link from the saved private-server list. Private server links stay local and are excluded from normal backups.
+A Launch Set is a saved shortcut for accounts, one game, and one server choice. Its graphics and sound controls show **Launch Defaults** until a value changes. The changed choices save with the Launch Set, and **Use Launch Defaults** removes the override. In Launch Set settings, selecting a group also selects its current members in the Accounts section. Clearing a group clears those members unless another selected group still contains them. It does not save a public Job ID because that code stops working when the server closes. When a Launch Set uses a private server, you can choose a link from the saved private-server list. Private server links stay local and are excluded from normal backups.
 
 The experience chooser records recent Place IDs and launch counts. It also saves the game's current name and icon when Roblox provides them. You can mark an entry as a favorite. A numeric Place ID stays the source of truth, so a metadata lookup is not required to launch.
 

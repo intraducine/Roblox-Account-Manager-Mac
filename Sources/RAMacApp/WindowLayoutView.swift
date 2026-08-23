@@ -296,7 +296,7 @@ struct WindowLayoutView: View {
         } detail: {
             monitorWorkspace
         }
-        .navigationTitle("Arrange Roblox Windows")
+        .navigationTitle("Launch Defaults")
         .onAppear {
             controller.refreshDisplays()
             selectedAccountID = selectedAccountID ?? store.accounts.first?.id
@@ -357,6 +357,8 @@ struct WindowLayoutView: View {
     private var monitorWorkspace: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                launchSettingsDefaults
+
                 permissionStatus
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -449,6 +451,23 @@ struct WindowLayoutView: View {
         canArrangeAutomatically
             ? "Fit up to four Roblox windows on each connected display"
             : "Automatic arrangement needs one display for every four profiles"
+    }
+
+    private var launchSettingsDefaults: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Graphics and sound")
+                .font(.headline)
+            Text("These settings apply before every Roblox launch. Leave Unchanged keeps the value already saved in Roblox.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            LaunchSettingsControls(settings: $store.launchSettings)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(WindowControlSpacing.contentInset)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .appRoundedPanel()
     }
 
     @ViewBuilder

@@ -49,6 +49,113 @@ struct AdvancedLaunchOptions: View {
     }
 }
 
+struct LaunchSettingsControls: View {
+    @Binding var settings: RobloxLaunchSettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Graphics")
+                Spacer(minLength: 24)
+                Picker("Graphics", selection: $settings.graphics) {
+                    Text("Leave Unchanged").tag(RobloxGraphicsSetting.unchanged)
+                    Text("Automatic").tag(RobloxGraphicsSetting.automatic)
+                    Text("Choose Quality").tag(RobloxGraphicsSetting.manual)
+                }
+                .labelsHidden()
+                .frame(width: 190, alignment: .trailing)
+                .accessibilityLabel("Graphics setting")
+            }
+
+            if settings.graphics == .manual {
+                HStack {
+                    Text("Graphics quality")
+                    Spacer(minLength: 24)
+                    Slider(value: graphicsQuality, in: 1...10, step: 1)
+                        .frame(width: 150)
+                        .accessibilityLabel("Graphics quality")
+                        .accessibilityValue("\(settings.graphicsQuality) of 10")
+                    Text("\(settings.graphicsQuality) of 10")
+                        .monospacedDigit()
+                        .frame(width: 54, alignment: .trailing)
+                }
+            }
+
+            HStack {
+                Text("Volume")
+                Spacer(minLength: 24)
+                Picker("Volume", selection: $settings.overridesVolume) {
+                    Text("Leave Unchanged").tag(false)
+                    Text("Choose Volume").tag(true)
+                }
+                .labelsHidden()
+                .frame(width: 190, alignment: .trailing)
+                .accessibilityLabel("Volume setting")
+            }
+
+            if settings.overridesVolume {
+                HStack {
+                    Text("Volume level")
+                    Spacer(minLength: 24)
+                    Slider(value: $settings.volume, in: 0...1, step: 0.05)
+                        .frame(width: 150)
+                        .accessibilityLabel("Volume level")
+                        .accessibilityValue("\(volumePercent) percent")
+                    Text("\(volumePercent)%")
+                        .monospacedDigit()
+                        .frame(width: 54, alignment: .trailing)
+                }
+            }
+        }
+    }
+
+    private var graphicsQuality: Binding<Double> {
+        Binding(
+            get: { Double(settings.graphicsQuality) },
+            set: { settings.graphicsQuality = Int($0.rounded()) }
+        )
+    }
+
+    private var volumePercent: Int {
+        Int((settings.volume * 100).rounded())
+    }
+}
+
+struct LaunchSettingsOverrideEditor: View {
+    let defaults: RobloxLaunchSettings
+    @Binding var overrideSettings: RobloxLaunchSettings?
+    let customDescription: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 16) {
+                Text(overrideSettings == nil
+                    ? "Using Launch Defaults. Change a value to customize these settings."
+                    : customDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 16)
+                if overrideSettings != nil {
+                    Button("Use Launch Defaults") {
+                        overrideSettings = nil
+                    }
+                    .fixedSize()
+                }
+            }
+
+            LaunchSettingsControls(settings: settings)
+        }
+    }
+
+    private var settings: Binding<RobloxLaunchSettings> {
+        Binding(
+            get: { overrideSettings ?? defaults },
+            set: { overrideSettings = $0 }
+        )
+    }
+}
+
 struct FullWidthDisclosure<Content: View>: View {
     let title: String
     @State private var isExpanded = false

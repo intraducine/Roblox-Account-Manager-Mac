@@ -2,6 +2,23 @@ import XCTest
 @testable import RAMacCore
 
 final class LaunchSetTests: XCTestCase {
+    func testLaunchSettingsOverrideRoundTripsWithLaunchSet() throws {
+        let expected = RobloxLaunchSettings(
+            graphics: .manual,
+            graphicsQuality: 8,
+            overridesVolume: true,
+            volume: 0.75
+        )
+        let launchSet = LaunchSet(name: "Custom", placeID: 1, launchSettings: expected)
+
+        let decoded = try JSONDecoder().decode(
+            LaunchSet.self,
+            from: JSONEncoder().encode(launchSet)
+        )
+
+        XCTAssertEqual(decoded.launchSettings, expected)
+    }
+
     func testSelectingAGroupSelectsEveryCurrentMemberAndKeepsExistingAccounts() {
         let existing = account(userID: 1, groups: [])
         let firstMember = account(userID: 2, groups: ["Main"])
