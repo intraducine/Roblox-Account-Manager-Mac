@@ -30,7 +30,9 @@ public struct AppVersion: Comparable, CustomStringConvertible, Sendable {
     }
 
     public var description: String {
-        components.map(String.init).joined(separator: ".")
+        var displayComponents = components
+        while displayComponents.count < 3 { displayComponents.append(0) }
+        return displayComponents.map(String.init).joined(separator: ".")
     }
 
     public static func < (lhs: AppVersion, rhs: AppVersion) -> Bool {

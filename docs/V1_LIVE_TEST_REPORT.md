@@ -11,6 +11,7 @@ This report uses saved account labels only. It does not contain usernames, cooki
 - The installed Roblox client contains the `GlobalBasicSettings_13.xml`, `SavedQualityLevel`, and `MasterVolume` setting names used by Launch Defaults.
 - Tests confirm that launch settings preserve unrelated values in an existing Roblox settings file.
 - Tests confirm that overlapping launch requests start each account only once and do not show a false failure notice.
+- The updater regression test confirms that version 1.2.0 matches the exact `1.2.0` ZIP, checksum, and signature names.
 - No saved Roblox account was launched during this candidate check.
 
 ## August 23 maintenance verification

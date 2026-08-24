@@ -25,19 +25,19 @@ final class SoftwareUpdateServiceTests: XCTestCase {
                 request.value(forHTTPHeaderField: "User-Agent"),
                 "Roblox-Account-Manager-Mac/1.1.2"
             )
-            return Self.response(request, "[\(Self.releaseJSON(version: "1.0.3"))]")
+            return Self.response(request, "[\(Self.releaseJSON(version: "1.2.0"))]")
         }
 
-        let result = try await makeService().check(currentVersion: "1.0.2")
+        let result = try await makeService().check(currentVersion: "1.1.3")
 
         guard case .available(let release) = result else {
             return XCTFail("Expected an available update")
         }
-        XCTAssertEqual(release.version, AppVersion("1.0.3"))
+        XCTAssertEqual(release.version, AppVersion("1.2.0"))
         XCTAssertEqual(release.publishedAt, ISO8601DateFormatter().date(from: "2026-08-13T12:00:00Z"))
-        XCTAssertEqual(release.archive.name, "Roblox-Account-Manager-for-Mac-1.0.3.zip")
-        XCTAssertEqual(release.checksum.name, "Roblox-Account-Manager-for-Mac-1.0.3.zip.sha256")
-        XCTAssertEqual(release.signature.name, "Roblox-Account-Manager-for-Mac-1.0.3.zip.sig")
+        XCTAssertEqual(release.archive.name, "Roblox-Account-Manager-for-Mac-1.2.0.zip")
+        XCTAssertEqual(release.checksum.name, "Roblox-Account-Manager-for-Mac-1.2.0.zip.sha256")
+        XCTAssertEqual(release.signature.name, "Roblox-Account-Manager-for-Mac-1.2.0.zip.sig")
     }
 
     func testUpdateCheckFindsHighestFinalReleaseEvenWhenItIsNotMarkedLatest() async throws {

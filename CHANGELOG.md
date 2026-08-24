@@ -6,6 +6,7 @@
 - Let batch launches use one-launch graphics and sound overrides, and let Launch Sets save their own overrides.
 - Apply graphics and volume through Roblox's current shared settings file while preserving settings the manager does not control.
 - Prevent overlapping single, batch, player, and app launches from starting duplicate clients or showing false failure alerts.
+- Keep all three version parts when the updater matches release files, including versions such as 1.2.0.
 - Keep failed friend-relay Launch Set overrides ready for retry and clear them after a complete launch.
 - Replace the feedback form details bar with one clear **Restart Form** action.
 - Rename **Arrange Windows** to **Launch Defaults** and align its launch controls with the existing action column.
