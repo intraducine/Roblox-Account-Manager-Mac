@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Security
 import XCTest
 @testable import RAMacCore
 
@@ -468,33 +469,76 @@ final class RobloxLauncherTests: XCTestCase {
         let accountID = UUID()
         let launcher = ParallelRobloxLauncher(instancesRoot: root)
 
-        let environment = try await launcher.prepareIsolatedEnvironment(for: accountID)
-        let home = try XCTUnwrap(environment["HOME"])
-        let keychain = URL(fileURLWithPath: home)
-            .appendingPathComponent("Library/Keychains/login.keychain-db")
-
-        XCTAssertTrue(FileManager.default.fileExists(atPath: keychain.path))
-        XCTAssertNotEqual(
-            keychain.standardizedFileURL.path,
-            FileManager.default.homeDirectoryForCurrentUser
+        var retainedKeychains: [SecKeychain] = []
+        defer {
+            for keychain in retainedKeychains { _ = SecKeychainDelete(keychain) }
+        }
+        for attempt in 0..<3 {
+            let environment = try await launcher.prepareIsolatedEnvironment(for: accountID)
+            let home = try XCTUnwrap(environment["HOME"])
+            let keychain = URL(fileURLWithPath: home)
                 .appendingPathComponent("Library/Keychains/login.keychain-db")
-                .standardizedFileURL.path
-        )
 
-        let probe = Process()
-        probe.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        probe.arguments = [
-            "add-generic-password",
-            "-a", "Roblox test",
-            "-s", "https://www.roblox.com/:SharedROBLOSECURITYForStudio",
-            "-w", "test-value"
-        ]
-        probe.environment = environment
-        probe.standardOutput = FileHandle.nullDevice
-        probe.standardError = FileHandle.nullDevice
-        try probe.run()
-        probe.waitUntilExit()
-        XCTAssertEqual(probe.terminationStatus, 0)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: keychain.path))
+            XCTAssertNotEqual(
+                keychain.standardizedFileURL.path,
+                FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent("Library/Keychains/login.keychain-db")
+                    .standardizedFileURL.path
+            )
+
+            let probe = Process()
+            probe.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+            probe.arguments = [
+                "add-generic-password",
+                "-a", "Roblox test",
+                "-s", "https://www.roblox.com/:SharedROBLOSECURITYForStudio",
+                "-w", "test-value"
+            ]
+            probe.environment = environment
+            probe.standardOutput = FileHandle.nullDevice
+            probe.standardError = FileHandle.nullDevice
+            try probe.run()
+            probe.waitUntilExit()
+            XCTAssertEqual(probe.terminationStatus, 0)
+
+            // A retained reference reproduces the duplicate-name failure on retry.
+            var reference: SecKeychain?
+            XCTAssertEqual(SecKeychainOpen(keychain.path, &reference), errSecSuccess)
+            retainedKeychains.append(try XCTUnwrap(reference))
+            if attempt == 1 {
+                // Older builds removed files without releasing the registered Keychain.
+                try FileManager.default.removeItem(at: keychain.deletingLastPathComponent())
+            }
+        }
+        XCTAssertEqual(retainedKeychains.count, 3)
+    }
+
+    func testPrivateKeychainCleanupRejectsFileSymlink() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ram-keychain-symlink-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let launcher = ParallelRobloxLauncher(instancesRoot: root)
+        let otherEnvironment = try await launcher.prepareIsolatedEnvironment(for: UUID())
+        let otherKeychain = URL(fileURLWithPath: try XCTUnwrap(otherEnvironment["HOME"]))
+            .appendingPathComponent("Library/Keychains/login.keychain-db")
+        var otherReference: SecKeychain?
+        XCTAssertEqual(SecKeychainOpen(otherKeychain.path, &otherReference), errSecSuccess)
+        let reference = try XCTUnwrap(otherReference)
+        defer { _ = SecKeychainDelete(reference) }
+
+        let accountID = UUID()
+        let link = ParallelRobloxLauncher.isolatedHomeURL(instancesRoot: root, accountID: accountID)
+            .appendingPathComponent("Library/Keychains/login.keychain-db")
+        try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: otherKeychain)
+        do {
+            _ = try await launcher.prepareIsolatedEnvironment(for: accountID)
+            XCTFail("Cleanup must reject a Keychain file that points to another account.")
+        } catch let error as RobloxLaunchError {
+            XCTAssertTrue(error.localizedDescription.contains("symbolic link"))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: otherKeychain.path))
+        XCTAssertTrue(try link.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == true)
     }
 
     func testIsolatedEnvironmentRejectsDescendantSymlink() async throws {
@@ -538,36 +582,63 @@ final class RobloxLauncherTests: XCTestCase {
             for process in processes where process.isRunning { process.terminate() }
         }
 
-        for accountID in accountIDs {
+        for (index, accountID) in accountIDs.enumerated() {
             let accountRoot = root.appendingPathComponent(accountID.uuidString, isDirectory: true)
-            let app = accountRoot.appendingPathComponent("Unmodified/Roblox.app", isDirectory: true)
+            let app = accountRoot.appendingPathComponent(
+                index == 0 ? "Roblox.app" : "Unmodified/Roblox.app", isDirectory: true
+            )
             let executable = app.appendingPathComponent("Contents/MacOS/RobloxPlayer")
-            try FileManager.default.createDirectory(
-                at: executable.deletingLastPathComponent(),
-                withIntermediateDirectories: true
+            let installer = app.appendingPathComponent(
+                "Contents/MacOS/RobloxPlayerInstaller.app/Contents/MacOS/RobloxPlayerInstaller"
             )
-            try FileManager.default.copyItem(atPath: "/bin/sleep", toPath: executable.path)
-
-            let process = Process()
-            process.executableURL = executable
-            process.arguments = ["60"]
-            try process.run()
-            processes.append(process)
-            XCTAssertTrue(
-                waitForExecutablePath(
-                    processIdentifier: process.processIdentifier,
-                    expectedPath: executable.path
+            for path in [executable, installer] {
+                try FileManager.default.createDirectory(
+                    at: path.deletingLastPathComponent(), withIntermediateDirectories: true
                 )
-            )
-            let record = TestProcessRecord(
-                processIdentifier: process.processIdentifier,
-                applicationPath: app.standardizedFileURL.path
-            )
-            try JSONEncoder().encode(record).write(
-                to: accountRoot.appendingPathComponent("Process.json"),
-                options: .atomic
-            )
+                try FileManager.default.copyItem(atPath: "/bin/cat", toPath: path.path)
+                _ = try runCommand("/usr/bin/codesign", ["--force", "--sign", "-", path.path])
+                let input = Pipe()
+                let output = Pipe()
+                let process = Process()
+                process.executableURL = path
+                process.standardInput = input
+                process.standardOutput = output
+                try process.run()
+                processes.append(process)
+                // Wait for main(), not just exec(), before testing termination.
+                input.fileHandleForWriting.write(Data("ready\n".utf8))
+                XCTAssertEqual(output.fileHandleForReading.readData(ofLength: 6), Data("ready\n".utf8))
+                XCTAssertTrue(waitForExecutablePath(
+                    processIdentifier: process.processIdentifier, expectedPath: path.path
+                ))
+                if path == executable {
+                    let record = TestProcessRecord(
+                        processIdentifier: process.processIdentifier,
+                        applicationPath: app.standardizedFileURL.path
+                    )
+                    try JSONEncoder().encode(record).write(
+                        to: accountRoot.appendingPathComponent("Process.json"), options: .atomic
+                    )
+                }
+            }
         }
+
+        // An unrelated installer's matching name must not make it a managed process.
+        let outside = root.appendingPathComponent("Unrelated/RobloxPlayerInstaller")
+        try FileManager.default.createDirectory(at: outside.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(atPath: "/bin/sleep", toPath: outside.path)
+        _ = try runCommand("/usr/bin/codesign", ["--force", "--sign", "-", outside.path])
+        let unrelated = Process()
+        unrelated.executableURL = outside
+        unrelated.arguments = ["60"]
+        try unrelated.run()
+        defer {
+            if unrelated.isRunning { unrelated.terminate() }
+            unrelated.waitUntilExit()
+        }
+        XCTAssertTrue(waitForExecutablePath(
+            processIdentifier: unrelated.processIdentifier, expectedPath: outside.path
+        ))
 
         let startedAt = Date()
         let stopped = await launcher.stop(accountIDs: accountIDs)
@@ -575,8 +646,40 @@ final class RobloxLauncherTests: XCTestCase {
 
         XCTAssertEqual(stopped, Set(accountIDs))
         XCTAssertLessThan(elapsed, 5)
+        XCTAssertTrue(unrelated.isRunning)
         for process in processes { process.waitUntilExit() }
         XCTAssertTrue(processes.allSatisfy { !$0.isRunning })
+    }
+
+    func testLiveOutdatedRobloxDoesNotCreateCopiesWhenEnabled() async throws {
+        guard ProcessInfo.processInfo.environment["RAM_RUN_ROBLOX_VERSION_INTEGRATION"] == "1" else {
+            throw XCTSkip("Set RAM_RUN_ROBLOX_VERSION_INTEGRATION=1 to test the installed Roblox version gate.")
+        }
+        let latest = try await RobloxAPIClient().currentMacPlayerVersion()
+        let infoData = try Data(contentsOf: ParallelRobloxLauncher.officialApplicationURL.appendingPathComponent("Contents/Info.plist"))
+        let info = try PropertyListSerialization.propertyList(from: infoData, options: [], format: nil) as? [String: Any]
+        let installed = try XCTUnwrap(info?["CFBundleShortVersionString"] as? String)
+        guard installed != latest else { throw XCTSkip("This test needs an outdated Roblox installation.") }
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ram-version-gate-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let launcher = ParallelRobloxLauncher(instancesRoot: root, robloxSettingsDirectory: root.appendingPathComponent("Settings"))
+        let modes: [RobloxLaunchMode] = [.unmodifiedParallel, .unmodifiedParallel, .modifiedParallel]
+        for mode in modes {
+            let accountID = UUID()
+            do {
+                _ = try await launcher.launch(
+                    builder.makeAppURL(ticket: "invalid-version-gate-test-ticket"),
+                    for: accountID, mode: mode,
+                    settings: RobloxLaunchSettings(graphics: .manual)
+                )
+                _ = await launcher.stop(accountID: accountID)
+                XCTFail("An outdated Roblox copy must not launch.")
+            } catch {
+                XCTAssertEqual(error as? RobloxLaunchError, .robloxUpdateRequired)
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
     }
 
     private func waitForExecutablePath(processIdentifier: Int32, expectedPath: String) -> Bool {

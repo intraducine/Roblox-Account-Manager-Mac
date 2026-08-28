@@ -109,6 +109,25 @@ public struct RobloxAPIClient: Sendable {
         return trimmed.trimmingCharacters(in: CharacterSet(charactersIn: ";"))
     }
 
+    func currentMacPlayerVersion() async throws -> String {
+        struct ClientVersion: Decodable { let version: String }
+
+        var request = URLRequest(
+            url: URL(string: "https://clientsettingscdn.roblox.com/v2/client-version/MacPlayer")!,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 15
+        )
+        request.httpShouldHandleCookies = false
+        applyPublicHeaders(to: &request)
+        let (data, response) = try await session.data(for: request)
+        guard try httpResponse(response).statusCode == 200,
+              let payload = try? decoder.decode(ClientVersion.self, from: data),
+              payload.version.range(of: #"^[0-9]+(?:\.[0-9]+){3}\z"#, options: .regularExpression) != nil else {
+            throw RobloxAPIError.invalidResponse
+        }
+        return payload.version
+    }
+
     public func authenticatedUser(cookie rawCookie: String) async throws -> RobloxUser {
         let cookie = Self.normalizedCookie(from: rawCookie)
         guard !cookie.isEmpty else { throw RobloxAPIError.invalidSession }

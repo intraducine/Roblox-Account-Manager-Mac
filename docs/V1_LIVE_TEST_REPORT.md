@@ -1,8 +1,20 @@
 # Release verification report
 
-Latest update: August 23, 2026
+Latest update: August 27, 2026
 
 This report uses saved account labels only. It does not contain usernames, cookies, private links, launch tickets, or personal account IDs.
+
+## Version 1.2.1 candidate verification
+
+- The full source suite reports 225 tests, zero failures, and seven integration skips. The release candidate also passes the parallel test run.
+- The repeated private Keychain test reproduced the reported duplicate-name error before the fix. It now passes with retained Keychain references and with files removed by an earlier attempt.
+- Tests reject a private Keychain link to another account and keep the other account's Keychain intact.
+- Version-check tests cover current, outdated, unexpected, invalid, and unavailable Roblox versions. The live outdated-version check passed before the installed Roblox app became current; the latest run skips that check.
+- Process cleanup tests stop three managed clients and their installer helpers while leaving an unrelated installer open.
+- The strict concurrency build, shell syntax checks, and whitespace checks pass.
+- The universal packaged-app smoke test passes for version 1.2.1 build 121. It uses temporary empty storage and does not read saved accounts or Keychain items.
+- The final project-signed package also passes the smoke test, strict app signature check, archive integrity check, SHA-256 checksum, and Secure Enclave update-signature verification. It uses the certificate pinned in the public version 1.2.0 app.
+- No saved Roblox account was launched during this candidate check. These checks do not prove a live three-account game session.
 
 ## Version 1.2.0 candidate verification
 

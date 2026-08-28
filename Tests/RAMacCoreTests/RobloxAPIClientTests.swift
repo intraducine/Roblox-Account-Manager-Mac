@@ -17,6 +17,47 @@ final class RobloxAPIClientTests: XCTestCase {
         XCTAssertEqual(RobloxAPIClient.normalizedCookie(from: " secret-value; "), "secret-value")
     }
 
+    func testManagedLaunchVersionPreflightUsesPublicVersionAndFailsClosed() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let contents = root.appendingPathComponent("Roblox.app/Contents")
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let current = #"{"version":"0.736.0.7361346"}"#
+        let cases: [(String, String, Int?, RobloxLaunchError?)] = [
+            ("0.736.0.7361346", current, 200, nil),
+            ("0.735.0.7351131", current, 200, .robloxUpdateRequired),
+            ("0.737.0.7370000", current, 200, .robloxUpdateRequired),
+            ("0.736.0.7361346", current, 503, .robloxUpdateCheckFailed),
+            ("0.736.0.7361346", "{}", 200, .robloxUpdateCheckFailed),
+            ("0.736.0.7361346", #"{"version":"not-a-version"}"#, 200, .robloxUpdateCheckFailed),
+            ("0.736.0.7361346", current, nil, .robloxUpdateCheckFailed)
+        ]
+        for (installed, body, status, expectedError) in cases {
+            let data = try PropertyListSerialization.data(
+                fromPropertyList: ["CFBundleShortVersionString": installed, "CFBundleVersion": "7361346"],
+                format: .xml, options: 0
+            )
+            try data.write(to: contents.appendingPathComponent("Info.plist"))
+            let client = makeClient { request in
+                XCTAssertEqual(request.url?.absoluteString, "https://clientsettingscdn.roblox.com/v2/client-version/MacPlayer")
+                XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+                XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+                XCTAssertFalse(request.httpShouldHandleCookies)
+                XCTAssertEqual(request.cachePolicy, .reloadIgnoringLocalCacheData)
+                guard let status else { throw URLError(.notConnectedToInternet) }
+                return Self.response(request: request, status: status, body: body)
+            }
+            let launcher = ParallelRobloxLauncher(versionClient: client)
+            do {
+                try await launcher.verifyCurrentOfficialVersion(at: contents.deletingLastPathComponent())
+                XCTAssertNil(expectedError)
+            } catch {
+                XCTAssertNotNil(expectedError)
+                XCTAssertEqual(error as? RobloxLaunchError, expectedError)
+            }
+        }
+    }
+
     func testValidatesAuthenticatedUser() async throws {
         let client = makeClient { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), ".ROBLOSECURITY=secret")

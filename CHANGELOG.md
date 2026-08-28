@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1 - 2026-08-27
+
+- Remove an old private account Keychain through macOS before recreating it, so retries do not fail with a duplicate name. Report cleanup errors and reject links to other Keychains.
+- Block managed launches until the Roblox app in Applications matches Roblox's current Mac release. Stop before copying or changing settings if the version cannot be checked.
+- Close installer helpers from managed copies during launch cleanup and Stop, without closing unrelated installers.
+
 ## 1.2.0 - 2026-08-23
 
 - Add Launch Defaults for Roblox graphics quality, volume, and saved window placement.

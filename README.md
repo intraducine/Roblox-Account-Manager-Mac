@@ -115,6 +115,8 @@ Version 1.0.2 and older do not have the updater. Install version 1.0.3 once with
 
 Every managed launch uses a separate copy of `/Applications/Roblox.app`. This includes the first account. You can start another account later without closing the first one.
 
+Before it prepares a copy, the manager checks the installed Roblox version against Roblox's current Mac release. If they differ, stop all managed clients, open `/Applications/Roblox.app`, let it update, then quit Roblox and retry. The next launch rebuilds any old copy. The manager does not update Roblox itself. It also stops the launch if the version check fails, so an unchecked copy cannot start its own update.
+
 The normal copy stays unchanged. Every file must match the installed Roblox app. It keeps Roblox Corporation's original Apple-anchored signature. The manager stops the launch if the copy or signature check fails. It never edits `/Applications/Roblox.app`. Each managed account also gets separate Roblox app data and a small child-process environment that excludes unrelated parent secrets. Leaving a game and using the Roblox app does not switch the other managed copies to the same account.
 
 Select one account and choose **Open Roblox App** to open that account's Roblox home screen without joining a game. You can also right-click an account and choose **Open Roblox App**. You do not need to wait for that app to finish opening before you start a different account.

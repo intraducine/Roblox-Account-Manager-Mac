@@ -9,6 +9,8 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
     case invalidURL
     case robloxNotInstalled
     case untrustedRobloxInstallation
+    case robloxUpdateRequired
+    case robloxUpdateCheckFailed
     case accountAlreadyRunning
     case officialParallelUnavailable
     case unmodifiedParallelUnavailable(String)
@@ -28,6 +30,10 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
             return "Roblox is not installed in Applications."
         case .untrustedRobloxInstallation:
             return "The Roblox app in Applications does not have a valid Roblox Corporation signature. Reinstall Roblox before using parallel launch."
+        case .robloxUpdateRequired:
+            return "Update Roblox in Applications before launching managed accounts. Stop all managed Roblox clients. Open /Applications/Roblox.app and let it update. Then quit Roblox and try again."
+        case .robloxUpdateCheckFailed:
+            return "The current Roblox version could not be checked. Check your connection and try again. No managed copy was started."
         case .accountAlreadyRunning:
             return "This account already has a Roblox instance open. Stop it before launching it again."
         case .officialParallelUnavailable:
@@ -278,14 +284,17 @@ public actor ParallelRobloxLauncher {
     private let fileManager: FileManager
     private let instancesRoot: URL
     private let robloxSettingsDirectory: URL
+    private let versionClient: RobloxAPIClient
     private var officialLaunchInProgress = false
 
     public init(
         fileManager: FileManager = .default,
         instancesRoot: URL? = nil,
-        robloxSettingsDirectory: URL? = nil
+        robloxSettingsDirectory: URL? = nil,
+        versionClient: RobloxAPIClient = RobloxAPIClient()
     ) {
         self.fileManager = fileManager
+        self.versionClient = versionClient
         self.robloxSettingsDirectory = robloxSettingsDirectory
             ?? fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first!
                 .appendingPathComponent("Roblox", isDirectory: true)
@@ -341,6 +350,12 @@ public actor ParallelRobloxLauncher {
             if mode == .official { officialLaunchInProgress = false }
         }
 
+        // Check before creating a copy or changing settings. An old copy can
+        // start its own installer and leave the managed launch path.
+        if mode != .official {
+            try await verifyCurrentOfficialVersion(at: Self.officialApplicationURL)
+        }
+        try Task.checkCancellation()
         try ensureManagedRootsAreSafe(for: accountID)
         try verifyOfficialApplication()
         let environment = try prepareIsolatedEnvironment(for: accountID)
@@ -352,6 +367,7 @@ public actor ParallelRobloxLauncher {
             applicationURL = try prepareUnmodifiedCopy(for: accountID)
             openedProcessIdentifier = try await launchUnmodified(
                 url,
+                for: accountID,
                 with: applicationURL,
                 environment: environment
             )
@@ -368,6 +384,7 @@ public actor ParallelRobloxLauncher {
             _ = sem_unlink("/RobloxPlayerUniq")
             openedProcessIdentifier = try await launchUnmodified(
                 url,
+                for: accountID,
                 with: applicationURL,
                 environment: environment
             )
@@ -804,6 +821,7 @@ public actor ParallelRobloxLauncher {
 
     private func launchUnmodified(
         _ url: URL,
+        for accountID: UUID,
         with applicationURL: URL,
         environment: [String: String]
     ) async throws -> Int32 {
@@ -848,6 +866,7 @@ public actor ParallelRobloxLauncher {
             for candidate in runningProcessTable() where candidate.value == expectedExecutablePath {
                 _ = kill(candidate.key, SIGTERM)
             }
+            _ = await stopManagedHelpers(for: accountID)
             if let launchError = error as? RobloxLaunchError { throw launchError }
             throw RobloxLaunchError.unmodifiedParallelUnavailable(error.localizedDescription)
         }
@@ -1134,11 +1153,13 @@ public actor ParallelRobloxLauncher {
         at keychainsURL: URL,
         environment: [String: String]
     ) throws {
-        try? fileManager.removeItem(at: keychainsURL)
-        try fileManager.createDirectory(at: keychainsURL, withIntermediateDirectories: true)
         let keychainURL = keychainsURL.appendingPathComponent("login.keychain-db")
         let oneTimePassword = UUID().uuidString + UUID().uuidString
         do {
+            // File deletion alone can leave Keychain Services holding the old name.
+            try removePrivateKeychain(at: keychainURL)
+            try removeOwnedItem(keychainsURL)
+            try fileManager.createDirectory(at: keychainsURL, withIntermediateDirectories: true)
             try createKeychain(at: keychainURL, password: oneTimePassword)
             try run(
                 executable: URL(fileURLWithPath: "/usr/bin/security"),
@@ -1156,9 +1177,24 @@ public actor ParallelRobloxLauncher {
                 )
             }
         } catch {
-            try? fileManager.removeItem(at: keychainsURL)
             throw RobloxLaunchError.copyFailed(
                 "The private Keychain for this Roblox account could not be prepared. \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func removePrivateKeychain(at url: URL) throws {
+        try rejectSymbolicLinksInManagedPath(through: url)
+        var keychain: SecKeychain?
+        var status = SecKeychainOpen(url.path, &keychain)
+        if status == errSecSuccess, let keychain {
+            status = SecKeychainDelete(keychain)
+        }
+        guard status == errSecSuccess || status == errSecNoSuchKeychain else {
+            throw NSError(
+                domain: NSOSStatusErrorDomain,
+                code: Int(status),
+                userInfo: [NSLocalizedDescriptionKey: SecCopyErrorMessageString(status, nil) as String? ?? "Private Keychain cleanup failed."]
             )
         }
     }
@@ -1253,6 +1289,25 @@ public actor ParallelRobloxLauncher {
         }
     }
 
+    func verifyCurrentOfficialVersion(at applicationURL: URL) async throws {
+        let currentVersion: String
+        do {
+            currentVersion = try await versionClient.currentMacPlayerVersion()
+        } catch {
+            try Task.checkCancellation()
+            throw RobloxLaunchError.robloxUpdateCheckFailed
+        }
+        // Read after the request in case the main app finished an update while waiting.
+        let data = try Data(contentsOf: applicationURL.appendingPathComponent("Contents/Info.plist"))
+        let info = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
+        guard let installedVersion = info?["CFBundleShortVersionString"] as? String else {
+            throw RobloxLaunchError.copyFailed("The installed Roblox version could not be read.")
+        }
+        guard installedVersion == currentVersion else {
+            throw RobloxLaunchError.robloxUpdateRequired
+        }
+    }
+
     private func codeSigningDetails(at applicationURL: URL) throws -> String {
         try run(
             executable: URL(fileURLWithPath: "/usr/bin/codesign"),
@@ -1286,12 +1341,12 @@ public actor ParallelRobloxLauncher {
         Set([
             copyURL(for: accountID),
             unmodifiedCopyURL(for: accountID)
-        ].map {
-            canonicalPath(
-                menuBarHelperURL(in: $0)
-                    .appendingPathComponent("Contents/MacOS/RobloxMenuBar")
-                    .path
-            )
+        ].flatMap { applicationURL in
+            ["RobloxMenuBar", "RobloxPlayerInstaller"].map { name in
+                canonicalPath(applicationURL.appendingPathComponent(
+                    "Contents/MacOS/\(name).app/Contents/MacOS/\(name)"
+                ).path)
+            }
         })
     }
 
