@@ -575,6 +575,13 @@ final class RobloxLauncherTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-batch-stop-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // Build a normal executable instead of copying an Apple platform binary.
+        let source = root.appendingPathComponent("process.c")
+        let fixture = root.appendingPathComponent("process")
+        try "#include <unistd.h>\nint main(void) { write(1, \"ready\\n\", 6); sleep(60); return 0; }\n"
+            .write(to: source, atomically: true, encoding: .utf8)
+        _ = try runCommand("/usr/bin/xcrun", ["clang", source.path, "-o", fixture.path])
         let launcher = ParallelRobloxLauncher(instancesRoot: root)
         let accountIDs = [UUID(), UUID(), UUID()]
         var processes: [Process] = []
@@ -595,18 +602,14 @@ final class RobloxLauncherTests: XCTestCase {
                 try FileManager.default.createDirectory(
                     at: path.deletingLastPathComponent(), withIntermediateDirectories: true
                 )
-                try FileManager.default.copyItem(atPath: "/bin/cat", toPath: path.path)
-                _ = try runCommand("/usr/bin/codesign", ["--force", "--sign", "-", path.path])
-                let input = Pipe()
+                try FileManager.default.copyItem(at: fixture, to: path)
                 let output = Pipe()
                 let process = Process()
                 process.executableURL = path
-                process.standardInput = input
                 process.standardOutput = output
                 try process.run()
                 processes.append(process)
                 // Wait for main(), not just exec(), before testing termination.
-                input.fileHandleForWriting.write(Data("ready\n".utf8))
                 XCTAssertEqual(output.fileHandleForReading.readData(ofLength: 6), Data("ready\n".utf8))
                 XCTAssertTrue(waitForExecutablePath(
                     processIdentifier: process.processIdentifier, expectedPath: path.path
@@ -626,16 +629,17 @@ final class RobloxLauncherTests: XCTestCase {
         // An unrelated installer's matching name must not make it a managed process.
         let outside = root.appendingPathComponent("Unrelated/RobloxPlayerInstaller")
         try FileManager.default.createDirectory(at: outside.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try FileManager.default.copyItem(atPath: "/bin/sleep", toPath: outside.path)
-        _ = try runCommand("/usr/bin/codesign", ["--force", "--sign", "-", outside.path])
+        try FileManager.default.copyItem(at: fixture, to: outside)
+        let unrelatedOutput = Pipe()
         let unrelated = Process()
         unrelated.executableURL = outside
-        unrelated.arguments = ["60"]
+        unrelated.standardOutput = unrelatedOutput
         try unrelated.run()
         defer {
             if unrelated.isRunning { unrelated.terminate() }
             unrelated.waitUntilExit()
         }
+        XCTAssertEqual(unrelatedOutput.fileHandleForReading.readData(ofLength: 6), Data("ready\n".utf8))
         XCTAssertTrue(waitForExecutablePath(
             processIdentifier: unrelated.processIdentifier, expectedPath: outside.path
         ))
