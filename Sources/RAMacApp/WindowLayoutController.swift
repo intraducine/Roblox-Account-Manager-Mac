@@ -846,6 +846,19 @@ final class WindowLayoutController: ObservableObject {
         accessibilityPermissionGranted = permissionManager.isTrusted()
     }
 
+    @discardableResult
+    func ensureAccessibilityPermission() -> Bool {
+        refreshAccessibilityPermission()
+        guard !accessibilityPermissionGranted else { return true }
+        requestAccessibilityPermission()
+        guard accessibilityPermissionGranted else {
+            lastMessage = "Allow Window Control in System Settings before arranging Roblox windows."
+            return false
+        }
+        lastMessage = nil
+        return true
+    }
+
     func assignment(for accountID: UUID) -> WindowLayoutAssignment? {
         assignments[accountID]
     }
@@ -1007,6 +1020,12 @@ final class WindowLayoutController: ObservableObject {
         var results: [UUID: WindowPlacementResult] = [:]
         for request in requests {
             if let immediate = request.3 { results[request.0] = immediate }
+        }
+
+        let placeableRequests = requests.filter { $0.2 != nil }
+        guard placeableRequests.isEmpty || ensureAccessibilityPermission() else {
+            for request in placeableRequests { results[request.0] = .permissionRequired }
+            return results
         }
 
         let placer = self.placer

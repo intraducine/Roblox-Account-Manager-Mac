@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.2 - 2026-08-29
+
+- Skip Keychain access migration when the installed app already uses the downloaded update's verified project signing identity.
+- Check macOS Accessibility access before saving or applying a Roblox window arrangement, and open the correct System Settings pane when access is missing.
+- Keep **Restart Form** beside **Close** in the feedback toolbar instead of placing it in a separate bar.
+
 ## 1.2.1 - 2026-08-27
 
 - Remove an old private account Keychain through macOS before recreating it, so retries do not fail with a duplicate name. Report cleanup errors and reject links to other Keychains.

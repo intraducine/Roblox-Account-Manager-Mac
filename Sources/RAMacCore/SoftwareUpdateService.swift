@@ -589,6 +589,7 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
                 candidateApplicationURL,
                 expectedCertificateSHA256: expectedCertificateSHA256
             )
+            guard !Self.application(currentApplicationURL, satisfies: requirement) else { return }
             try SoftwareUpdateKeychainAccessBridge.authorize(
                 candidateRequirement: requirement
             )
@@ -620,6 +621,14 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
         guard SecStaticCodeCheckValidityWithErrors(code, flags, requirement, &error) == errSecSuccess else {
             throw SoftwareUpdateError.wrongSigningIdentity
         }
+    }
+
+    static func application(_ url: URL, satisfies requirement: SecRequirement) -> Bool {
+        guard let code = try? staticCode(at: url) else { return false }
+        let flags = SecCSFlags(rawValue:
+            kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode
+        )
+        return (try? check(code, flags: flags, requirement: requirement)) != nil
     }
 
     @discardableResult

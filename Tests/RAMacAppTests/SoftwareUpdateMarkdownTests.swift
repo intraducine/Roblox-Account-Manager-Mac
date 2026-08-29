@@ -30,18 +30,33 @@ final class SoftwareUpdateMarkdownTests: XCTestCase {
 
     func testReleaseNotesMarkdownPreservesBlockStructure() {
         let blocks = ReleaseNotesMarkdown.blocks(in: """
+        Routine updates now need fewer macOS approvals.
+
         ## What changed
 
-        - First item
-        - Second **item**
+        - Skip repeated Keychain access migration.
+        - Check Accessibility access before arranging windows.
 
-        A final paragraph.
+        ## Before you update
+
+        - No extra steps are required.
+
+        ## Verification
+
+        - `swift test --parallel` passes.
         """)
 
         XCTAssertEqual(blocks, [
+            .paragraph("Routine updates now need fewer macOS approvals."),
             .heading(level: 2, text: "What changed"),
-            .unorderedList(["First item", "Second **item**"]),
-            .paragraph("A final paragraph.")
+            .unorderedList([
+                "Skip repeated Keychain access migration.",
+                "Check Accessibility access before arranging windows."
+            ]),
+            .heading(level: 2, text: "Before you update"),
+            .unorderedList(["No extra steps are required."]),
+            .heading(level: 2, text: "Verification"),
+            .unorderedList(["`swift test --parallel` passes."])
         ])
     }
 }

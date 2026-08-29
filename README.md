@@ -99,6 +99,8 @@ The app checks only final releases from this project's public GitHub page. It co
 
 Version 1.1.1 was the temporary signing bridge from version 1.1.0. Version 1.1.2 completed that transition. Current releases use the stable project certificate and update signature. The updater compares all final project releases by version instead of trusting only GitHub's latest marker.
 
+Version 1.2.2 and later skip the Keychain access migration when the installed app already uses the downloaded update's verified project signing identity. Routine updates therefore do not repeat the one-time signing-transition approval work.
+
 ```sh
 release_version=$(tr -d '[:space:]' < VERSION)
 gh release create "v$release_version" dist/Roblox-Account-Manager-for-Mac-"$release_version".zip{,.sha256,.sig} \
@@ -146,7 +148,7 @@ For a custom layout, drag a profile onto Top Left, Top, Top Right, Left, Fill De
 
 Larger regions replace assignments that they overlap. For example, placing one profile on the left half removes profiles from the top-left and bottom-left quarters. A disconnected monitor remains assigned by name and resolution, but the manager does not move that profile to the wrong display. Reconnect the display and launch again.
 
-macOS requires Accessibility permission before one app can move another app's windows. Select **Open Accessibility Settings** in Launch Defaults and turn on Roblox Account Manager. If it is already on but the app still reports that permission is missing, turn it off and on again, then select **Check Again**. This one-time reset can be necessary after the app's signing identity changes. The manager uses the launched Roblox process ID and the standard macOS window position and size attributes. If Roblox restores its own minimum size, the manager keeps that native size and anchors it as close as possible to the selected region. Window placement does not scale the rendered window, edit Roblox, inject code, or change Roblox settings.
+macOS requires Accessibility permission before one app can move another app's windows. The manager checks this before it saves or applies an arrangement. If access is missing, it opens Accessibility settings so you can turn on Roblox Account Manager. If it is already on but the app still reports that permission is missing, turn it off and on again, then select **Check Again**. This one-time reset can be necessary after the app's signing identity changes. The manager uses the launched Roblox process ID and the standard macOS window position and size attributes. If Roblox restores its own minimum size, the manager keeps that native size and anchors it as close as possible to the selected region. Window placement does not scale the rendered window, edit Roblox, inject code, or change Roblox settings.
 
 Batch launches show the graphics and sound choices from **Launch Defaults**. Changing a value creates a temporary override for that batch. **Use Launch Defaults** removes it. Batch launches also show the monitor and selected profiles below the **Launch Accounts** action. Moving or removing a profile creates a temporary layout for that launch. **Use Saved Arrangement** removes the window override. Launch Set settings can save their own graphics, sound, and window overrides with the set.
 

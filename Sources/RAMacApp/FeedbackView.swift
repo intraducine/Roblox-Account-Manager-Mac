@@ -98,7 +98,12 @@ struct FeedbackView: View {
             }
             .navigationTitle("Send Feedback")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                ToolbarItemGroup(placement: .cancellationAction) {
+                    if hasOpenedForm {
+                        Button("Restart Form") {
+                            showsRestartConfirmation = true
+                        }
+                    }
                     Button("Close") { dismiss() }
                         .keyboardShortcut(.cancelAction)
                 }
@@ -196,41 +201,27 @@ struct FeedbackView: View {
     }
 
     private func embeddedForm(_ url: URL) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Spacer()
-                Button("Restart Form") {
-                    showsRestartConfirmation = true
+        ZStack {
+            TallyFeedbackWebView(model: browser, url: url)
+
+            if browser.isLoading {
+                ProgressView()
+                    .controlSize(.large)
+            } else if let errorMessage = browser.errorMessage {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.secondary)
+                    Text("Feedback Form Could Not Load")
+                        .font(.title2.weight(.semibold))
+                    Text(errorMessage)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 480)
+                    Button("Try Again") { browser.reload() }
                 }
-            }
-            .padding(.horizontal, AppGeometry.windowEdgeControlInset)
-            .padding(.vertical, AppGeometry.compactInset)
-            .background(.bar)
-
-            Divider()
-
-            ZStack {
-                TallyFeedbackWebView(model: browser, url: url)
-
-                if browser.isLoading {
-                    ProgressView()
-                        .controlSize(.large)
-                } else if let errorMessage = browser.errorMessage {
-                    VStack(spacing: 12) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 28))
-                            .foregroundStyle(.secondary)
-                        Text("Feedback Form Could Not Load")
-                            .font(.title2.weight(.semibold))
-                        Text(errorMessage)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: 480)
-                        Button("Try Again") { browser.reload() }
-                    }
-                    .padding(28)
-                    .background(Color(nsColor: .windowBackgroundColor))
-                }
+                .padding(28)
+                .background(Color(nsColor: .windowBackgroundColor))
             }
         }
     }

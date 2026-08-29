@@ -340,6 +340,22 @@ final class WindowLayoutControllerTests: XCTestCase {
         XCTAssertTrue(fixture.controller.accessibilityPermissionGranted)
     }
 
+    func testPermissionGateStopsArrangementUntilAccessIsGranted() {
+        let permissionManager = TestAccessibilityPermissionManager(
+            isTrusted: false,
+            trustsAfterRequest: false
+        )
+        let fixture = makeControllerFixture(permissionManager: permissionManager)
+
+        XCTAssertFalse(fixture.controller.ensureAccessibilityPermission())
+        XCTAssertEqual(permissionManager.requestCount, 1)
+        XCTAssertFalse(fixture.controller.accessibilityPermissionGranted)
+        XCTAssertEqual(
+            fixture.controller.lastMessage,
+            "Allow Window Control in System Settings before arranging Roblox windows."
+        )
+    }
+
     private func makeControllerFixture(
         repository: MemoryWindowLayoutRepository = MemoryWindowLayoutRepository(),
         placer: RecordingWindowPlacer = RecordingWindowPlacer(),
@@ -409,16 +425,18 @@ private actor RecordingWindowPlacer: RobloxWindowPlacing {
 @MainActor
 private final class TestAccessibilityPermissionManager: AccessibilityPermissionManaging {
     var trusted: Bool
+    private let trustsAfterRequest: Bool
     private(set) var requestCount = 0
 
-    init(isTrusted: Bool) {
+    init(isTrusted: Bool, trustsAfterRequest: Bool = true) {
         trusted = isTrusted
+        self.trustsAfterRequest = trustsAfterRequest
     }
 
     func isTrusted() -> Bool { trusted }
 
     func requestAccess() {
         requestCount += 1
-        trusted = true
+        if trustsAfterRequest { trusted = true }
     }
 }

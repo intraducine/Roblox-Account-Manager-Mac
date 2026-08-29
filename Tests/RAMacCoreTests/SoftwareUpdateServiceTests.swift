@@ -270,6 +270,19 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         XCTAssertNotEqual(status, errSecSuccess)
     }
 
+    func testSigningMigrationSkipsAppsThatAlreadyUseTheCandidateIdentity() throws {
+        let requirement = try Self.designatedRequirement(at: "/usr/bin/security")
+
+        XCTAssertTrue(GitHubSoftwareUpdateService.application(
+            URL(fileURLWithPath: "/usr/bin/security"),
+            satisfies: requirement
+        ))
+        XCTAssertFalse(GitHubSoftwareUpdateService.application(
+            URL(fileURLWithPath: "/usr/bin/codesign"),
+            satisfies: requirement
+        ))
+    }
+
     func testInstallerRejectsAReplacementAfterPreparationAndRestoresCurrentApp() throws {
         let fixture = try Self.makeInstallerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.workspaceURL) }

@@ -290,7 +290,8 @@ final class AccountStoreBatchTests: XCTestCase {
                     accessibilityReferenceTop: 1000
                 )
             ),
-            placer: windowPlacer
+            placer: windowPlacer,
+            permissionManager: BatchAccessibilityPermissionManager()
         )
         let store = AccountStore(
             repository: repository,
@@ -343,7 +344,8 @@ final class AccountStoreBatchTests: XCTestCase {
                     accessibilityReferenceTop: 1000
                 )
             ),
-            placer: windowPlacer
+            placer: windowPlacer,
+            permissionManager: BatchAccessibilityPermissionManager()
         )
         windowLayout.assign(accountID: accounts[0].id, to: batchTestDisplay, region: .left)
         windowLayout.assign(accountID: accounts[1].id, to: batchTestDisplay, region: .right)
@@ -399,7 +401,8 @@ final class AccountStoreBatchTests: XCTestCase {
             ),
             placer: BatchRecordingWindowPlacer(
                 result: .failed("The game window was still starting.")
-            )
+            ),
+            permissionManager: BatchAccessibilityPermissionManager()
         )
         windowLayout.assign(accountID: accounts[0].id, to: batchTestDisplay, region: .left)
         windowLayout.assign(accountID: accounts[1].id, to: batchTestDisplay, region: .right)
@@ -444,7 +447,8 @@ final class AccountStoreBatchTests: XCTestCase {
                     accessibilityReferenceTop: 1000
                 )
             ),
-            placer: BatchRecordingWindowPlacer(result: .permissionRequired)
+            placer: BatchRecordingWindowPlacer(),
+            permissionManager: BatchAccessibilityPermissionManager(trusted: false)
         )
         windowLayout.assign(accountID: account.id, to: batchTestDisplay, region: .left)
         let store = AccountStore(
@@ -496,7 +500,8 @@ final class AccountStoreBatchTests: XCTestCase {
                     accessibilityReferenceTop: 1000
                 )
             ),
-            placer: windowPlacer
+            placer: windowPlacer,
+            permissionManager: BatchAccessibilityPermissionManager()
         )
         let store = AccountStore(
             repository: repository,
@@ -550,7 +555,8 @@ final class AccountStoreBatchTests: XCTestCase {
                     accessibilityReferenceTop: 1000
                 )
             ),
-            placer: windowPlacer
+            placer: windowPlacer,
+            permissionManager: BatchAccessibilityPermissionManager()
         )
         windowLayout.assign(accountID: account.id, to: batchTestDisplay, region: .left)
         let store = AccountStore(
@@ -2043,6 +2049,18 @@ private final class BatchMemoryWindowLayoutRepository: WindowLayoutPersisting {
 private struct BatchStaticDisplayProvider: ConnectedDisplayProviding {
     let snapshotValue: ConnectedDisplaySnapshot
     @MainActor func snapshot() -> ConnectedDisplaySnapshot { snapshotValue }
+}
+
+@MainActor
+private final class BatchAccessibilityPermissionManager: AccessibilityPermissionManaging {
+    private let trusted: Bool
+
+    init(trusted: Bool = true) {
+        self.trusted = trusted
+    }
+
+    func isTrusted() -> Bool { trusted }
+    func requestAccess() {}
 }
 
 private actor BatchRecordingWindowPlacer: RobloxWindowPlacing {

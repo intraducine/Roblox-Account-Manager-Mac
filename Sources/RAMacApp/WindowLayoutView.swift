@@ -39,6 +39,7 @@ struct InlineWindowArrangementEditor: View {
                     }
                     if !usesSavedPlacements {
                         Button("Use Saved Arrangement") {
+                            guard controller.ensureAccessibilityPermission() else { return }
                             onUseSavedPlacements()
                         }
                         .fixedSize()
@@ -54,6 +55,7 @@ struct InlineWindowArrangementEditor: View {
 
                 HStack(spacing: 8) {
                     Button("Arrange Automatically") {
+                        guard controller.ensureAccessibilityPermission() else { return }
                         guard let planned = WindowArrangementPlanner.automaticAssignments(
                             accountIDs: accountIDs,
                             displays: controller.displays
@@ -65,6 +67,7 @@ struct InlineWindowArrangementEditor: View {
                     .help(automaticArrangementHelp)
 
                     Button("Full Screen All") {
+                        guard controller.ensureAccessibilityPermission() else { return }
                         selectedAccountID = nil
                         onAssignmentsChange(
                             WindowArrangementPlanner.fullScreenAssignments(
@@ -241,6 +244,7 @@ struct InlineWindowArrangementEditor: View {
         _ display: ConnectedDisplay,
         _ region: WindowPlacementRegion
     ) {
+        guard controller.ensureAccessibilityPermission() else { return }
         var updated = assignmentDictionary.filter { existingAccountID, assignment in
             if existingAccountID == accountID { return false }
             guard assignment.displayID == display.id else { return true }
@@ -369,12 +373,14 @@ struct WindowLayoutView: View {
                         .foregroundStyle(.secondary)
                     HStack(spacing: 8) {
                         Button("Arrange Automatically") {
+                            guard controller.ensureAccessibilityPermission() else { return }
                             controller.arrangeAutomatically(accountIDs: store.accounts.map(\.id))
                         }
                         .disabled(!canArrangeAutomatically)
                         .help(automaticArrangementHelp)
 
                         Button("Full Screen All") {
+                            guard controller.ensureAccessibilityPermission() else { return }
                             controller.makeFullScreen(accountIDs: store.accounts.map(\.id))
                         }
                         .disabled(controller.displays.isEmpty || store.accounts.isEmpty)
@@ -423,6 +429,7 @@ struct WindowLayoutView: View {
                             selectedAccountID: $selectedAccountID,
                             compact: false,
                             onAssign: { accountID, display, region in
+                                guard controller.ensureAccessibilityPermission() else { return }
                                 controller.assign(accountID: accountID, to: display, region: region)
                             }
                         )
@@ -522,11 +529,13 @@ struct WindowLayoutView: View {
             Menu(display.name) {
                 ForEach(WindowPlacementRegion.windowedCases) { region in
                     Button(region.title) {
+                        guard controller.ensureAccessibilityPermission() else { return }
                         controller.assign(accountID: account.id, to: display, region: region)
                     }
                 }
                 Divider()
                 Button(WindowPlacementRegion.fullScreen.title) {
+                    guard controller.ensureAccessibilityPermission() else { return }
                     controller.assign(accountID: account.id, to: display, region: .fullScreen)
                 }
             }
