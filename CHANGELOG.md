@@ -2,41 +2,33 @@
 
 ## 1.2.2 - 2026-08-29
 
-- Skip Keychain access migration when the installed app already uses the downloaded update's verified project signing identity.
-- Check macOS Accessibility access before saving or applying a Roblox window arrangement, and open the correct System Settings pane when access is missing.
+- Reduce repeated macOS Keychain approval prompts during normal app updates.
+- Check Window Control access before saving or applying a window layout, and open the correct System Settings page when access is missing.
 - Keep **Restart Form** beside **Close** in the feedback toolbar instead of placing it in a separate bar.
 
 ## 1.2.1 - 2026-08-27
 
-- Remove an old private account Keychain through macOS before recreating it, so retries do not fail with a duplicate name. Report cleanup errors and reject links to other Keychains.
-- Block managed launches until the Roblox app in Applications matches Roblox's current Mac release. Stop before copying or changing settings if the version cannot be checked.
-- Close installer helpers from managed copies during launch cleanup and Stop, without closing unrelated installers.
+- Fix private account repair when macOS reports that a Keychain with the same name already exists.
+- Stop a managed launch when Roblox needs an update, before the manager copies or changes the app.
+- Close leftover Roblox installer tasks without closing unrelated installers.
 
 ## 1.2.0 - 2026-08-23
 
 - Add Launch Defaults for Roblox graphics quality, volume, and saved window placement.
-- Let batch launches use one-launch graphics and sound overrides, and let Launch Sets save their own overrides.
-- Apply graphics and volume through Roblox's current shared settings file while preserving settings the manager does not control.
+- Let batch launches and Launch Sets use their own graphics, sound, and window choices.
+- Keep Roblox settings that the manager does not control.
 - Prevent overlapping single, batch, player, and app launches from starting duplicate clients or showing false failure alerts.
-- Keep all three version parts when the updater matches release files, including versions such as 1.2.0.
-- Keep failed friend-relay Launch Set overrides ready for retry and clear them after a complete launch.
-- Replace the feedback form details bar with one clear **Restart Form** action.
-- Rename **Arrange Windows** to **Launch Defaults** and align its launch controls with the existing action column.
+- Keep failed friend-relay launch choices ready for another try.
+- Add one clear **Restart Form** action to the feedback form.
+- Rename **Arrange Windows** to **Launch Defaults**.
 
 ## 1.1.3 - 2026-08-23
 
-- Recover Launch Sets, recent games, private servers, and active launch records from one valid backup generation instead of silently treating damaged JSON as empty.
-- Make strict Swift concurrency checks pass for WebKit navigation policy, image caching, Accessibility placement, and concurrent batch launches.
-- Use `VERSION` as the app version source and derive runtime network headers from the packaged app bundle.
-- Add macOS CI, universal packaged-app smoke checks, and durable privacy-safe design captures.
-- Remove repeated friend-relay launch and confirmation code without changing relay behavior.
-- Keep the anonymous project certificate and explain the safe first-launch process.
-- Reject duplicate account identities before metadata import.
-- Restrict external browser handoffs to secure web addresses.
-- Preserve isolated account data when rebuilding the advanced fallback app.
-- Bind each launch ticket to the verified live Roblox process and reject descendant symbolic links.
-- Move reusable private-server invite links and their backup generations from JSON into macOS Keychain.
-- Remove local absolute paths from release-script output and visible personal attribution from app metadata.
+- Recover Launch Sets, recent games, private servers, and active launches from a backup when saved data is damaged.
+- Keep reusable private-server links in macOS Keychain instead of normal app files.
+- Reject duplicate accounts during an import.
+- Open outside links only when they use a secure web address.
+- Keep isolated account data when rebuilding the advanced fallback app.
 
 ## 1.1.2 - 2026-08-18
 

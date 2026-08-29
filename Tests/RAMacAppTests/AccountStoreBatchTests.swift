@@ -333,9 +333,10 @@ final class AccountStoreBatchTests: XCTestCase {
         for account in accounts { try vault.save("cookie-\(account.userID)", for: account.id) }
         let launcher = BatchMockLauncher(
             failingAccountID: nil,
-            launchDelaysByAccountID: [accounts[1].id: 700_000_000]
+            blockedAccountIDs: [accounts[1].id]
         )
-        let windowPlacer = BatchRecordingWindowPlacer()
+        let firstPlacement = expectation(description: "The first Roblox window is placed")
+        let windowPlacer = BatchRecordingWindowPlacer(onPlace: { firstPlacement.fulfill() })
         let windowLayout = WindowLayoutController(
             repository: BatchMemoryWindowLayoutRepository(),
             displayProvider: BatchStaticDisplayProvider(
@@ -365,11 +366,12 @@ final class AccountStoreBatchTests: XCTestCase {
                 skipHealthPreflight: true
             )
         }
-        try await Task.sleep(nanoseconds: 250_000_000)
+        await fulfillment(of: [firstPlacement], timeout: 2)
 
         let earlyRequests = await windowPlacer.recordedRequests()
         XCTAssertEqual(earlyRequests.count, 1)
 
+        await launcher.releaseBlockedLaunch(for: accounts[1].id)
         await launchTask.value
         let finalRequests = await windowPlacer.recordedRequests()
         XCTAssertEqual(finalRequests.count, 2)
@@ -1939,6 +1941,9 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     private let failingAccountID: UUID?
     private let launchDelayNanoseconds: UInt64
     private let launchDelaysByAccountID: [UUID: UInt64]
+    private let blockedAccountIDs: Set<UUID>
+    private var pendingBlockedLaunches: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private var releasedBlockedAccountIDs = Set<UUID>()
     private var attempted = Set<UUID>()
     private var orderedAttempts: [UUID] = []
     private var modes = Set<RobloxLaunchMode>()
@@ -1951,11 +1956,13 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     init(
         failingAccountID: UUID?,
         launchDelayNanoseconds: UInt64 = 0,
-        launchDelaysByAccountID: [UUID: UInt64] = [:]
+        launchDelaysByAccountID: [UUID: UInt64] = [:],
+        blockedAccountIDs: Set<UUID> = []
     ) {
         self.failingAccountID = failingAccountID
         self.launchDelayNanoseconds = launchDelayNanoseconds
         self.launchDelaysByAccountID = launchDelaysByAccountID
+        self.blockedAccountIDs = blockedAccountIDs
     }
 
     func launch(
@@ -1970,6 +1977,9 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
         launchSettings.append(settings)
         urls.append(url)
         if accountID == failingAccountID { throw RobloxLaunchError.openFailed }
+        if blockedAccountIDs.contains(accountID), releasedBlockedAccountIDs.remove(accountID) == nil {
+            await withCheckedContinuation { pendingBlockedLaunches[accountID] = $0 }
+        }
         let delay = launchDelaysByAccountID[accountID] ?? launchDelayNanoseconds
         if delay > 0 {
             try await Task.sleep(nanoseconds: delay)
@@ -2025,6 +2035,14 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     func batchStopRequestCount() -> Int { batchStopRequests.count }
 
     func processIdentifiersByAccount() -> [UUID: Int32] { processIdentifiers }
+
+    func releaseBlockedLaunch(for accountID: UUID) {
+        if let continuation = pendingBlockedLaunches.removeValue(forKey: accountID) {
+            continuation.resume()
+        } else {
+            releasedBlockedAccountIDs.insert(accountID)
+        }
+    }
 }
 
 private var batchTestDisplay: ConnectedDisplay {
@@ -2070,13 +2088,19 @@ private actor BatchRecordingWindowPlacer: RobloxWindowPlacing {
     }
     private var requests: [Request] = []
     private let result: WindowPlacementResult
+    private let onPlace: @Sendable () -> Void
 
-    init(result: WindowPlacementResult = .placed) {
+    init(
+        result: WindowPlacementResult = .placed,
+        onPlace: @escaping @Sendable () -> Void = {}
+    ) {
         self.result = result
+        self.onPlace = onPlace
     }
 
     func place(processIdentifier: Int32, request: RobloxWindowPlacementRequest) async -> WindowPlacementResult {
         requests.append(Request(processIdentifier: processIdentifier, request: request))
+        if requests.count == 1 { onPlace() }
         return result
     }
 
