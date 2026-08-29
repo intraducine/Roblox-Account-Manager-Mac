@@ -190,7 +190,7 @@ final class AccountStoreBatchTests: XCTestCase {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        _ = fixture.store.createGroup("Favorites", addingTo: fixture.accounts[0].id)
+        _ = fixture.store.createGroup("Favorites", addingTo: [fixture.accounts[0].id])
         let updated = try XCTUnwrap(fixture.store.accounts.first(where: { $0.id == fixture.accounts[0].id }))
         XCTAssertTrue(updated.belongs(to: "Wave"))
         XCTAssertTrue(updated.belongs(to: "Favorites"))
@@ -199,11 +199,22 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(fixture.store.batchSelectedIDs, [fixture.accounts[0].id])
     }
 
+    func testCreatingGroupAddsEverySelectedAccountAndPersistsMemberships() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let selectedIDs = Set(fixture.accounts.map(\.id))
+
+        _ = fixture.store.createGroup("Favorites", addingTo: selectedIDs)
+
+        let savedMembers = try fixture.repository.load().filter { $0.belongs(to: "Favorites") }
+        XCTAssertEqual(Set(savedMembers.map(\.id)), selectedIDs)
+    }
+
     func testDeletingGroupKeepsAccountsAndRemovesOnlyMembershipReferences() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        _ = fixture.store.createGroup("Favorites", addingTo: fixture.accounts[0].id)
+        _ = fixture.store.createGroup("Favorites", addingTo: [fixture.accounts[0].id])
         fixture.store.saveLaunchSet(LaunchSet(
             name: "Favorites Set",
             groupNames: ["Favorites", "Wave"],

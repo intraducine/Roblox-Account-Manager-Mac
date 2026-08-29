@@ -575,7 +575,7 @@ final class AccountStore: ObservableObject {
     }
 
     @discardableResult
-    func createGroup(_ rawName: String, addingTo accountID: UUID? = nil) -> String? {
+    func createGroup(_ rawName: String, addingTo accountIDs: Set<UUID> = []) -> String? {
         let cleanName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanName.isEmpty else {
             notice = Notice(title: "Enter a group name", message: "A group name cannot be empty.")
@@ -587,14 +587,13 @@ final class AccountStore: ObservableObject {
         if !groups.contains(where: { $0.caseInsensitiveCompare(groupName) == .orderedSame }) {
             groups = ManagedAccount.normalizedGroups(groups + [groupName])
         }
-        if let accountID,
-           let index = accounts.firstIndex(where: { $0.id == accountID }),
-           !accounts[index].belongs(to: groupName) {
+        for index in accounts.indices where accountIDs.contains(accounts[index].id) {
+            guard !accounts[index].belongs(to: groupName) else { continue }
             accounts[index].groups = ManagedAccount.normalizedGroups(accounts[index].groups + [groupName])
         }
         do {
             try repository.saveGroups(groups)
-            if accountID != nil { try saveAccounts(accounts) }
+            if !accountIDs.isEmpty { try saveAccounts(accounts) }
             launchStatus = "Group saved"
             return groupName
         } catch {

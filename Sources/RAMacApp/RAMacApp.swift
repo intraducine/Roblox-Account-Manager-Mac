@@ -91,6 +91,8 @@ struct RAMacApp: App {
                     .dismissTextInputOnOutsideClick()
             }
         }
+        .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified)
         .defaultSize(width: 1050, height: 760)
     }
 }

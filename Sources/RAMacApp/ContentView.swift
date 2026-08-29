@@ -94,6 +94,7 @@ struct ContentView: View {
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
                 }
+                .menuIndicator(.hidden)
             }
         }
         .sheet(isPresented: $showsLicense) {
@@ -148,11 +149,10 @@ struct ContentView: View {
         .sheet(isPresented: $showsNewGroup) {
             NewGroupSheet(
                 name: $newGroupName,
-                message: newGroupAccountID == nil
-                    ? "Create a group. You can add each account to one or more groups."
-                    : "Create a group and add this account to it.",
+                message: newGroupMessage,
                 onCreate: {
-                    _ = store.createGroup(newGroupName, addingTo: newGroupAccountID)
+                    let accountIDs = newGroupAccountID.map { Set([$0]) } ?? store.batchSelectedIDs
+                    _ = store.createGroup(newGroupName, addingTo: accountIDs)
                     newGroupName = ""
                     newGroupAccountID = nil
                     showsNewGroup = false
@@ -373,6 +373,16 @@ struct ContentView: View {
     private var visibleAccounts: [ManagedAccount] {
         guard let selectedGroupFilter else { return store.filteredAccounts }
         return store.filteredAccounts.filter { $0.belongs(to: selectedGroupFilter) }
+    }
+
+    private var newGroupMessage: String {
+        if newGroupAccountID != nil {
+            return "Create a group and add this account to it."
+        }
+        if !store.batchSelectedIDs.isEmpty {
+            return "Create a group and add the selected accounts to it."
+        }
+        return "Create a group. You can add each account to one or more groups."
     }
 
     @ViewBuilder

@@ -8,6 +8,13 @@ struct AccountWebsiteWindow: View {
     let request: AccountWebsiteRequest
     @StateObject private var model = AccountWebSessionModel()
     @State private var hasLoaded = false
+    @State private var selectedDestination: AccountWebsiteDestination
+
+    init(store: AccountStore, request: AccountWebsiteRequest) {
+        self.store = store
+        self.request = request
+        _selectedDestination = State(initialValue: request.destination)
+    }
 
     private var account: ManagedAccount? {
         store.accounts.first(where: { $0.id == request.accountID })
@@ -152,11 +159,18 @@ struct AccountWebsiteWindow: View {
                 .disabled(!model.canGoForward)
             Button("Reload", systemImage: "arrow.clockwise") { model.reload() }
         }
-        ToolbarItemGroup(placement: .primaryAction) {
-            Button("Home") { model.load(.home) }
-            Button("Profile") { model.load(.profile) }
-            Button("Settings") { model.load(.settings) }
-            Button("Security") { model.load(.security) }
+        ToolbarItem(placement: .primaryAction) {
+            Picker("Roblox website section", selection: $selectedDestination) {
+                Text("Home").tag(AccountWebsiteDestination.home)
+                Text("Profile").tag(AccountWebsiteDestination.profile)
+                Text("Settings").tag(AccountWebsiteDestination.settings)
+                Text("Security").tag(AccountWebsiteDestination.security)
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .onChange(of: selectedDestination) { model.load($0) }
+        }
+        ToolbarItem(placement: .primaryAction) {
             Button("Close") {
                 synchronizeAndClear(account)
                 dismiss()

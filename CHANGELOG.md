@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.3 - 2026-08-29
+
+- Add selected accounts to a new group so its filter shows the expected accounts.
+- Make account website windows match the main app toolbar more closely.
+- Remove the extra arrow beside the More menu icon.
+
 ## 1.2.2 - 2026-08-29
 
 - Reduce repeated macOS Keychain approval prompts during normal app updates.

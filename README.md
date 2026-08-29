@@ -87,7 +87,7 @@ The app stores all saved Roblox sessions inside one Keychain item. Version 1.0.2
 
 The managed Roblox website window keeps top-level browsing on `roblox.com`. Its temporary Roblox session cookie is secure and HTTP-only. Secure frames used inside Roblox pages can load without an external-link warning, and they do not receive the Roblox session cookie. A real link to another site asks before it opens in the default browser and names the destination.
 
-You can give one account an alias, an encrypted profile note, and several groups. These fields do not change the Roblox account. Delete a group from the group menu when you no longer need it. The accounts in that group stay saved. Profile notes use a separate macOS Keychain item. Existing plain-text notes move into Keychain and are removed from the account file and its backup when the updated app first loads them.
+You can give one account an alias, an encrypted profile note, and several groups. These fields do not change the Roblox account. If you select accounts with the sidebar checkboxes before you create a group, the app adds those accounts to the new group. Delete a group from the group menu when you no longer need it. The accounts in that group stay saved. Profile notes use a separate macOS Keychain item. Existing plain-text notes move into Keychain and are removed from the account file and its backup when the updated app first loads them.
 
 ## Update the app
 
