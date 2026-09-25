@@ -56,7 +56,7 @@ The app fills the Place ID after you choose a game. The number remains available
 ## Build from source
 
 ```sh
-git clone <repository-url>
+git clone https://github.com/intraducine/Roblox-Account-Manager-Mac
 cd roblox-account-maneger-mac
 swift test
 RAM_ALLOW_AD_HOC_BUILD=1 ./scripts/build-app.sh
