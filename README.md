@@ -1,5 +1,11 @@
 # Roblox Account Manager for Mac
 
+![macOS](https://img.shields.io/badge/macOS-supported-black?style=for-the-badge&logo=apple)
+![Release](https://img.shields.io/github/v/release/intraducine/Roblox-Account-Manager-Mac?style=for-the-badge)
+![Downloads](https://img.shields.io/github/downloads/intraducine/Roblox-Account-Manager-Mac/total?style=for-the-badge)
+![Stars](https://img.shields.io/github/stars/intraducine/Roblox-Account-Manager-Mac?style=for-the-badge)
+![License](https://img.shields.io/github/license/intraducine/Roblox-Account-Manager-Mac?style=for-the-badge)
+
 A native SwiftUI app for running several Roblox accounts on one Mac. It saves each Roblox session in macOS Keychain and launches a separate unchanged copy of the installed Roblox app for each managed account.
 
 This project is independent. Roblox Corporation does not make or approve it. Use only accounts that you own or have permission to use.
