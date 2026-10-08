@@ -81,14 +81,15 @@ public actor DiagnosticService {
             : DiagnosticCheck(id: "roblox-installed", title: "Roblox installation", status: .failed, message: "Install Roblox in Applications."))
 
         if fileManager.fileExists(atPath: robloxURL.path) {
-            let signatureOK = runCommand("/usr/bin/codesign", ["--verify", "--deep", "--strict", robloxURL.path])
-            let details = commandOutput("/usr/bin/codesign", ["-dv", "--verbose=4", robloxURL.path])
-            let teamOK = details.contains("TeamIdentifier=\(ParallelRobloxLauncher.officialTeamIdentifier)")
+            let signatureOK = runCommand(
+                "/usr/bin/codesign",
+                ParallelRobloxLauncher.officialVerificationArguments(for: robloxURL)
+            )
             checks.append(DiagnosticCheck(
                 id: "roblox-signature",
                 title: "Roblox signature",
-                status: signatureOK && teamOK ? .passed : .failed,
-                message: signatureOK && teamOK
+                status: signatureOK ? .passed : .failed,
+                message: signatureOK
                     ? "The installed app has the expected Roblox Corporation signature."
                     : "The installed app did not pass the expected signature check."
             ))
@@ -138,7 +139,10 @@ public actor DiagnosticService {
         let prepared = preparedUnmodifiedCopies(in: directory.appendingPathComponent("Instances"))
         let preparedOK = prepared.allSatisfy {
             runCommand("/usr/bin/diff", ["-rq", robloxURL.path, $0.path])
-                && runCommand("/usr/bin/codesign", ["--verify", "--deep", "--strict", $0.path])
+                && runCommand(
+                    "/usr/bin/codesign",
+                    ParallelRobloxLauncher.officialVerificationArguments(for: $0)
+                )
         }
         checks.append(DiagnosticCheck(
             id: "prepared-copies",
@@ -211,19 +215,5 @@ public actor DiagnosticService {
         process.standardError = FileHandle.nullDevice
         do { try process.run(); process.waitUntilExit(); return process.terminationStatus == 0 }
         catch { return false }
-    }
-
-    private func commandOutput(_ path: String, _ arguments: [String]) -> String {
-        let process = Process()
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = arguments
-        process.standardOutput = pipe
-        process.standardError = pipe
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        } catch { return "" }
     }
 }

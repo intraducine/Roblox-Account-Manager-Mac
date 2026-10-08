@@ -1,5 +1,7 @@
 # Implementation plan
 
+Current maintenance release: **1.2.4**. See the [user guide](USER_GUIDE.md) for use and the [development guide](DEVELOPMENT.md) for build and release checks. The dated phases below remain development history.
+
 ## Product job
 
 Give a Mac user one clear place to store their own Roblox account sessions and keep different accounts running in separate Roblox clients at the same time.
@@ -21,13 +23,13 @@ The app uses standard macOS structure and controls. It follows the system appear
 
 - Every manager launch uses a separate, unchanged copy of the installed Roblox app.
 - The first managed account also uses a separate copy. A second account can start later without closing it.
-- Opening `/Applications/Roblox.app` is outside the manager.
+- An old installed Roblox version blocks a managed launch. When no Roblox player is running, the manager verifies and opens the normal Roblox app once to let it update. The user quits Roblox and retries after the update.
 - The optional advanced fallback changes and signs each copied app again. It stays off unless the user accepts the risk warning.
 - A Place ID selects the experience or place.
 - The server chooser can let Roblox choose, browse public servers, or use a player target that Roblox reports.
 - Advanced options accept an existing Job ID or a supported private server link.
 - Saved Roblox sessions use the `sessions-v2` Keychain item.
-- Release builds use an installed stable Apple signing identity when one is available. This keeps Keychain access after app updates.
+- Release builds require the pinned project signing identity and project update signature. Ad hoc builds are for local checks only.
 - If macOS blocks the older ad hoc Keychain item, the app keeps all non-secret account details and lets each affected account sign in once.
 - The app checks for a newer final public GitHub release when it opens, shows an action notice, and lets users browse every final release description.
 - The updater can verify the ZIP and app identity, install an approved update, and restart.
@@ -227,6 +229,14 @@ The phases below record how the product was built. They are not current usage in
 - Let Launch Sets save their own graphics and sound override and use it for direct and friend-relay launches.
 - Prevent overlapping launch requests from starting duplicate clients or reporting a failed launch while another request succeeds.
 - Replace the loaded feedback form details bar with one **Restart Form** action.
+
+### Phase 17: version 1.2.4 maintenance
+
+- Try Roblox's own update path when the installed version is out of date. Leave running games alone and check the version again on retry.
+- Keep version, signature, and isolated-copy checks before managed launch preparation.
+- Use the same Roblox signature requirement in Diagnostics and the launcher.
+- Keep both architecture checks working on `lipo` versions that accept only one architecture per check.
+- Keep the README short and move detailed use and build steps into separate guides.
 
 ### Not planned without further research
 

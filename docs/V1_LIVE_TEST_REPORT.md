@@ -1,8 +1,22 @@
 # Release verification report
 
-Latest update: August 27, 2026
+Latest update: October 7, 2026
 
 This report uses saved account labels only. It does not contain usernames, cookies, private links, launch tickets, or personal account IDs.
+
+## Version 1.2.4 local verification
+
+- The parallel source suite reports 231 cases and zero failures. A separate serial run confirms seven explicit integration skips and zero failures.
+- Tests confirm that an old Roblox version triggers one update attempt for a batch, leaves managed launch blocked, and allows a fresh check on retry. Invalid or unavailable versions do not trigger an update attempt.
+- A process test confirms that a running managed Roblox player blocks the update attempt and stays open until an explicit stop action.
+- The strict concurrency build has no concurrency warnings. The release build, shell syntax, and whitespace checks pass.
+- The ad hoc packaged-app smoke test passes for version 1.2.4 build 124. The exact project-signed archive app also opens with empty temporary storage.
+- A pointer check confirms that the main window opens Add Account and that Close returns to the main window. No account was entered or saved during this check.
+- The final package passes strict code-signature validation, both architecture checks, archive layout, checksum, and project update-signature verification. Its certificate matches the pin in a fresh public version 1.2.3 download.
+- Source, archive, extracted app, executable strings, symbols, and signing metadata were checked before publication. Test values and public code patterns were classified separately from private data.
+- No saved Roblox account was launched and no live Roblox update was run. These checks do not prove that an update fixes an unknown Roblox crash.
+
+See the [user guide](USER_GUIDE.md) for launch recovery and manual update steps. The public asset and updater transition checks run after release publication.
 
 ## Version 1.2.1 candidate verification
 

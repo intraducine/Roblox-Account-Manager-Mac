@@ -42,7 +42,9 @@ fi
 
 /usr/bin/plutil -lint "$app_path/Contents/Info.plist"
 /usr/bin/codesign --verify --deep --strict "$app_path"
-/usr/bin/lipo "$binary_path" -verify_arch arm64 x86_64
+for architecture in arm64 x86_64; do
+    /usr/bin/lipo "$binary_path" -verify_arch "$architecture"
+done
 
 /usr/bin/open -n -F \
     --stdout "$smoke_dir/app.log" \

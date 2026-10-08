@@ -16,6 +16,20 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertEqual(arguments.last, appURL.path)
     }
 
+    func testOfficialSignatureRequirementRejectsOtherSignedExecutables() throws {
+        let codesignURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        let executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        _ = try ParallelRobloxLauncher.collectCommandOutput(
+            executable: codesignURL,
+            arguments: ["--verify", "--strict", executableURL.path]
+        )
+
+        XCTAssertThrowsError(try ParallelRobloxLauncher.collectCommandOutput(
+            executable: codesignURL,
+            arguments: ParallelRobloxLauncher.officialVerificationArguments(for: executableURL)
+        ))
+    }
+
     func testCommandOutputLargerThanAPipeBufferDoesNotDeadlock() throws {
         let output = try ParallelRobloxLauncher.collectCommandOutput(
             executable: URL(fileURLWithPath: "/usr/bin/jot"),
@@ -644,6 +658,14 @@ final class RobloxLauncherTests: XCTestCase {
             processIdentifier: unrelated.processIdentifier, expectedPath: outside.path
         ))
 
+        do {
+            try await launcher.verifyRobloxIsStoppedForUpdate()
+            XCTFail("An update must not open while a managed player is running.")
+        } catch {
+            XCTAssertEqual(error as? RobloxLaunchError, .robloxUpdateRequired)
+        }
+        XCTAssertTrue(processes.allSatisfy(\.isRunning))
+
         let startedAt = Date()
         let stopped = await launcher.stop(accountIDs: accountIDs)
         let elapsed = Date().timeIntervalSince(startedAt)
@@ -680,7 +702,7 @@ final class RobloxLauncherTests: XCTestCase {
                 _ = await launcher.stop(accountID: accountID)
                 XCTFail("An outdated Roblox copy must not launch.")
             } catch {
-                XCTAssertEqual(error as? RobloxLaunchError, .robloxUpdateRequired)
+                XCTAssertTrue([.robloxUpdateRequired, .robloxUpdateOpened].contains(error as? RobloxLaunchError))
             }
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))

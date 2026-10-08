@@ -172,6 +172,56 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         ))
     }
 
+    func testApplicationValidationRequiresBothArchitecturesBeforeCheckingTheSigner() throws {
+        let fixture = try Self.makeInstallerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspaceURL) }
+        let contentsURL = fixture.prepared.applicationURL.appendingPathComponent("Contents")
+        let executableURL = contentsURL.appendingPathComponent("MacOS/TestApp")
+        let sourceURL = fixture.workspaceURL.appendingPathComponent("TestApp.c")
+        try FileManager.default.createDirectory(
+            at: executableURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("int main(void) { return 0; }\n".utf8).write(to: sourceURL)
+        let info: [String: Any] = [
+            "CFBundleIdentifier": GitHubSoftwareUpdateService.bundleIdentifier,
+            "CFBundleExecutable": "TestApp",
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": fixture.prepared.release.version.description
+        ]
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: contentsURL.appendingPathComponent("Info.plist"))
+        XCTAssertEqual(Self.run("/usr/bin/xcrun", [
+            "clang", "-arch", "arm64", "-arch", "x86_64", sourceURL.path, "-o", executableURL.path
+        ]), 0)
+
+        let service = makeService()
+        XCTAssertThrowsError(try service.validateApplication(
+            fixture.prepared.applicationURL,
+            release: fixture.prepared.release,
+            currentApplicationURL: fixture.currentURL
+        )) { error in
+            XCTAssertEqual(error as? SoftwareUpdateError, .wrongSigningIdentity)
+        }
+
+        let universalData = try Data(contentsOf: executableURL)
+        let thinURL = fixture.workspaceURL.appendingPathComponent("ThinApp")
+        for architecture in ["arm64", "x86_64"] {
+            try universalData.write(to: executableURL)
+            XCTAssertEqual(Self.run("/usr/bin/lipo", [
+                executableURL.path, "-thin", architecture, "-output", thinURL.path
+            ]), 0)
+            try Data(contentsOf: thinURL).write(to: executableURL)
+            XCTAssertThrowsError(try service.validateApplication(
+                fixture.prepared.applicationURL,
+                release: fixture.prepared.release,
+                currentApplicationURL: fixture.currentURL
+            )) { error in
+                XCTAssertEqual(error as? SoftwareUpdateError, .invalidApplication)
+            }
+        }
+    }
+
     func testCurrentApplicationMetadataMustRemainInsideItsValidSignature() throws {
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("RAMac-Signed-App-Test-\(UUID().uuidString)", isDirectory: true)

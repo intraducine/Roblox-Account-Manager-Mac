@@ -10,6 +10,7 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
     case robloxNotInstalled
     case untrustedRobloxInstallation
     case robloxUpdateRequired
+    case robloxUpdateOpened
     case robloxUpdateCheckFailed
     case accountAlreadyRunning
     case officialParallelUnavailable
@@ -32,6 +33,8 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
             return "The Roblox app in Applications does not have a valid Roblox Corporation signature. Reinstall Roblox before using parallel launch."
         case .robloxUpdateRequired:
             return "Update Roblox in Applications before launching managed accounts. Stop all managed Roblox clients. Open /Applications/Roblox.app and let it update. Then quit Roblox and try again."
+        case .robloxUpdateOpened:
+            return "Roblox was opened to check for updates. Let it finish, quit Roblox, then try again. If Roblox still closes or does not update, start a game from roblox.com to update it. No managed copy was started."
         case .robloxUpdateCheckFailed:
             return "The current Roblox version could not be checked. Check your connection and try again. No managed copy was started."
         case .accountAlreadyRunning:
@@ -286,6 +289,8 @@ public actor ParallelRobloxLauncher {
     private let robloxSettingsDirectory: URL
     private let versionClient: RobloxAPIClient
     private var officialLaunchInProgress = false
+    private var officialUpdateOpening = false
+    private var officialUpdateOpened = false
 
     public init(
         fileManager: FileManager = .default,
@@ -353,7 +358,9 @@ public actor ParallelRobloxLauncher {
         // Check before creating a copy or changing settings. An old copy can
         // start its own installer and leave the managed launch path.
         if mode != .official {
-            try await verifyCurrentOfficialVersion(at: Self.officialApplicationURL)
+            try await verifyCurrentOfficialVersion(at: Self.officialApplicationURL) {
+                try await self.openOfficialApplicationForUpdate()
+            }
         }
         try Task.checkCancellation()
         try ensureManagedRootsAreSafe(for: accountID)
@@ -602,10 +609,14 @@ public actor ParallelRobloxLauncher {
     }
 
     private func runningProcessTable() -> [Int32: String] {
-        guard let output = try? run(
+        (try? checkedRunningProcessTable()) ?? [:]
+    }
+
+    private func checkedRunningProcessTable() throws -> [Int32: String] {
+        let output = try run(
             executable: URL(fileURLWithPath: "/bin/ps"),
             arguments: ["-axo", "pid=,stat=,comm="]
-        ) else { return [:] }
+        )
         var table: [Int32: String] = [:]
         for line in output.split(separator: "\n") {
             let fields = line.split(maxSplits: 2, whereSeparator: { $0.isWhitespace })
@@ -1289,7 +1300,10 @@ public actor ParallelRobloxLauncher {
         }
     }
 
-    func verifyCurrentOfficialVersion(at applicationURL: URL) async throws {
+    func verifyCurrentOfficialVersion(
+        at applicationURL: URL,
+        attemptUpdate: (@Sendable () async throws -> Void)? = nil
+    ) async throws {
         let currentVersion: String
         do {
             currentVersion = try await versionClient.currentMacPlayerVersion()
@@ -1300,12 +1314,61 @@ public actor ParallelRobloxLauncher {
         // Read after the request in case the main app finished an update while waiting.
         let data = try Data(contentsOf: applicationURL.appendingPathComponent("Contents/Info.plist"))
         let info = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
-        guard let installedVersion = info?["CFBundleShortVersionString"] as? String else {
+        guard let installedVersion = info?["CFBundleShortVersionString"] as? String,
+              installedVersion.range(of: #"^[0-9]+(?:\.[0-9]+){3}\z"#, options: .regularExpression) != nil else {
             throw RobloxLaunchError.copyFailed("The installed Roblox version could not be read.")
         }
         guard installedVersion == currentVersion else {
-            throw RobloxLaunchError.robloxUpdateRequired
+            guard let attemptUpdate else { throw RobloxLaunchError.robloxUpdateRequired }
+            while officialUpdateOpening {
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            try Task.checkCancellation()
+            if !officialUpdateOpened {
+                officialUpdateOpening = true
+                defer { officialUpdateOpening = false }
+                try await attemptUpdate()
+                officialUpdateOpened = true
+            }
+            throw RobloxLaunchError.robloxUpdateOpened
         }
+        officialUpdateOpened = false
+    }
+
+    private func openOfficialApplicationForUpdate() async throws {
+        try verifyOfficialApplication()
+        try verifyRobloxIsStoppedForUpdate()
+        try Task.checkCancellation()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Task { @MainActor in
+                let configuration = NSWorkspace.OpenConfiguration()
+                configuration.allowsRunningApplicationSubstitution = false
+                configuration.addsToRecentItems = false
+                configuration.activates = true
+                NSWorkspace.shared.openApplication(
+                    at: Self.officialApplicationURL,
+                    configuration: configuration
+                ) { application, error in
+                    if error != nil || application == nil {
+                        continuation.resume(throwing: RobloxLaunchError.openFailed)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        }
+    }
+
+    func verifyRobloxIsStoppedForUpdate() throws {
+        let officialExecutable = canonicalPath(
+            Self.officialApplicationURL.appendingPathComponent("Contents/MacOS/RobloxPlayer").path
+        )
+        let managedRoot = canonicalPath(instancesRoot.path) + "/"
+        let hasRunningPlayer = try checkedRunningProcessTable().values.contains { path in
+            path == officialExecutable
+                || (path.hasPrefix(managedRoot) && URL(fileURLWithPath: path).lastPathComponent == "RobloxPlayer")
+        }
+        guard !hasRunningPlayer else { throw RobloxLaunchError.robloxUpdateRequired }
     }
 
     private func codeSigningDetails(at applicationURL: URL) throws -> String {

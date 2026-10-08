@@ -1,6 +1,16 @@
 # Design QA
 
-Latest check: August 23, 2026
+Latest check: October 7, 2026
+
+## Version 1.2.4 check
+
+- The ad hoc smoke test and the exact project-signed archive app opened version 1.2.4 with empty temporary storage.
+- The signed main window and Add Account window were checked with a real pointer. Add Account opened the sign-in window, Save This Account stayed disabled, and Close returned to the main window.
+- Text and controls had clear margins and no clipped edges in the checked windows. The empty-state content and its action shared one center line.
+- No account was entered or saved. No Keychain approval was granted during the UI review.
+- This release changes launch recovery messages and checks. It keeps the native layout and controls.
+
+The captures below remain the August 23 reference images. They are not new version 1.2.4 captures. See the [user guide](docs/USER_GUIDE.md) for current actions and the [verification report](docs/V1_LIVE_TEST_REPORT.md) for the check scope.
 
 ## Reproducible check
 

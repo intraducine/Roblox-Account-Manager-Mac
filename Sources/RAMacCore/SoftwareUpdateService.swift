@@ -351,11 +351,13 @@ public final class GitHubSoftwareUpdateService: NSObject, @unchecked Sendable {
               fileManager.isExecutableFile(
                 atPath: candidateURL.appendingPathComponent("Contents/MacOS/\(executableName)").path
               ),
-              Self.run(
-                "/usr/bin/lipo",
-                [candidateURL.appendingPathComponent("Contents/MacOS/\(executableName)").path,
-                 "-verify_arch", "arm64", "x86_64"]
-              ) else {
+              ["arm64", "x86_64"].allSatisfy({ architecture in
+                  Self.run(
+                      "/usr/bin/lipo",
+                      [candidateURL.appendingPathComponent("Contents/MacOS/\(executableName)").path,
+                       "-verify_arch", architecture]
+                  )
+              }) else {
             throw SoftwareUpdateError.invalidApplication
         }
         do {

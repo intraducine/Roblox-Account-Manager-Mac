@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.4 - 2026-10-07
+
+Version 1.2.4 helps Roblox update before you retry a launch.
+
+### What changed
+
+- Open Roblox to try an update when its installed version is out of date.
+- Fix app updates that can stop with a false compatibility error.
+- Make Diagnostics check Roblox the same way as a launch.
+- Shorten the README and add guides for setup, use, and troubleshooting.
+
+### Before you update
+
+If an older manager reports that the downloaded app has the wrong name, version, identifier, or processor support, install this release ZIP manually. Move the extracted app to Applications and replace the old manager.
+
 ## 1.2.3 - 2026-08-29
 
 - Add selected accounts to a new group so its filter shows the expected accounts.

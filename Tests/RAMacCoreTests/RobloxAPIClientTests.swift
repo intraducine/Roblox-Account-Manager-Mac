@@ -25,8 +25,8 @@ final class RobloxAPIClientTests: XCTestCase {
         let current = #"{"version":"0.736.0.7361346"}"#
         let cases: [(String, String, Int?, RobloxLaunchError?)] = [
             ("0.736.0.7361346", current, 200, nil),
-            ("0.735.0.7351131", current, 200, .robloxUpdateRequired),
-            ("0.737.0.7370000", current, 200, .robloxUpdateRequired),
+            ("0.735.0.7351131", current, 200, .robloxUpdateOpened),
+            ("0.737.0.7370000", current, 200, .robloxUpdateOpened),
             ("0.736.0.7361346", current, 503, .robloxUpdateCheckFailed),
             ("0.736.0.7361346", "{}", 200, .robloxUpdateCheckFailed),
             ("0.736.0.7361346", #"{"version":"not-a-version"}"#, 200, .robloxUpdateCheckFailed),
@@ -48,14 +48,87 @@ final class RobloxAPIClientTests: XCTestCase {
                 return Self.response(request: request, status: status, body: body)
             }
             let launcher = ParallelRobloxLauncher(versionClient: client)
+            let attempts = UpdateAttemptCounter()
             do {
-                try await launcher.verifyCurrentOfficialVersion(at: contents.deletingLastPathComponent())
+                try await launcher.verifyCurrentOfficialVersion(at: contents.deletingLastPathComponent()) {
+                    await attempts.open()
+                }
                 XCTAssertNil(expectedError)
             } catch {
                 XCTAssertNotNil(expectedError)
                 XCTAssertEqual(error as? RobloxLaunchError, expectedError)
             }
+            let count = await attempts.count
+            XCTAssertEqual(count, expectedError == .robloxUpdateOpened ? 1 : 0)
         }
+    }
+
+    func testOutdatedRobloxAttemptsUpdateOnceAndKeepsManagedLaunchBlocked() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let app = root.appendingPathComponent("Roblox.app")
+        let contents = app.appendingPathComponent("Contents")
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func setInstalledVersion(_ version: String) throws {
+            let data = try PropertyListSerialization.data(
+                fromPropertyList: ["CFBundleShortVersionString": version], format: .xml, options: 0
+            )
+            try data.write(to: contents.appendingPathComponent("Info.plist"))
+        }
+        let client = makeClient { request in
+            XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+            return Self.response(request: request, status: 200, body: #"{"version":"0.736.0.7361346"}"#)
+        }
+        let launcher = ParallelRobloxLauncher(instancesRoot: root.appendingPathComponent("Instances"), versionClient: client)
+        let attempts = UpdateAttemptCounter()
+        let open: @Sendable () async throws -> Void = { await attempts.open() }
+        try setInstalledVersion("0.735.0.7351131")
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<3 {
+                group.addTask {
+                    do {
+                        try await launcher.verifyCurrentOfficialVersion(at: app, attemptUpdate: open)
+                        XCTFail("The launch must stay blocked until Roblox is current.")
+                    } catch {
+                        XCTAssertEqual(error as? RobloxLaunchError, .robloxUpdateOpened)
+                    }
+                }
+            }
+        }
+        let firstCount = await attempts.count
+        XCTAssertEqual(firstCount, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Instances").path))
+
+        try setInstalledVersion("0.736.0.7361346")
+        try await launcher.verifyCurrentOfficialVersion(at: app, attemptUpdate: open)
+        try setInstalledVersion("0.735.0.7351131")
+        for expected in [RobloxLaunchError.untrustedRobloxInstallation, .robloxUpdateRequired, .openFailed] {
+            do {
+                try await launcher.verifyCurrentOfficialVersion(at: app) { throw expected }
+                XCTFail("Update failures must block the launch and allow a later retry.")
+            } catch {
+                XCTAssertEqual(error as? RobloxLaunchError, expected)
+            }
+        }
+        do {
+            try await launcher.verifyCurrentOfficialVersion(at: app, attemptUpdate: open)
+            XCTFail("Opening Roblox does not prove the update finished.")
+        } catch {
+            XCTAssertEqual(error as? RobloxLaunchError, .robloxUpdateOpened)
+        }
+        let finalCount = await attempts.count
+        XCTAssertEqual(finalCount, 2)
+
+        try setInstalledVersion("invalid")
+        do {
+            try await launcher.verifyCurrentOfficialVersion(at: app, attemptUpdate: open)
+            XCTFail("An invalid installed version must not trigger an update.")
+        } catch {
+            guard let launchError = error as? RobloxLaunchError,
+                  case .copyFailed = launchError else { return XCTFail("Unexpected error") }
+        }
+        let countAfterInvalidVersion = await attempts.count
+        XCTAssertEqual(countAfterInvalidVersion, 2)
     }
 
     func testValidatesAuthenticatedUser() async throws {
@@ -377,6 +450,15 @@ final class RobloxAPIClientTests: XCTestCase {
             body.append(buffer, count: count)
         }
         return body
+    }
+}
+
+private actor UpdateAttemptCounter {
+    private(set) var count = 0
+
+    func open() async {
+        count += 1
+        try? await Task.sleep(nanoseconds: 150_000_000)
     }
 }
 

@@ -2,7 +2,15 @@
 
 Research date: 2026-08-10.
 
-This file records tests and earlier designs. It is not a user guide. See the README for current launch instructions.
+This file records tests and earlier designs. It is not a user guide. See the [user guide](USER_GUIDE.md) for current launch instructions and the [development guide](DEVELOPMENT.md) for release checks.
+
+## Version 1.2.4 maintenance findings
+
+- Managed launch checks the public Mac player version before it copies Roblox or changes launch settings. An unavailable or invalid version stops the launch.
+- When the installed version differs, the manager can open the verified normal Roblox app once to try its own update path. It leaves running Roblox players alone. Opening the app does not prove that the update completed; the next managed launch checks the version again.
+- Diagnostics now uses the launcher's full Roblox code-signing requirement. A valid signature from a different publisher is not sufficient.
+- The local `lipo` tool rejected a check with both architecture names. Separate checks passed. The scripts and updater now check each architecture separately and still require both.
+- These source and local checks do not prove that an update fixes an unknown Roblox crash. No live Roblox update was run for this maintenance change.
 
 ## Upstream findings
 
@@ -126,7 +134,7 @@ The signed version 0.7.0 app then launched two saved accounts into place `1818` 
 
 ## Current parallel interface
 
-Every manager launch uses a separate, unchanged copy of Roblox, even when only one account is selected. This lets another managed account start later without closing the first one. Opening `/Applications/Roblox.app` is outside the manager.
+The normal managed launch uses a separate, unchanged copy of Roblox, even when only one account is selected. This lets another managed account start later without closing the first one. Version 1.2.4 can also open `/Applications/Roblox.app` without an account launch link to try an update after its version check finds a mismatch.
 
 The account format stores a `groups` array. It can also read the older single `group` value and convert it to a one-item array. A separate `Groups.json` file keeps empty groups available. Group names are trimmed, sorted, and deduplicated without case sensitivity.
 

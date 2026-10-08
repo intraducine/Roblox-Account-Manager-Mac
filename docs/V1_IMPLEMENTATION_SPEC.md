@@ -1,5 +1,15 @@
 # Roblox Account Manager for Mac 1.0 implementation and maintenance specification
 
+Current maintenance release: **1.2.4**. This file preserves the original version 1.0 contract and dated implementation history. Use the [user guide](USER_GUIDE.md) for current behavior and the [development guide](DEVELOPMENT.md) for current build and release rules.
+
+Current maintenance rules take precedence over earlier release choices below:
+
+- Require the pinned project signing identity and project update signature for publication. Never publish an ad hoc build.
+- Require both supported architectures in each packaged app and update. Check them separately when `lipo` does not accept both in one call.
+- Check the current Roblox version before clone or settings changes. Stop if the check is unavailable or invalid.
+- If Roblox is out of date and no player is running, verify the normal app and open it once to try an update. Do not close a running game. Check the version and signature again when the user retries.
+- Make Diagnostics use the same full Roblox signature requirement as the launcher.
+
 ## 1. Product goal
 
 Version 1.0 must make this outcome reliable:
@@ -8,7 +18,7 @@ Version 1.0 must make this outcome reliable:
 
 The app must never claim that an account can join when Roblox has not provided enough information. It must not bypass Roblox privacy or private-server access rules.
 
-This file defines the version 1.0 release contract and the maintenance rules used by version 1.0.2. It is a developer reference, not a user guide. The README contains current user instructions. The live test report states which checks used real Roblox clients and which cases still need controlled test accounts.
+This file defines the version 1.0 release contract and the maintenance rules used by version 1.0.2. It is a developer reference, not a user guide. The [live test report](V1_LIVE_TEST_REPORT.md) states which checks used real Roblox clients and which cases still need controlled test accounts.
 
 This specification assumes:
 
@@ -30,8 +40,8 @@ A free Apple account is sufficient for local development. It is not sufficient f
 Version 1.0 must:
 
 - Build a universal Intel and Apple silicon app.
-- Use an installed stable Apple signing identity when one is available.
-- Use an ad hoc signature only when no signing identity exists. State that ad hoc updates can lose Keychain access.
+- Use the pinned project signing identity for current releases.
+- Use an ad hoc signature only for local verification. Release packaging rejects it.
 - Verify the final app with `codesign --verify`.
 - Provide a source tag and reproducible build instructions.
 - Produce an optional ZIP artifact with a SHA-256 checksum.

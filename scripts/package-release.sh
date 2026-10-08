@@ -85,7 +85,9 @@ fi
 cd "$project_dir"
 "$script_dir/build-app.sh"
 /usr/bin/codesign --verify --deep --strict "$app_path"
-/usr/bin/lipo "$app_path/Contents/MacOS/RobloxAccountManager" -verify_arch arm64 x86_64
+for architecture in arm64 x86_64; do
+    /usr/bin/lipo "$app_path/Contents/MacOS/RobloxAccountManager" -verify_arch "$architecture"
+done
 
 if (( requires_update_pin )); then
     embedded_project_certificate_sha256=$(/usr/libexec/PlistBuddy \

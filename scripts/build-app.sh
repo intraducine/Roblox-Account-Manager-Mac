@@ -102,7 +102,9 @@ codesign_arguments+=(--timestamp=none)
 /usr/bin/codesign "${codesign_arguments[@]}" "$app_dir"
 /usr/bin/plutil -lint "$contents_dir/Info.plist"
 /usr/bin/codesign --verify --deep --strict "$app_dir"
-/usr/bin/lipo "$contents_dir/MacOS/RobloxAccountManager" -verify_arch arm64 x86_64
+for architecture in arm64 x86_64; do
+    /usr/bin/lipo "$contents_dir/MacOS/RobloxAccountManager" -verify_arch "$architecture"
+done
 
 if (( requires_project_certificate )) && [[ "$signing_identity" != "-" ]]; then
     certificate_dir=$(/usr/bin/mktemp -d /tmp/ramac-build-certificate.XXXXXX)
