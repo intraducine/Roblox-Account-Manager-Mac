@@ -46,12 +46,17 @@ swift_build_args=(
     -Xswiftc "$project_dir=."
     -Xswiftc -file-prefix-map
     -Xswiftc "$project_dir=."
-    # SwiftBuild can otherwise record the deployment target as the SDK version.
-    -Xlinker -platform_version
-    -Xlinker macos
-    -Xlinker "$minimum_macos"
-    -Xlinker "$sdk_version"
 )
+# Xcode 27 can record the deployment target as the SDK version. Xcode 26
+# forwards these options differently, so its output is checked below instead.
+if (( ${sdk_version%%.*} >= 27 )); then
+    swift_build_args+=(
+        -Xlinker -platform_version
+        -Xlinker macos
+        -Xlinker "$minimum_macos"
+        -Xlinker "$sdk_version"
+    )
+fi
 /usr/bin/xcrun swift build "${swift_build_args[@]}"
 binary_dir=$(/usr/bin/xcrun swift build "${swift_build_args[@]}" --show-bin-path)
 "$script_dir/verify-build-sdk.sh" "$binary_dir/RobloxAccountManager"

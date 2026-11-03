@@ -16,7 +16,7 @@ open "dist/Roblox Account Manager.app"
 
 The build script creates one universal app for Apple silicon and Intel Macs. `VERSION` supplies the packaged app version and the version used in network headers. `packaging/Info.plist` supplies the build number. Current release builds use the project signing certificate. To choose an identity for a local build, set `RAM_SIGNING_IDENTITY` to its certificate hash or name. Project-signed builds also need `RAM_EXPECTED_PROJECT_CERT_SHA256`.
 
-The build passes the selected SDK version and minimum macOS version to the linker. Before replacing the app in `dist`, it checks both values for both architectures. If the check fails, select a working Xcode toolchain and rebuild. The macOS 13 minimum supported version does not change.
+With the macOS 27 SDK or newer, the build passes the selected SDK version and minimum macOS version to the linker. Before replacing the app in `dist`, it checks both values for both architectures on every supported SDK. If the check fails, select a working Xcode toolchain and rebuild. The macOS 13 minimum supported version does not change.
 
 The smoke test rebuilds `dist/Roblox Account Manager.app` with an ad hoc signature. Preserve a needed signed app before you run it. For a local package check without the private release identity, run `./scripts/smoke-test-app.sh`. It creates an ad hoc-signed app that must not be published. The smoke run uses empty temporary storage and does not read saved accounts or Keychain items. Release packaging always rejects an ad hoc signature.
 
