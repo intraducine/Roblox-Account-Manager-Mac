@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [User guide](USER_GUIDE.md)
 
-The app uses Swift Package Manager, SwiftUI, and AppKit. It targets macOS 13 or newer and has no third-party runtime dependencies. Install Xcode with Swift 5.10 or newer.
+The app uses Swift Package Manager, SwiftUI, and AppKit. It targets macOS 13 or newer and has no third-party runtime dependencies. Packaging requires Xcode with the macOS 26 SDK or newer so the app uses the current native interface.
 
 ## Build from source
 
@@ -15,6 +15,8 @@ open "dist/Roblox Account Manager.app"
 ```
 
 The build script creates one universal app for Apple silicon and Intel Macs. `VERSION` supplies the packaged app version and the version used in network headers. `packaging/Info.plist` supplies the build number. Current release builds use the project signing certificate. To choose an identity for a local build, set `RAM_SIGNING_IDENTITY` to its certificate hash or name. Project-signed builds also need `RAM_EXPECTED_PROJECT_CERT_SHA256`.
+
+The build passes the selected SDK version and minimum macOS version to the linker. Before replacing the app in `dist`, it checks both values for both architectures. If the check fails, select a working Xcode toolchain and rebuild. The macOS 13 minimum supported version does not change.
 
 The smoke test rebuilds `dist/Roblox Account Manager.app` with an ad hoc signature. Preserve a needed signed app before you run it. For a local package check without the private release identity, run `./scripts/smoke-test-app.sh`. It creates an ad hoc-signed app that must not be published. The smoke run uses empty temporary storage and does not read saved accounts or Keychain items. Release packaging always rejects an ad hoc signature.
 

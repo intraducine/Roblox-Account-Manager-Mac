@@ -1,6 +1,6 @@
 # Implementation plan
 
-Current maintenance release: **1.2.4**. See the [user guide](USER_GUIDE.md) for use and the [development guide](DEVELOPMENT.md) for build and release checks. The dated phases below remain development history.
+Current maintenance release: **1.2.5**. See the [user guide](USER_GUIDE.md) for use and the [development guide](DEVELOPMENT.md) for build and release checks. The dated phases below remain development history.
 
 ## Product job
 

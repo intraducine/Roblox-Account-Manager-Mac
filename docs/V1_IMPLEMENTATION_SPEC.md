@@ -1,6 +1,6 @@
 # Roblox Account Manager for Mac 1.0 implementation and maintenance specification
 
-Current maintenance release: **1.2.4**. This file preserves the original version 1.0 contract and dated implementation history. Use the [user guide](USER_GUIDE.md) for current behavior and the [development guide](DEVELOPMENT.md) for current build and release rules.
+Current maintenance release: **1.2.5**. This file preserves the original version 1.0 contract and dated implementation history. Use the [user guide](USER_GUIDE.md) for current behavior and the [development guide](DEVELOPMENT.md) for current build and release rules.
 
 Current maintenance rules take precedence over earlier release choices below:
 

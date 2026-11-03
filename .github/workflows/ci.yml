@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
 
     steps:
@@ -35,6 +35,7 @@ jobs:
       - name: Check scripts and whitespace
         run: |
           zsh -n scripts/*.sh
+          ./scripts/test-build-sdk.sh
           git diff --check
 
       - name: Test packaged app

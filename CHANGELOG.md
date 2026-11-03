@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.5 - 2026-11-02
+
+Restore the app's familiar macOS appearance.
+
+### What changed
+
+- Bring back the glass toolbar.
+- Restore the normal appearance of text and controls.
+
 ## 1.2.4 - 2026-10-07
 
 Version 1.2.4 helps Roblox update before you retry a launch.

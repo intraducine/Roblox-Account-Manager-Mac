@@ -36,6 +36,8 @@ if (( requires_update_pin )) && [[ -z "$expected_project_certificate_sha256" && 
 fi
 
 cd "$project_dir"
+sdk_version=$(/usr/bin/xcrun --sdk macosx --show-sdk-version)
+minimum_macos=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' packaging/Info.plist)
 swift_build_args=(
     -c release
     --arch arm64
@@ -44,9 +46,15 @@ swift_build_args=(
     -Xswiftc "$project_dir=."
     -Xswiftc -file-prefix-map
     -Xswiftc "$project_dir=."
+    # SwiftBuild can otherwise record the deployment target as the SDK version.
+    -Xlinker -platform_version
+    -Xlinker macos
+    -Xlinker "$minimum_macos"
+    -Xlinker "$sdk_version"
 )
 /usr/bin/xcrun swift build "${swift_build_args[@]}"
 binary_dir=$(/usr/bin/xcrun swift build "${swift_build_args[@]}" --show-bin-path)
+"$script_dir/verify-build-sdk.sh" "$binary_dir/RobloxAccountManager"
 
 /bin/rm -rf "$app_dir"
 /bin/mkdir -p "$contents_dir/MacOS" "$contents_dir/Resources"
