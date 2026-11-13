@@ -1714,13 +1714,18 @@ final class AccountStore: ObservableObject {
                 settings: launchSettings
             )
 
+            await refreshRunningInstances()
+            guard isRunning(account) else {
+                throw launchMode == .official
+                    ? RobloxLaunchError.officialParallelUnavailable
+                    : RobloxLaunchError.unmodifiedParallelUnavailable("Roblox closed before the manager could confirm that it was running.")
+            }
+
             var updated = account
             updated.lastUsed = Date()
             update(updated)
             activeLaunchTargets[account.id] = nil
             try? activeLaunchRepository.save(Array(activeLaunchTargets.values))
-            await refreshRunningInstances()
-
             switch launchMode {
             case .unmodifiedParallel:
                 launchStatus = "Roblox is open as @\(account.username)"
@@ -1728,9 +1733,6 @@ final class AccountStore: ObservableObject {
                 launchStatus = "Official Roblox is open as @\(account.username)"
             case .modifiedParallel:
                 launchStatus = "Fallback Roblox is open as @\(account.username)"
-            }
-            if !runningAccountIDs.contains(account.id) {
-                runningAccountIDs.insert(account.id)
             }
             await applyWindowPlacement(accountID: account.id, processIdentifier: instance.processIdentifier)
         } catch {

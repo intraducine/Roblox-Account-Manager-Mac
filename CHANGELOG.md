@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.6 - 2026-11-13
+
+Make managed Roblox launches more reliable after updates.
+
+### What changed
+
+- Keep managed launches on the normal Roblox update channel.
+- Track Roblox when it starts a replacement process.
+- Retry the Roblox update when an earlier attempt did not finish.
+- Show clearer status when Roblox closes or a prepared copy is out of date.
+
 ## 1.2.5 - 2026-11-02
 
 Restore the app's familiar macOS appearance.

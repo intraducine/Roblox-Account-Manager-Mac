@@ -1149,6 +1149,19 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertTrue(fixture.store.runningAccountIDs.contains(account.id))
     }
 
+    func testOpenRobloxAppReportsAnExitedProcessAndPreservesAccount() async throws {
+        let fixture = try makeFixture(exitImmediately: true)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let account = fixture.accounts[1]
+
+        await fixture.store.launchApp(account: account)
+
+        XCTAssertFalse(fixture.store.runningAccountIDs.contains(account.id))
+        XCTAssertEqual(fixture.store.notice?.title, "Roblox did not open")
+        XCTAssertTrue(fixture.store.notice?.message.contains("closed before") == true)
+        XCTAssertTrue(try fixture.repository.load().contains { $0.id == account.id })
+    }
+
     func testSecondAppStartsWhileFirstAppIsStillOpening() async throws {
         let fixture = try makeFixture(launchDelayNanoseconds: 500_000_000)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -1643,7 +1656,8 @@ final class AccountStoreBatchTests: XCTestCase {
     private func makeFixture(
         failingIndex: Int? = nil,
         launchDelayNanoseconds: UInt64 = 0,
-        healthChecker: (any AccountHealthChecking)? = nil
+        healthChecker: (any AccountHealthChecking)? = nil,
+        exitImmediately: Bool = false
     ) throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-batch-tests-\(UUID().uuidString)", isDirectory: true)
@@ -1666,7 +1680,8 @@ final class AccountStoreBatchTests: XCTestCase {
         let failingID = failingIndex.map { accounts[$0].id }
         let launcher = BatchMockLauncher(
             failingAccountID: failingID,
-            launchDelayNanoseconds: launchDelayNanoseconds
+            launchDelayNanoseconds: launchDelayNanoseconds,
+            exitImmediately: exitImmediately
         )
         let friendRelay = BatchMockFriendRelay()
         let store = AccountStore(
@@ -1953,6 +1968,7 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     private let launchDelayNanoseconds: UInt64
     private let launchDelaysByAccountID: [UUID: UInt64]
     private let blockedAccountIDs: Set<UUID>
+    private let exitImmediately: Bool
     private var pendingBlockedLaunches: [UUID: CheckedContinuation<Void, Never>] = [:]
     private var releasedBlockedAccountIDs = Set<UUID>()
     private var attempted = Set<UUID>()
@@ -1968,12 +1984,14 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
         failingAccountID: UUID?,
         launchDelayNanoseconds: UInt64 = 0,
         launchDelaysByAccountID: [UUID: UInt64] = [:],
-        blockedAccountIDs: Set<UUID> = []
+        blockedAccountIDs: Set<UUID> = [],
+        exitImmediately: Bool = false
     ) {
         self.failingAccountID = failingAccountID
         self.launchDelayNanoseconds = launchDelayNanoseconds
         self.launchDelaysByAccountID = launchDelaysByAccountID
         self.blockedAccountIDs = blockedAccountIDs
+        self.exitImmediately = exitImmediately
     }
 
     func launch(
@@ -1995,7 +2013,7 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
         if delay > 0 {
             try await Task.sleep(nanoseconds: delay)
         }
-        running.insert(accountID)
+        if !exitImmediately { running.insert(accountID) }
         let processIdentifier = Int32(processIdentifiers.count + 1)
         processIdentifiers[accountID] = processIdentifier
         return ParallelRobloxInstance(

@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 import Security
@@ -677,6 +678,39 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertTrue(processes.allSatisfy { !$0.isRunning })
     }
 
+    func testRecoversReplacementProcessForManagedCopy() async throws {
+        struct TestProcessRecord: Codable { let processIdentifier: Int32; let applicationPath: String }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ram-handoff-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let accountID = UUID()
+        let accountRoot = root.appendingPathComponent(accountID.uuidString)
+        let app = accountRoot.appendingPathComponent("Unmodified/Roblox.app")
+        let executable = app.appendingPathComponent("Contents/MacOS/RobloxPlayer")
+        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("process.c")
+        try "#include <unistd.h>\nint main(void) { write(1, \"ready\\n\", 6); sleep(60); return 0; }\n".write(to: source, atomically: true, encoding: .utf8)
+        _ = try runCommand("/usr/bin/xcrun", ["clang", source.path, "-o", executable.path])
+        let info = try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": "test.handoff", "CFBundleExecutable": "RobloxPlayer", "CFBundlePackageType": "APPL"], format: .xml, options: 0)
+        try info.write(to: app.appendingPathComponent("Contents/Info.plist"))
+        _ = try runCommand("/usr/bin/codesign", ["--force", "--sign", "-", app.path])
+        let output = Pipe()
+        let process = Process()
+        process.executableURL = executable
+        process.standardOutput = output
+        try process.run()
+        defer { if process.isRunning { process.terminate() }; process.waitUntilExit() }
+        XCTAssertEqual(output.fileHandleForReading.readData(ofLength: 6), Data("ready\n".utf8))
+        let record = TestProcessRecord(processIdentifier: Int32.max, applicationPath: app.standardizedFileURL.path)
+        try JSONEncoder().encode(record).write(to: accountRoot.appendingPathComponent("Process.json"))
+        let launcher = ParallelRobloxLauncher(instancesRoot: root)
+        let running = await launcher.runningAccountIDs(from: [accountID])
+        XCTAssertEqual(running, [accountID])
+        let updated = try JSONDecoder().decode(TestProcessRecord.self, from: Data(contentsOf: accountRoot.appendingPathComponent("Process.json")))
+        XCTAssertEqual(updated.processIdentifier, process.processIdentifier)
+        let stopped = await launcher.stop(accountID: accountID)
+        XCTAssertTrue(stopped)
+    }
+
     func testLiveOutdatedRobloxDoesNotCreateCopiesWhenEnabled() async throws {
         guard ProcessInfo.processInfo.environment["RAM_RUN_ROBLOX_VERSION_INTEGRATION"] == "1" else {
             throw XCTSkip("Set RAM_RUN_ROBLOX_VERSION_INTEGRATION=1 to test the installed Roblox version gate.")
@@ -731,6 +765,83 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertEqual(RobloxLaunchMode.unmodifiedParallel.title, "Unmodified Parallel")
         XCTAssertTrue(RobloxLaunchMode.unmodifiedParallel.detail.contains("byte-identical"))
         XCTAssertTrue(RobloxLaunchMode.unmodifiedParallel.detail.contains("original signature"))
+    }
+
+    func testManagedChannelPreferenceIsProcessLocal() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ram-channel-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("main.swift")
+        let executable = root.appendingPathComponent("check")
+        let suite = "ram-channel-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.set("other-channel", forKey: "www.roblox.com")
+        defaults.synchronize()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        try "import Foundation\nlet value = UserDefaults(suiteName: CommandLine.arguments[1])!.string(forKey: \"www.roblox.com\")\nprint(value == \"\" ? \"normal\" : \"other\")\n".write(to: source, atomically: true, encoding: .utf8)
+        _ = try runCommand("/usr/bin/xcrun", ["swiftc", source.path, "-o", executable.path])
+        let result = try runCommand(executable.path, [suite] + ParallelRobloxLauncher.managedLaunchArguments)
+        XCTAssertEqual(result.trimmingCharacters(in: .whitespacesAndNewlines), "normal")
+        XCTAssertEqual(defaults.string(forKey: "www.roblox.com"), "other-channel")
+    }
+
+    @MainActor
+    func testOfficialUpdateLaunchPassesChannelPreference() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ram-update-arguments-\(UUID().uuidString)")
+        let app = root.appendingPathComponent("Probe.app")
+        let executable = app.appendingPathComponent("Contents/MacOS/Probe")
+        let result = root.appendingPathComponent("result")
+        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let suite = "ram-update-arguments-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.set("other-channel", forKey: "www.roblox.com")
+        defaults.synchronize()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let info = try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": suite + ".probe", "CFBundleExecutable": "Probe", "CFBundlePackageType": "APPL", "LSUIElement": true], format: .xml, options: 0)
+        try info.write(to: app.appendingPathComponent("Contents/Info.plist"))
+        let source = root.appendingPathComponent("main.swift")
+        try """
+        import Foundation
+        let value = UserDefaults(suiteName: \(String(reflecting: suite)))?.string(forKey: "www.roblox.com")
+        do { try (value == "" ? "normal" : "other").write(toFile: \(String(reflecting: result.path)), atomically: false, encoding: .utf8) }
+        catch { NSLog("Probe write failed: %@", String(describing: error)) }
+        Thread.sleep(forTimeInterval: 1)
+        """.write(to: source, atomically: true, encoding: .utf8)
+        _ = try runCommand("/usr/bin/xcrun", ["swiftc", source.path, "-o", executable.path])
+        _ = try runCommand("/usr/bin/codesign", ["--force", "--sign", "-", app.path])
+        let configuration = ParallelRobloxLauncher.officialUpdateConfiguration()
+        configuration.activates = false
+        let running: NSRunningApplication = try await withCheckedThrowingContinuation { continuation in
+            NSWorkspace.shared.openApplication(at: app, configuration: configuration) { application, error in
+                if let application { continuation.resume(returning: application) }
+                else { continuation.resume(throwing: error ?? RobloxLaunchError.openFailed) }
+            }
+        }
+        defer { running.terminate() }
+        for _ in 0..<50 where !FileManager.default.fileExists(atPath: result.path) {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertEqual(try String(contentsOf: result, encoding: .utf8), "normal")
+        XCTAssertEqual(defaults.string(forKey: "www.roblox.com"), "other-channel")
+    }
+
+    func testLiveUnmodifiedAppLaunchWhenEnabled() async throws {
+        guard ProcessInfo.processInfo.environment["RAM_RUN_UNMODIFIED_APP_INTEGRATION"] == "1" else {
+            throw XCTSkip("Set RAM_RUN_UNMODIFIED_APP_INTEGRATION=1 to test the windowed app launch.")
+        }
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-unmodified-app-\(UUID().uuidString)", isDirectory: true)
+        let launcher = ParallelRobloxLauncher(instancesRoot: root)
+        let accountID = UUID()
+        addTeardownBlock {
+            _ = await launcher.stop(accountID: accountID)
+            try? FileManager.default.removeItem(at: root)
+        }
+        let url = try builder.makeAppURL(ticket: "invalid-unmodified-integration-ticket")
+        _ = try await launcher.launch(url, for: accountID, mode: .unmodifiedParallel)
+        let running = await launcher.runningAccountIDs(from: [accountID])
+        XCTAssertEqual(running, [accountID])
     }
 
     func testLiveConcurrentUnmodifiedLaunchWhenEnabled() async throws {

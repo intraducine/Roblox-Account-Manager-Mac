@@ -268,6 +268,7 @@ public actor ParallelRobloxLauncher {
     public static let parallelBundleIdentifier = "com.intraducine.RobloxAccountManager.player"
     public static let preparationVersion = 5
     public static let unmodifiedPreparationVersion = 1
+    static let managedLaunchArguments = ["-www.roblox.com", ""]
 
     static func officialVerificationArguments(for applicationURL: URL) -> [String] {
         [
@@ -290,7 +291,7 @@ public actor ParallelRobloxLauncher {
     private let versionClient: RobloxAPIClient
     private var officialLaunchInProgress = false
     private var officialUpdateOpening = false
-    private var officialUpdateOpened = false
+    private var officialUpdateGeneration = 0
 
     public init(
         fileManager: FileManager = .default,
@@ -449,6 +450,7 @@ public actor ParallelRobloxLauncher {
         var helperPathsByAccount: [UUID: Set<String>] = [:]
 
         for accountID in requested {
+            _ = await isRunning(accountID: accountID)
             if readProcessRecord(for: accountID)?.applicationPath == officialPath {
                 officialAccountIDs.insert(accountID)
                 continue
@@ -500,7 +502,7 @@ public actor ParallelRobloxLauncher {
         var stopped = officialStopped ? officialAccountIDs : []
         for accountID in requested.subtracting(officialAccountIDs) {
             let mainStopped = mainProcessByAccount[accountID].map {
-                remainingProcesses[$0.processIdentifier] != $0.executablePath
+                !remainingPaths.contains($0.executablePath)
             } ?? true
             let helpersStopped = helperPathsByAccount[accountID, default: []].isDisjoint(with: remainingPaths)
             if mainStopped && helpersStopped {
@@ -572,12 +574,20 @@ public actor ParallelRobloxLauncher {
     }
 
     private func isRunning(accountID: UUID) async -> Bool {
-        guard let record = validProcessRecord(for: accountID),
-              recordedProcessIsRunning(record) else {
-            try? fileManager.removeItem(at: processRecordURL(for: accountID))
-            return false
+        guard let record = validProcessRecord(for: accountID) else { return false }
+        if recordedProcessIsRunning(record) { return true }
+        if record.applicationPath != Self.officialApplicationURL.standardizedFileURL.path {
+            let appURL = URL(fileURLWithPath: record.applicationPath, isDirectory: true)
+            let executable = canonicalPath(appURL.appendingPathComponent("Contents/MacOS/RobloxPlayer").path)
+            if let hash = try? codeDirectoryHash(at: appURL),
+               let replacement = runningProcessTable().filter({ $0.value == executable })
+                .map(\.key).first(where: { liveCodeDirectoryHash(for: $0) == hash.lowercased() }) {
+                try? writeProcessRecord(ParallelProcessRecord(processIdentifier: replacement, applicationPath: record.applicationPath), for: accountID)
+                return true
+            }
         }
-        return true
+        try? fileManager.removeItem(at: processRecordURL(for: accountID))
+        return false
     }
 
     private func validProcessRecord(for accountID: UUID) -> ParallelProcessRecord? {
@@ -850,6 +860,8 @@ public actor ParallelRobloxLauncher {
         )
         let process = Process()
         process.executableURL = executableURL
+        // The argument-domain preference applies only to this child, not Roblox's saved channel.
+        process.arguments = Self.managedLaunchArguments
         process.currentDirectoryURL = executableURL.deletingLastPathComponent()
         process.environment = environment
         process.standardOutput = FileHandle.nullDevice
@@ -869,7 +881,6 @@ public actor ParallelRobloxLauncher {
             )
             try await sendLaunchURL(url, to: processIdentifier)
             return try await resolveUnmodifiedProcess(
-                processIdentifier,
                 executablePath: expectedExecutablePath,
                 excluding: existingProcessIdentifiers
             )
@@ -958,7 +969,6 @@ public actor ParallelRobloxLauncher {
     }
 
     private func resolveUnmodifiedProcess(
-        _ startedProcessIdentifier: Int32,
         executablePath: String,
         excluding existingProcessIdentifiers: Set<Int32>
     ) async throws -> Int32 {
@@ -968,9 +978,7 @@ public actor ParallelRobloxLauncher {
             let candidates = runningProcessTable()
                 .filter { $0.value == executablePath && !existingProcessIdentifiers.contains($0.key) }
                 .map(\.key)
-            let candidate = candidates.contains(startedProcessIdentifier)
-                ? startedProcessIdentifier
-                : candidates.max()
+            let candidate = candidates.max()
             if candidate == stableProcessIdentifier, candidate != nil {
                 stableSamples += 1
                 if stableSamples >= 8 { return candidate! }
@@ -1304,6 +1312,7 @@ public actor ParallelRobloxLauncher {
         at applicationURL: URL,
         attemptUpdate: (@Sendable () async throws -> Void)? = nil
     ) async throws {
+        let updateGeneration = officialUpdateGeneration
         let currentVersion: String
         do {
             currentVersion = try await versionClient.currentMacPlayerVersion()
@@ -1324,15 +1333,14 @@ public actor ParallelRobloxLauncher {
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
             try Task.checkCancellation()
-            if !officialUpdateOpened {
+            if updateGeneration == officialUpdateGeneration {
                 officialUpdateOpening = true
                 defer { officialUpdateOpening = false }
                 try await attemptUpdate()
-                officialUpdateOpened = true
+                officialUpdateGeneration += 1
             }
             throw RobloxLaunchError.robloxUpdateOpened
         }
-        officialUpdateOpened = false
     }
 
     private func openOfficialApplicationForUpdate() async throws {
@@ -1341,10 +1349,7 @@ public actor ParallelRobloxLauncher {
         try Task.checkCancellation()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             Task { @MainActor in
-                let configuration = NSWorkspace.OpenConfiguration()
-                configuration.allowsRunningApplicationSubstitution = false
-                configuration.addsToRecentItems = false
-                configuration.activates = true
+                let configuration = Self.officialUpdateConfiguration()
                 NSWorkspace.shared.openApplication(
                     at: Self.officialApplicationURL,
                     configuration: configuration
@@ -1357,6 +1362,16 @@ public actor ParallelRobloxLauncher {
                 }
             }
         }
+    }
+
+    @MainActor
+    static func officialUpdateConfiguration() -> NSWorkspace.OpenConfiguration {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.allowsRunningApplicationSubstitution = false
+        configuration.addsToRecentItems = false
+        configuration.activates = true
+        configuration.arguments = managedLaunchArguments
+        return configuration
     }
 
     func verifyRobloxIsStoppedForUpdate() throws {

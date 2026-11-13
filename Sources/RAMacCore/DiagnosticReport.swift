@@ -150,7 +150,7 @@ public actor DiagnosticService {
             status: preparedOK ? .passed : .failed,
             message: prepared.isEmpty
                 ? "No prepared unchanged copies exist yet."
-                : preparedOK ? "Every prepared unchanged copy matches the installed Roblox app." : "At least one prepared copy does not match Roblox."
+                : preparedOK ? "Every prepared unchanged copy matches the installed Roblox app." : "At least one prepared copy does not match Roblox. The manager checks and rebuilds an old copy when you next launch that account."
         ))
 
         do {

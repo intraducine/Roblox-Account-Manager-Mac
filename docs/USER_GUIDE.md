@@ -60,7 +60,9 @@ You can give one account an alias, an encrypted profile note, and several groups
 
 Every managed launch uses a separate copy of `/Applications/Roblox.app`. This includes the first account. You can start another account later without closing the first one.
 
-Before it prepares a copy, the manager checks the installed Roblox version against Roblox's current Mac release. If they differ and Roblox is not running, it checks the installed app's signature and opens the normal Roblox app once to let Roblox update itself. It does not close running games. Let the update finish, quit Roblox, then retry. The manager checks the version and signature again before it rebuilds an old copy. It also stops the launch if the version check fails, so an unchecked copy cannot start its own update.
+Before it prepares a copy, the manager checks the installed Roblox version against Roblox's current Mac release. If they differ and Roblox is not running, it checks the installed app's signature and opens the normal Roblox app to let Roblox update itself. It does not close running games. Let the update finish, quit Roblox, then retry. If Roblox is still out of date, a later retry can open it again. The manager checks the version and signature again before it rebuilds an old copy. It also stops the launch if the version check fails, so an unchecked copy cannot start its own update. A diagnostic can report an old copy after Roblox updates; the manager checks and rebuilds that copy on the next launch of its account.
+
+The manager starts managed Roblox launches with the normal update channel. Roblox can still update its saved channel setting for the normal app.
 
 The normal copy stays unchanged. Every file must match the installed Roblox app. It keeps Roblox Corporation's original Apple-anchored signature. The manager stops the launch if the copy or signature check fails. It never edits `/Applications/Roblox.app`. Each managed account also gets separate Roblox app data and a small child-process environment that excludes unrelated parent secrets. Leaving a game and using the Roblox app does not switch the other managed copies to the same account.
 

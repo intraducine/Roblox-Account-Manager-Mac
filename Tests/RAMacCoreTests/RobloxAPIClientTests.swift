@@ -99,6 +99,15 @@ final class RobloxAPIClientTests: XCTestCase {
         XCTAssertEqual(firstCount, 1)
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Instances").path))
 
+        do {
+            try await launcher.verifyCurrentOfficialVersion(at: app, attemptUpdate: open)
+            XCTFail("A retry must remain blocked until Roblox is current.")
+        } catch {
+            XCTAssertEqual(error as? RobloxLaunchError, .robloxUpdateOpened)
+        }
+        let retryCount = await attempts.count
+        XCTAssertEqual(retryCount, 2)
+
         try setInstalledVersion("0.736.0.7361346")
         try await launcher.verifyCurrentOfficialVersion(at: app, attemptUpdate: open)
         try setInstalledVersion("0.735.0.7351131")
@@ -117,7 +126,7 @@ final class RobloxAPIClientTests: XCTestCase {
             XCTAssertEqual(error as? RobloxLaunchError, .robloxUpdateOpened)
         }
         let finalCount = await attempts.count
-        XCTAssertEqual(finalCount, 2)
+        XCTAssertEqual(finalCount, 3)
 
         try setInstalledVersion("invalid")
         do {
@@ -128,7 +137,7 @@ final class RobloxAPIClientTests: XCTestCase {
                   case .copyFailed = launchError else { return XCTFail("Unexpected error") }
         }
         let countAfterInvalidVersion = await attempts.count
-        XCTAssertEqual(countAfterInvalidVersion, 2)
+        XCTAssertEqual(countAfterInvalidVersion, 3)
     }
 
     func testValidatesAuthenticatedUser() async throws {
