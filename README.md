@@ -16,7 +16,7 @@ This is an independent project. Roblox Corporation does not make or approve it. 
 
 You need **macOS 13 or newer** and Roblox at `/Applications/Roblox.app`. Release builds support Apple silicon and Intel Macs.
 
-1. Download the release ZIP and its `.sha256` file. Check the download as described in the [install guide](docs/USER_GUIDE.md#install-and-update).
+1. Download the release ZIP.
 2. Extract the ZIP and move **Roblox Account Manager.app** to Applications.
 3. Open the manager. If macOS blocks the first launch, follow the [security warning steps](docs/USER_GUIDE.md#install-and-update). Keep macOS security checks on.
 
@@ -31,21 +31,15 @@ For later updates, choose **Roblox Account Manager > Check for Updates**. If an 
 
 To open Roblox without joining a game, use **Open Roblox App** or **Open Roblox Apps**. Use **Stop All** to close the managed clients.
 
-## Other tools
+## More features
 
-- **Groups and Launch Sets:** organize accounts and save common launch choices.
-- **Launch Defaults:** set graphics, sound, and window positions across displays.
-- **Find Players:** join visible friends through existing account friendships.
-- **Account website windows:** browse Roblox as one saved account.
-- **Diagnostics and Backup:** check setup and back up account details. Normal backups exclude sign-ins, profile notes, and private-server links.
-
-See the [user guide](docs/USER_GUIDE.md) for these tools and their limits.
+Use **Launch Defaults** for window layouts, **Launch Sets** for saved setups, and **Find Players** to join friends. See the [user guide](docs/USER_GUIDE.md) for details.
 
 ## If Roblox closes at once
 
 If Roblox needs an update and is not running, the manager opens the normal Roblox app to let it update. Let it finish, quit Roblox, then retry one account. If Roblox also closes outside the manager, see [launch troubleshooting](docs/USER_GUIDE.md#roblox-closes-at-once).
 
-Normal launches keep Roblox copies unchanged. The optional modified fallback can cause account restrictions. The manager does not bypass Roblox access rules or automate gameplay.
+The optional modified fallback can cause account restrictions.
 
 ## License
 
