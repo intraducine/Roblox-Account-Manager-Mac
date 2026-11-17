@@ -1,0 +1,45 @@
+:root {
+  --vp-c-brand-1: #25635c;
+  --vp-c-brand-2: #39776e;
+  --vp-c-brand-3: #508b80;
+  --vp-c-brand-soft: rgba(57, 119, 110, .12);
+  --vp-font-family-base: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+}
+.dark {
+  --vp-c-brand-1: #a4d2c5;
+  --vp-c-brand-2: #8fc0b2;
+  --vp-c-brand-3: #74ab9c;
+}
+.VPHome { max-width: 1152px; margin: 0 auto; }
+.VPHome .home-intro { max-width: 720px; padding: 68px 24px 28px; margin: 0 auto; }
+.VPHome .home-intro h1 { font-size: clamp(2.5rem, 6vw, 4rem); line-height: 1.06; letter-spacing: -.035em; font-weight: 700; }
+.VPHome .home-intro p { max-width: 590px; font-size: 1.15rem; line-height: 1.65; color: var(--vp-c-text-2); margin: 24px 0 0; }
+.VPHome .home-links { max-width: 720px; padding: 12px 24px 80px; margin: 0 auto; display: grid; gap: 0; }
+.VPHome .home-links a { display: block; padding: 23px 0; border-top: 1px solid var(--vp-c-divider); text-decoration: none; color: var(--vp-c-text-1); }
+.VPHome .home-links a:hover strong { color: var(--vp-c-brand-1); }
+.VPHome .home-links strong { display: block; font-size: 1.15rem; }
+.VPHome .home-links span { display: block; color: var(--vp-c-text-2); margin-top: 5px; line-height: 1.5; }
+.VPHome .home-links a:focus-visible { outline: 2px solid var(--vp-c-brand-1); outline-offset: 4px; }
+
+/* Allow long page titles to wrap in the table of contents. */
+.VPDocAsideOutline .outline-link {
+  white-space: normal;
+  overflow: visible;
+  line-height: 1.45;
+  padding-block: 6px;
+}
+.vp-doc .guide-image {
+  margin: 24px 0;
+}
+.vp-doc .guide-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+.vp-doc .guide-image figcaption {
+  margin-top: 8px;
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  line-height: 1.5;
+}
