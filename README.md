@@ -37,7 +37,7 @@ Use **Launch Defaults** for window layouts, **Launch Sets** for saved setups, an
 
 ## If Roblox closes at once
 
-If Roblox needs an update and is not running, the manager opens the normal Roblox app to let it update. Let it finish, quit Roblox, then retry one account. If Roblox also closes outside the manager, see [launch troubleshooting](docs/USER_GUIDE.md#roblox-closes-at-once).
+If Roblox needs an update and is not running, the manager opens the Roblox updater. Let it finish, quit Roblox, then retry one account. If Roblox also closes outside the manager, see [launch troubleshooting](docs/USER_GUIDE.md#roblox-closes-at-once).
 
 The optional modified fallback can cause account restrictions.
 

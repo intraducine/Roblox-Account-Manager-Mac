@@ -1351,7 +1351,7 @@ public actor ParallelRobloxLauncher {
             Task { @MainActor in
                 let configuration = Self.officialUpdateConfiguration()
                 NSWorkspace.shared.openApplication(
-                    at: Self.officialApplicationURL,
+                    at: Self.officialApplicationURL.appendingPathComponent("Contents/MacOS/RobloxPlayerInstaller.app"),
                     configuration: configuration
                 ) { application, error in
                     if error != nil || application == nil {
@@ -1370,7 +1370,7 @@ public actor ParallelRobloxLauncher {
         configuration.allowsRunningApplicationSubstitution = false
         configuration.addsToRecentItems = false
         configuration.activates = true
-        configuration.arguments = managedLaunchArguments
+        configuration.arguments = ["-RobloxChannel", "production"]
         return configuration
     }
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.7 - 2026-11-16
+
+Make Roblox updates more reliable.
+
+### What changed
+
+- Open the Roblox updater when an update is needed.
+- Keep saved accounts during the update.
+
 ## 1.2.6 - 2026-11-13
 
 Make managed Roblox launches more reliable after updates.

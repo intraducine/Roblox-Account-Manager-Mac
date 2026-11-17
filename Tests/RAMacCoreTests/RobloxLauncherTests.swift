@@ -711,6 +711,39 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertTrue(stopped)
     }
 
+    func testLiveRobloxUpdateWhenEnabled() async throws {
+        guard ProcessInfo.processInfo.environment["RAM_RUN_ROBLOX_UPDATE_DEVICE"] == "1" else {
+            throw XCTSkip("Set RAM_RUN_ROBLOX_UPDATE_DEVICE=1 to test the installed Roblox update.")
+        }
+        let app = ParallelRobloxLauncher.officialApplicationURL
+        let latest = try await RobloxAPIClient().currentMacPlayerVersion()
+        func installedVersion() throws -> String {
+            let data = try Data(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
+            let info = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
+            return try XCTUnwrap(info?["CFBundleShortVersionString"] as? String)
+        }
+        guard try installedVersion() != latest else { throw XCTSkip("This test needs an outdated Roblox installation.") }
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ram-update-device-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let launcher = ParallelRobloxLauncher(instancesRoot: root, robloxSettingsDirectory: root.appendingPathComponent("Settings"))
+        do {
+            _ = try await launcher.launch(builder.makeAppURL(ticket: "invalid-update-device-ticket"), for: UUID(), mode: .unmodifiedParallel)
+            XCTFail("An outdated installation must not start a managed client.")
+            return
+        } catch {
+            XCTAssertEqual(error as? RobloxLaunchError, .robloxUpdateOpened)
+            guard error as? RobloxLaunchError == .robloxUpdateOpened else { return }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        for _ in 0..<180 {
+            if (try? installedVersion()) == latest { break }
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        XCTAssertEqual(try installedVersion(), latest)
+        _ = try runCommand("/usr/bin/codesign", ParallelRobloxLauncher.officialVerificationArguments(for: app))
+    }
+
     func testLiveOutdatedRobloxDoesNotCreateCopiesWhenEnabled() async throws {
         guard ProcessInfo.processInfo.environment["RAM_RUN_ROBLOX_VERSION_INTEGRATION"] == "1" else {
             throw XCTSkip("Set RAM_RUN_ROBLOX_VERSION_INTEGRATION=1 to test the installed Roblox version gate.")
@@ -795,7 +828,7 @@ final class RobloxLauncherTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let suite = "ram-update-arguments-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defaults.set("other-channel", forKey: "www.roblox.com")
+        defaults.set("other-channel", forKey: "RobloxChannel")
         defaults.synchronize()
         defer { defaults.removePersistentDomain(forName: suite) }
         let info = try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": suite + ".probe", "CFBundleExecutable": "Probe", "CFBundlePackageType": "APPL", "LSUIElement": true], format: .xml, options: 0)
@@ -803,8 +836,8 @@ final class RobloxLauncherTests: XCTestCase {
         let source = root.appendingPathComponent("main.swift")
         try """
         import Foundation
-        let value = UserDefaults(suiteName: \(String(reflecting: suite)))?.string(forKey: "www.roblox.com")
-        do { try (value == "" ? "normal" : "other").write(toFile: \(String(reflecting: result.path)), atomically: false, encoding: .utf8) }
+        let value = UserDefaults(suiteName: \(String(reflecting: suite)))?.string(forKey: "RobloxChannel")
+        do { try (value == "production" ? "normal" : "other").write(toFile: \(String(reflecting: result.path)), atomically: false, encoding: .utf8) }
         catch { NSLog("Probe write failed: %@", String(describing: error)) }
         Thread.sleep(forTimeInterval: 1)
         """.write(to: source, atomically: true, encoding: .utf8)
@@ -823,7 +856,7 @@ final class RobloxLauncherTests: XCTestCase {
             try await Task.sleep(nanoseconds: 100_000_000)
         }
         XCTAssertEqual(try String(contentsOf: result, encoding: .utf8), "normal")
-        XCTAssertEqual(defaults.string(forKey: "www.roblox.com"), "other-channel")
+        XCTAssertEqual(defaults.string(forKey: "RobloxChannel"), "other-channel")
     }
 
     func testLiveUnmodifiedAppLaunchWhenEnabled() async throws {
