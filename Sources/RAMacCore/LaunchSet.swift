@@ -44,6 +44,22 @@ public enum ServerStrategy: Codable, Equatable, Sendable {
     }
 }
 
+public struct LaunchSetGame: Codable, Equatable, Sendable {
+    public var placeID: Int64
+    public var name: String?
+    public var privateServerID: UUID?
+
+    public init(placeID: Int64, name: String? = nil, privateServerID: UUID? = nil) {
+        self.placeID = placeID
+        self.name = name
+        self.privateServerID = privateServerID
+    }
+
+    public static func covers(_ accountIDs: Set<UUID>, games: [UUID: LaunchSetGame]) -> Bool {
+        !accountIDs.isEmpty && accountIDs.allSatisfy { (games[$0]?.placeID ?? 0) > 0 }
+    }
+}
+
 public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
     public let id: UUID
     public var name: String
@@ -54,6 +70,9 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
     public var serverStrategy: ServerStrategy
     public var launchSettings: RobloxLaunchSettings?
     public var windowArrangement: WindowArrangementPolicy
+    public var isPinned: Bool
+    public var accountGames: [UUID: LaunchSetGame]
+    public var accountSettings: [UUID: RobloxLaunchSettings]
     public let createdAt: Date
     public var updatedAt: Date
 
@@ -67,6 +86,9 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
         serverStrategy: ServerStrategy = .robloxChooses,
         launchSettings: RobloxLaunchSettings? = nil,
         windowArrangement: WindowArrangementPolicy = .savedPlacements,
+        isPinned: Bool = false,
+        accountGames: [UUID: LaunchSetGame] = [:],
+        accountSettings: [UUID: RobloxLaunchSettings] = [:],
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -79,6 +101,9 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
         self.serverStrategy = serverStrategy
         self.launchSettings = launchSettings
         self.windowArrangement = windowArrangement
+        self.isPinned = isPinned
+        self.accountGames = accountGames
+        self.accountSettings = accountSettings
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -110,7 +135,7 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, accountIDs, groupNames, placeID, experienceName, serverStrategy, launchSettings
-        case windowArrangement, createdAt, updatedAt
+        case windowArrangement, isPinned, accountGames, accountSettings, createdAt, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -129,6 +154,9 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
             WindowArrangementPolicy.self,
             forKey: .windowArrangement
         ) ?? .savedPlacements
+        isPinned = try values.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        accountGames = try values.decodeIfPresent([UUID: LaunchSetGame].self, forKey: .accountGames) ?? [:]
+        accountSettings = try values.decodeIfPresent([UUID: RobloxLaunchSettings].self, forKey: .accountSettings) ?? [:]
         createdAt = try values.decode(Date.self, forKey: .createdAt)
         updatedAt = try values.decode(Date.self, forKey: .updatedAt)
     }
@@ -144,6 +172,9 @@ public struct LaunchSet: Codable, Identifiable, Equatable, Sendable {
         try values.encode(serverStrategy, forKey: .serverStrategy)
         try values.encodeIfPresent(launchSettings, forKey: .launchSettings)
         try values.encode(windowArrangement, forKey: .windowArrangement)
+        try values.encode(isPinned, forKey: .isPinned)
+        if !accountGames.isEmpty { try values.encode(accountGames, forKey: .accountGames) }
+        if !accountSettings.isEmpty { try values.encode(accountSettings, forKey: .accountSettings) }
         try values.encode(createdAt, forKey: .createdAt)
         try values.encode(updatedAt, forKey: .updatedAt)
     }

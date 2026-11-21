@@ -27,7 +27,7 @@ An account can belong to more than one group. Deleting a group removes it from a
 
 Select an account and choose **Check Account** in its profile. If the app shows **Sign In Again**, select it, sign in to that Roblox account, and choose **Save and Continue**. Your profile details, groups, notes, favorite games, and Launch Sets stay the same.
 
-Most people can add an account with **Sign In on Roblox**. The advanced **Paste Session Value** option is for people who already have a `.ROBLOSECURITY` value. Anyone with that value can access the account, so do not share it.
+Open **Add Account** from the sidebar or the three-dot **More** menu. Choose **Sign In on Roblox** or **Paste .ROBLOSECURITY**. For passkeys, sign in with your regular browser and use **Paste .ROBLOSECURITY** in the app. Protect the session value like a password.
 
 ## Remove an account
 

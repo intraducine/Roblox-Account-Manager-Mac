@@ -48,13 +48,13 @@ struct InlineWindowArrangementEditor: View {
             }
 
             if !accounts.isEmpty {
-                Text("Choose a quick layout, or select a profile and choose its place on a display.")
+                Text("Tile windows to see them together. Full screen gives each account its own desktop.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 8) {
-                    Button("Arrange Automatically") {
+                    Button("Tile Windows") {
                         guard controller.ensureAccessibilityPermission() else { return }
                         guard let planned = WindowArrangementPlanner.automaticAssignments(
                             accountIDs: accountIDs,
@@ -66,7 +66,7 @@ struct InlineWindowArrangementEditor: View {
                     .disabled(!canArrangeAutomatically)
                     .help(automaticArrangementHelp)
 
-                    Button("Full Screen All") {
+                    Button("Full Screen Separately") {
                         guard controller.ensureAccessibilityPermission() else { return }
                         selectedAccountID = nil
                         onAssignmentsChange(
@@ -81,7 +81,7 @@ struct InlineWindowArrangementEditor: View {
                 }
 
                 if !canArrangeAutomatically, !controller.displays.isEmpty {
-                    Text("Automatic arrangement fits up to four profiles on each display. Use Full Screen All, or place the extra profiles yourself.")
+                    Text("Tiling fits up to four windows per display. You can place extra windows yourself.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -128,7 +128,10 @@ struct InlineWindowArrangementEditor: View {
     }
 
     private var statusText: String {
-        usesSavedPlacements
+        let fullScreenCount = assignments.filter { $0.region == .fullScreen }.count
+        if fullScreenCount == 1 { return "One account opens on its own full-screen desktop." }
+        if fullScreenCount > 1 { return "\(fullScreenCount) accounts open on separate full-screen desktops." }
+        return usesSavedPlacements
             ? "Using the saved arrangement. Move a profile to customize this launch."
             : customStatus
     }
@@ -368,18 +371,18 @@ struct WindowLayoutView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Quick layouts")
                         .font(.headline)
-                    Text("Start with a complete layout, then move individual profiles only when you need to.")
+                    Text("Tile windows to see them together. Full screen gives each account its own desktop.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 8) {
-                        Button("Arrange Automatically") {
+                        Button("Tile Windows") {
                             guard controller.ensureAccessibilityPermission() else { return }
                             controller.arrangeAutomatically(accountIDs: store.accounts.map(\.id))
                         }
                         .disabled(!canArrangeAutomatically)
                         .help(automaticArrangementHelp)
 
-                        Button("Full Screen All") {
+                        Button("Full Screen Separately") {
                             guard controller.ensureAccessibilityPermission() else { return }
                             controller.makeFullScreen(accountIDs: store.accounts.map(\.id))
                         }
@@ -390,7 +393,7 @@ struct WindowLayoutView: View {
                     if !store.accounts.isEmpty,
                        !controller.displays.isEmpty,
                        !canArrangeAutomatically {
-                        Text("Automatic arrangement fits up to four profiles on each display. Use Full Screen All, or place the extra profiles yourself.")
+                        Text("Tiling fits up to four windows per display. You can place extra windows yourself.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

@@ -152,6 +152,12 @@ public struct MetadataArchiveService: Sendable {
         for imported in archive.launchSets {
             var mapped = imported
             mapped.accountIDs = imported.accountIDs.compactMap { accountIDMap[$0] }
+            mapped.accountGames = Dictionary(imported.accountGames.compactMap { id, game in
+                accountIDMap[id].map { ($0, game) }
+            }, uniquingKeysWith: { first, _ in first })
+            mapped.accountSettings = Dictionary(imported.accountSettings.compactMap { id, settings in
+                accountIDMap[id].map { ($0, settings) }
+            }, uniquingKeysWith: { first, _ in first })
             if case .custom(let assignments) = imported.windowArrangement {
                 mapped.windowArrangement = .custom(assignments.compactMap { assignment in
                     guard let accountID = accountIDMap[assignment.accountID] else { return nil }
@@ -161,7 +167,8 @@ public struct MetadataArchiveService: Sendable {
                         displayName: assignment.displayName,
                         displayPixelWidth: assignment.displayPixelWidth,
                         displayPixelHeight: assignment.displayPixelHeight,
-                        region: assignment.region
+                        region: assignment.region,
+                        relativeFrame: assignment.relativeFrame
                     )
                 })
             }

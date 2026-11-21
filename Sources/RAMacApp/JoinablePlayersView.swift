@@ -16,6 +16,7 @@ struct JoinablePlayersView: View {
     @State private var pendingUnconfirmedPlayer: DiscoveredPlayer?
     @State private var pendingGroupDeletion: String?
     @State private var discoveryTask: Task<Void, Never>?
+    @State private var launchSetAccounts: Set<UUID>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -37,8 +38,14 @@ struct JoinablePlayersView: View {
         }
         .navigationTitle("Joinable Players")
         .frame(minWidth: 1040, minHeight: 650)
+        .robloxUpdateRecovery(store)
+        .onAppear { loadLaunchSetAccounts() }
+        .onChange(of: store.launchSetPlayerAccounts) { ids in
+            if ids != nil { loadLaunchSetAccounts() }
+        }
         .onChange(of: selectedPlayerID) { _ in
-            selectedAccountIDs.removeAll()
+            selectedAccountIDs = launchSetAccounts?.subtracting(store.runningAccountIDs) ?? []
+            launchSetAccounts = nil
             assessments.removeAll()
             store.clearFriendRelayProgress()
         }
@@ -115,9 +122,13 @@ struct JoinablePlayersView: View {
         } message: {
             Text("The accounts will stay saved. This only removes the group name from the accounts and Launch Sets that use it.")
         }
-        .alert(item: $store.notice) { notice in
-            Alert(title: Text(notice.title), message: Text(notice.message), dismissButton: .default(Text("OK")))
-        }
+    }
+
+    private func loadLaunchSetAccounts() {
+        guard let ids = store.takeLaunchSetPlayerAccounts() else { return }
+        launchSetAccounts = ids
+        selectedAccountIDs = ids.subtracting(store.runningAccountIDs)
+        assessments.removeAll()
     }
 
     private var controls: some View {

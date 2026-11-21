@@ -125,19 +125,21 @@ struct LaunchSettingsOverrideEditor: View {
     let defaults: RobloxLaunchSettings
     @Binding var overrideSettings: RobloxLaunchSettings?
     let customDescription: String
+    var defaultsDescription = "Using Launch Defaults. Change a value to customize these settings."
+    var resetTitle = "Use Launch Defaults"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 16) {
                 Text(overrideSettings == nil
-                    ? "Using Launch Defaults. Change a value to customize these settings."
+                    ? defaultsDescription
                     : customDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 16)
                 if overrideSettings != nil {
-                    Button("Use Launch Defaults") {
+                    Button(resetTitle) {
                         overrideSettings = nil
                     }
                     .fixedSize()

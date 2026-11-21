@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.0 - 2026-11-21
+
+Set up, launch, and restore a full Roblox session.
+
+### What changed
+
+- Save and pin Launch Sets with different games, servers, graphics, and sound for each account.
+- Reopen accounts from your last session. Tile Roblox windows at launch or save and restore their positions.
+- Launch games and private servers from Game Library.
+- Review blocked accounts, launch the ones that are ready, or retry after a Roblox update.
+- Open Tools from the three-dot menu. See sign-in errors in Add Account.
+
+### Before you update
+
+macOS may ask for Keychain access the first time this version opens each saved item. Choose **Always Allow** to keep that approval through future updates.
+
 ## 1.2.7 - 2026-11-16
 
 Make Roblox updates more reliable.

@@ -3,28 +3,38 @@ import SwiftUI
 struct AddAccountView: View {
     enum Method: String, CaseIterable, Identifiable {
         case browser = "Sign In on Roblox"
-        case cookie = "Paste Session Value"
+        case cookie = "Paste .ROBLOSECURITY"
         var id: String { rawValue }
     }
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject var store: AccountStore
     @StateObject private var browser = LoginBrowserModel()
     @State private var method: Method = .browser
     @State private var cookie = ""
+    @State private var saveError: String?
+    @State private var saveTask: Task<Void, Never>?
+
+    private var isSaving: Bool { saveTask != nil }
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
-                LabeledContent("Sign-in method") {
-                    Picker("Sign-in method", selection: $method) {
-                        ForEach(Method.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(width: 280)
+                Picker("Sign-in method", selection: $method) {
+                    ForEach(Method.allCases) { Text($0.rawValue).tag($0) }
                 }
-                .frame(maxWidth: 430)
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .controlSize(.large)
+                .fixedSize()
+                .disabled(isSaving)
+
+                if let saveError {
+                    Label(saveError, systemImage: "exclamationmark.circle")
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 if method == .browser {
                     browserSignIn
@@ -43,12 +53,15 @@ struct AddAccountView: View {
                 }
             }
         }
-        .frame(
-            minWidth: method == .browser ? 820 : 620,
-            minHeight: method == .browser ? 620 : 300
-        )
-        .alert(item: $store.notice) { notice in
-            Alert(title: Text(notice.title), message: Text(notice.message), dismissButton: .default(Text("OK")))
+        .frame(minWidth: 820, minHeight: 620)
+        .onChange(of: method) { _ in
+            saveError = nil
+            cookie = ""
+        }
+        .onDisappear {
+            saveTask?.cancel()
+            saveError = nil
+            cookie = ""
         }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
             if method == .browser { browser.updateSessionState() }
@@ -57,7 +70,7 @@ struct AddAccountView: View {
 
     private var browserSignIn: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Use the Roblox page below to sign in. When the page is ready, select Save This Account. The app saves the Roblox sign-in in Keychain, the private password storage built into macOS. It never sees or saves your password.")
+            Text("Sign in below, then select Save This Account. For passkeys, sign in with your regular browser and use Paste .ROBLOSECURITY here.")
                 .foregroundStyle(.secondary)
 
             ZStack {
@@ -76,40 +89,59 @@ struct AddAccountView: View {
                 )
                 .foregroundStyle(browser.hasSession ? .green : .secondary)
                 Spacer()
-                Button(store.isWorking ? "Saving" : "Save This Account") {
-                    Task {
-                        guard let sessionCookie = await browser.sessionCookie() else { return }
-                        if await store.importSession(sessionCookie) { dismiss() }
-                    }
+                Button(isSaving ? "Saving…" : "Save This Account") {
+                    saveAccount { await browser.sessionCookie() }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(!browser.hasSession || store.isWorking)
+                .disabled(!browser.hasSession || isSaving || store.isWorking)
             }
         }
     }
 
     private var cookieImport: some View {
         Form {
-            Section("Advanced: Paste a Roblox Session") {
-                SecureField(".ROBLOSECURITY value", text: $cookie)
-                Text("Most people should use Sign In on Roblox. Use this option only if you already know how to copy the .ROBLOSECURITY value from an account you own. This value can access the account. Protect it like a password.")
+            Section("Roblox session") {
+                SecureField(".ROBLOSECURITY value", text: $cookie, prompt: Text("Paste the value here"))
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(isSaving)
+                Text("Use a session value from your own Roblox account. Protect it like a password.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             HStack {
                 Spacer()
-                Button(store.isWorking ? "Checking" : "Check and Save Account") {
-                    Task {
-                        if await store.importSession(cookie) { dismiss() }
-                    }
+                Button(isSaving ? "Checking…" : "Check and Save Account") {
+                    let value = cookie
+                    saveAccount { value }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(cookie.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isWorking)
+                .disabled(cookie.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving || store.isWorking)
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func saveAccount(_ session: @escaping @MainActor () async -> String?) {
+        guard !isSaving, !store.isWorking else { return }
+        saveError = nil
+        saveTask = Task {
+            defer { saveTask = nil }
+            do {
+                guard let value = await session() else {
+                    if !Task.isCancelled { saveError = "Sign in on Roblox, then try again." }
+                    return
+                }
+                try Task.checkCancellation()
+                try await store.importSession(value)
+                cookie = ""
+                openWindow(id: "accounts")
+                dismiss()
+            } catch {
+                if !Task.isCancelled { saveError = error.localizedDescription }
+            }
+        }
     }
 }

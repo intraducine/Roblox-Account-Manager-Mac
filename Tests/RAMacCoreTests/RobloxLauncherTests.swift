@@ -293,11 +293,10 @@ final class RobloxLauncherTests: XCTestCase {
             .appendingPathComponent("ram-launch-settings-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let accountID = UUID()
-        let settingsDirectory = root.appendingPathComponent("User Library/Roblox", isDirectory: true)
-        let launcher = ParallelRobloxLauncher(
-            instancesRoot: root.appendingPathComponent("Instances", isDirectory: true),
-            robloxSettingsDirectory: settingsDirectory
-        )
+        let instancesRoot = root.appendingPathComponent("Instances", isDirectory: true)
+        let settingsDirectory = ParallelRobloxLauncher.isolatedHomeURL(instancesRoot: instancesRoot, accountID: accountID)
+            .appendingPathComponent("Library/Roblox")
+        let launcher = ParallelRobloxLauncher(instancesRoot: instancesRoot)
         _ = try await launcher.prepareIsolatedEnvironment(for: accountID)
 
         try await launcher.prepareLaunchSettings(.unchanged, for: accountID)
@@ -312,11 +311,9 @@ final class RobloxLauncherTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let accountID = UUID()
         let instancesRoot = root.appendingPathComponent("Instances", isDirectory: true)
-        let settingsDirectory = root.appendingPathComponent("User Library/Roblox", isDirectory: true)
-        let launcher = ParallelRobloxLauncher(
-            instancesRoot: instancesRoot,
-            robloxSettingsDirectory: settingsDirectory
-        )
+        let settingsDirectory = ParallelRobloxLauncher.isolatedHomeURL(instancesRoot: instancesRoot, accountID: accountID)
+            .appendingPathComponent("Library/Roblox")
+        let launcher = ParallelRobloxLauncher(instancesRoot: instancesRoot)
         _ = try await launcher.prepareIsolatedEnvironment(for: accountID)
         let settingsURL = settingsDirectory.appendingPathComponent("GlobalBasicSettings_13.xml")
         try FileManager.default.createDirectory(at: settingsDirectory, withIntermediateDirectories: true)
@@ -352,11 +349,18 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertEqual(try settingValue("MasterVolume", in: document), "0.25")
         XCTAssertEqual(try settingValue("GraphicsQualityLevel", in: document), "21")
         XCTAssertEqual(try settingValue("UnrelatedSetting", in: document), "keep-me")
-        let unusedIsolatedURL = ParallelRobloxLauncher.isolatedHomeURL(
-            instancesRoot: instancesRoot,
-            accountID: accountID
-        ).appendingPathComponent("Library/Roblox/GlobalBasicSettings_13.xml")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: unusedIsolatedURL.path))
+        let secondID = UUID()
+        try await launcher.prepareLaunchSettings(
+            RobloxLaunchSettings(graphics: .manual, graphicsQuality: 8, overridesVolume: true, volume: 0.75),
+            for: secondID
+        )
+        let secondURL = ParallelRobloxLauncher.isolatedHomeURL(instancesRoot: instancesRoot, accountID: secondID)
+            .appendingPathComponent("Library/Roblox/GlobalBasicSettings_13.xml")
+        let second = try XMLDocument(data: Data(contentsOf: secondURL))
+        XCTAssertEqual(try settingValue("SavedQualityLevel", in: second), "8")
+        XCTAssertEqual(try settingValue("MasterVolume", in: second), "0.75")
+        let firstAfterSecondLaunch = try XMLDocument(data: Data(contentsOf: settingsURL))
+        XCTAssertEqual(try settingValue("MasterVolume", in: firstAfterSecondLaunch), "0.25")
     }
 
     func testLaunchSettingsClampValuesAndSupportAutomaticGraphics() async throws {
@@ -364,11 +368,10 @@ final class RobloxLauncherTests: XCTestCase {
             .appendingPathComponent("ram-launch-settings-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let accountID = UUID()
-        let settingsDirectory = root.appendingPathComponent("User Library/Roblox", isDirectory: true)
-        let launcher = ParallelRobloxLauncher(
-            instancesRoot: root.appendingPathComponent("Instances", isDirectory: true),
-            robloxSettingsDirectory: settingsDirectory
-        )
+        let instancesRoot = root.appendingPathComponent("Instances", isDirectory: true)
+        let settingsDirectory = ParallelRobloxLauncher.isolatedHomeURL(instancesRoot: instancesRoot, accountID: accountID)
+            .appendingPathComponent("Library/Roblox")
+        let launcher = ParallelRobloxLauncher(instancesRoot: instancesRoot)
         _ = try await launcher.prepareIsolatedEnvironment(for: accountID)
 
         try await launcher.prepareLaunchSettings(
@@ -726,7 +729,7 @@ final class RobloxLauncherTests: XCTestCase {
 
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ram-update-device-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        let launcher = ParallelRobloxLauncher(instancesRoot: root, robloxSettingsDirectory: root.appendingPathComponent("Settings"))
+        let launcher = ParallelRobloxLauncher(instancesRoot: root)
         do {
             _ = try await launcher.launch(builder.makeAppURL(ticket: "invalid-update-device-ticket"), for: UUID(), mode: .unmodifiedParallel)
             XCTFail("An outdated installation must not start a managed client.")
@@ -756,7 +759,7 @@ final class RobloxLauncherTests: XCTestCase {
 
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ram-version-gate-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        let launcher = ParallelRobloxLauncher(instancesRoot: root, robloxSettingsDirectory: root.appendingPathComponent("Settings"))
+        let launcher = ParallelRobloxLauncher(instancesRoot: root)
         let modes: [RobloxLaunchMode] = [.unmodifiedParallel, .unmodifiedParallel, .modifiedParallel]
         for mode in modes {
             let accountID = UUID()
@@ -875,6 +878,8 @@ final class RobloxLauncherTests: XCTestCase {
         _ = try await launcher.launch(url, for: accountID, mode: .unmodifiedParallel)
         let running = await launcher.runningAccountIDs(from: [accountID])
         XCTAssertEqual(running, [accountID])
+        let activated = await launcher.bringToFront(accountID: accountID)
+        XCTAssertTrue(activated)
     }
 
     func testLiveConcurrentUnmodifiedLaunchWhenEnabled() async throws {
@@ -900,12 +905,16 @@ final class RobloxLauncherTests: XCTestCase {
         )
 
         let instances = try await withThrowingTaskGroup(of: ParallelRobloxInstance.self) { group in
-            for accountID in accountIDs {
+            for (index, accountID) in accountIDs.enumerated() {
                 group.addTask {
                     try await launcher.launch(
                         invalidTicketURL,
                         for: accountID,
-                        mode: .unmodifiedParallel
+                        mode: .unmodifiedParallel,
+                        settings: RobloxLaunchSettings(
+                            graphics: .manual, graphicsQuality: index + 2, overridesVolume: true,
+                            volume: index == 0 ? 0.25 : 0.75
+                        )
                     )
                 }
             }
@@ -918,6 +927,13 @@ final class RobloxLauncherTests: XCTestCase {
         XCTAssertEqual(Set(instances.map(\.processIdentifier)).count, 2)
         let runningAfterLaunch = await launcher.runningAccountIDs(from: accountIDs)
         XCTAssertEqual(runningAfterLaunch, Set(accountIDs))
+        for (index, accountID) in accountIDs.enumerated() {
+            let settings = ParallelRobloxLauncher.isolatedHomeURL(instancesRoot: root, accountID: accountID)
+                .appendingPathComponent("Library/Roblox/GlobalBasicSettings_13.xml")
+            let document = try XMLDocument(data: Data(contentsOf: settings))
+            XCTAssertEqual(try settingValue("SavedQualityLevel", in: document), String(index + 2))
+            XCTAssertEqual(try settingValue("MasterVolume", in: document), index == 0 ? "0.25" : "0.75")
+        }
         for instance in instances {
             XCTAssertEqual(kill(instance.processIdentifier, 0), 0)
             XCTAssertTrue(instance.applicationURL.path.contains("/Unmodified/Roblox.app"))

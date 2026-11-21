@@ -108,9 +108,7 @@ struct AccountWebsiteWindow: View {
             }
         }
         .frame(minWidth: 900, minHeight: 650)
-        .alert(item: $store.notice) { notice in
-            Alert(title: Text(notice.title), message: Text(notice.message), dismissButton: .default(Text("OK")))
-        }
+        .robloxUpdateRecovery(store)
     }
 
     private func identityBar(_ account: ManagedAccount) -> some View {

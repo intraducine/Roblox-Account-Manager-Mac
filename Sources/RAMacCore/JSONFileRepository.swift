@@ -34,7 +34,7 @@ public final class JSONFileRepository<Record: Codable & Sendable>: @unchecked Se
     }
 
     public func loadWithRecovery() throws -> JSONFileRepositoryLoadResult<Record> {
-        guard fileManager.fileExists(atPath: fileURL.path) else {
+        guard fileManager.fileExists(atPath: fileURL.path) || fileManager.fileExists(atPath: backupURL.path) else {
             return JSONFileRepositoryLoadResult(records: [], recoveredFromBackup: false)
         }
         do {
@@ -53,7 +53,7 @@ public final class JSONFileRepository<Record: Codable & Sendable>: @unchecked Se
             do {
                 let backupData = try Data(contentsOf: backupURL)
                 let records = try decoder.decode([Record].self, from: backupData)
-                try? backupData.write(to: fileURL, options: [.atomic, .completeFileProtection])
+                try backupData.write(to: fileURL, options: [.atomic, .completeFileProtection])
                 return JSONFileRepositoryLoadResult(records: records, recoveredFromBackup: true)
             } catch {
                 throw RepositoryError.unreadable(
@@ -66,10 +66,14 @@ public final class JSONFileRepository<Record: Codable & Sendable>: @unchecked Se
 
     public func save(_ records: [Record]) throws {
         try fileManager.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if fileManager.fileExists(atPath: fileURL.path),
-           let currentData = try? Data(contentsOf: fileURL),
-           (try? decoder.decode([Record].self, from: currentData)) != nil {
+        if fileManager.fileExists(atPath: fileURL.path) {
+            let currentData = try Data(contentsOf: fileURL)
+            _ = try decoder.decode([Record].self, from: currentData)
             try currentData.write(to: backupURL, options: [.atomic, .completeFileProtection])
+        } else if fileManager.fileExists(atPath: backupURL.path) {
+            throw RepositoryError.unreadable(
+                fileName: fileURL.lastPathComponent, reason: "Reload its backup before saving changes."
+            )
         }
         try encoder.encode(records).write(to: fileURL, options: [.atomic, .completeFileProtection])
     }

@@ -9,8 +9,6 @@ struct ContentView: View {
     let performsAutomaticChecks: Bool
     @State private var showsLicense = false
     @State private var pendingRemoval: ManagedAccount?
-    @State private var batchPlaceID = ""
-    @State private var batchServerSelection = RobloxServerSelection.automatic
     @State private var showsFallbackWarning = false
     @State private var showsNewGroup = false
     @State private var newGroupName = ""
@@ -36,8 +34,8 @@ struct ContentView: View {
             if !store.batchSelectedIDs.isEmpty {
                 BatchLaunchBar(
                     store: store,
-                    placeID: $batchPlaceID,
-                    serverSelection: $batchServerSelection,
+                    placeID: $store.batchPlaceID,
+                    serverSelection: $store.batchServerSelection,
                     onRequestModifiedFallback: { showsFallbackWarning = true }
                 )
             } else if let account = store.selectedAccount {
@@ -51,6 +49,7 @@ struct ContentView: View {
                 emptyState
             }
         }
+        .robloxUpdateRecovery(store)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
@@ -88,7 +87,10 @@ struct ContentView: View {
                 .help("Send feedback about the app")
 
                 Menu {
-                    Button("Diagnostics and Backup") { openWindow(id: "diagnostics") }
+                    Button("Add Account…") { openWindow(id: "add-account") }
+                        .disabled(store.isWorking || store.isBatchLaunching || store.isOpeningSelectedApps)
+                    Divider()
+                    ToolsMenuItems()
                     Divider()
                     Button("About") { showsLicense = true }
                 } label: {
@@ -99,9 +101,6 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showsLicense) {
             LicenseNoticeView(updater: updater)
-        }
-        .alert(item: $store.notice) { notice in
-            Alert(title: Text(notice.title), message: Text(notice.message), dismissButton: .default(Text("OK")))
         }
         .confirmationDialog(
             "Remove \(pendingRemoval?.title ?? "this account")?",
@@ -165,7 +164,7 @@ struct ContentView: View {
             )
         }
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
-            Task { await store.refreshRunningInstances() }
+            Task { await store.pollRunningAccounts() }
         }
         .task {
             if performsAutomaticChecks {
@@ -176,10 +175,10 @@ struct ContentView: View {
         .onAppear { AppSmokeTestConfiguration.reportMainWindowReady() }
         .onChange(of: store.batchSelectedIDs) { selectedIDs in
             guard !selectedIDs.isEmpty,
-                  batchPlaceID.isEmpty,
+                  store.batchPlaceID.isEmpty,
                   let selectedAccount = store.selectedAccount else { return }
-            batchPlaceID = selectedAccount.savedPlaceID
-            batchServerSelection = .savedValue(selectedAccount.savedServer)
+            store.batchPlaceID = selectedAccount.savedPlaceID
+            store.batchServerSelection = .savedValue(selectedAccount.savedServer)
         }
         .onChange(of: store.groupNames) { groupNames in
             if let selectedGroupFilter,
@@ -205,6 +204,23 @@ struct ContentView: View {
         VStack(spacing: 0) {
             if !store.accounts.isEmpty {
                 groupFilterBar
+            }
+            if store.launchSets.contains(where: \.isPinned) {
+                Menu("Pinned Launch Sets") {
+                    ForEach(store.launchSets.filter(\.isPinned)) { launchSet in
+                        Button(launchSet.name) {
+                            Task {
+                                if await store.runLaunchSet(launchSet) == .choosePlayer {
+                                    openWindow(id: "joinable-players")
+                                }
+                            }
+                        }
+                    }
+                }
+                .disabled(store.isBusyWithRoblox)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, AppGeometry.windowEdgeControlInset)
+                .padding(.vertical, 6)
             }
 
             List(selection: $store.selectedID) {
@@ -347,20 +363,20 @@ struct ContentView: View {
                 .disabled(store.isWorking || store.isBatchLaunching || store.isOpeningSelectedApps)
             }
 
-            if !store.runningAccountIDs.isEmpty {
+            if !store.runningAccountIDs.isEmpty || !store.lastBatchResults.isEmpty {
                 HStack(spacing: 10) {
-                    Text("\(store.runningAccountIDs.count) running")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button(store.isStoppingAll ? "Stopping" : "Stop All", role: .destructive) {
-                        Task { await store.stopAll() }
+                    Button(store.runningAccountIDs.isEmpty ? "Last Batch" : "\(store.runningAccountIDs.count) Running") {
+                        openWindow(id: "running-accounts")
                     }
-                    .disabled(
-                        store.isWorking
-                            || store.isBatchLaunching
-                            || !store.appOpeningAccountIDs.isEmpty
-                    )
-                    .help("Stop every Roblox client started by this manager")
+                    .help("Show running accounts and the last batch")
+                    Spacer()
+                    if !store.runningAccountIDs.isEmpty {
+                        Button(store.isStoppingAll ? "Stopping" : "Stop All", role: .destructive) {
+                            Task { await store.stopAll() }
+                        }
+                        .disabled(store.isBusyWithRoblox)
+                        .help("Stop every Roblox client started by this manager")
+                    }
                 }
             }
         }

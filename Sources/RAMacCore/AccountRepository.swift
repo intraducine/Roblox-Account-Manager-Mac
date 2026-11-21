@@ -20,14 +20,40 @@ public final class AccountRepository: @unchecked Sendable {
     }
 
     public func load() throws -> [ManagedAccount] {
+        try loadWithRecovery().records
+    }
+
+    public func loadWithRecovery(
+        migrateLegacyNote: ((ManagedAccount) throws -> Void)? = nil
+    ) throws -> JSONFileRepositoryLoadResult<ManagedAccount> {
         let file = dataDirectory.appendingPathComponent("Accounts.json")
-        guard fileManager.fileExists(atPath: file.path) else { return [] }
+        let backup = dataDirectory.appendingPathComponent("Accounts.backup.json")
+        guard fileManager.fileExists(atPath: file.path) || fileManager.fileExists(atPath: backup.path) else {
+            return JSONFileRepositoryLoadResult(records: [], recoveredFromBackup: false)
+        }
+        let accounts: [ManagedAccount]
+        do {
+            accounts = try readAccounts(at: file)
+        } catch {
+            guard let recovered = try? readAccounts(at: backup) else { throw error }
+            for account in recovered where !account.notes.isEmpty {
+                guard let migrateLegacyNote else { throw RepositoryError.recoveryRequired }
+                try migrateLegacyNote(account)
+            }
+            try encoder.encode(recovered).write(to: file, options: [.atomic, .completeFileProtection])
+            try scrubLegacyNotesFromBackup()
+            return JSONFileRepositoryLoadResult(records: recovered, recoveredFromBackup: true)
+        }
+        try scrubLegacyNotesFromBackup()
+        return JSONFileRepositoryLoadResult(records: accounts, recoveredFromBackup: false)
+    }
+
+    private func readAccounts(at file: URL) throws -> [ManagedAccount] {
         let accounts = try decoder.decode([ManagedAccount].self, from: Data(contentsOf: file))
         guard Set(accounts.map(\.id)).count == accounts.count,
               Set(accounts.map(\.userID)).count == accounts.count else {
             throw RepositoryError.duplicateAccount
         }
-        try scrubLegacyNotesFromBackup()
         return accounts
     }
 
@@ -37,16 +63,10 @@ public final class AccountRepository: @unchecked Sendable {
         let backup = dataDirectory.appendingPathComponent("Accounts.backup.json")
 
         if fileManager.fileExists(atPath: file.path) {
-            try? fileManager.removeItem(at: backup)
-            if let previousAccounts = try? decoder.decode(
-                [ManagedAccount].self,
-                from: Data(contentsOf: file)
-            ) {
-                try encoder.encode(previousAccounts).write(
-                    to: backup,
-                    options: [.atomic, .completeFileProtection]
-                )
-            }
+            let previousAccounts = try readAccounts(at: file)
+            try encoder.encode(previousAccounts).write(to: backup, options: [.atomic, .completeFileProtection])
+        } else if fileManager.fileExists(atPath: backup.path) {
+            throw RepositoryError.recoveryRequired
         }
 
         try encoder.encode(accounts).write(to: file, options: [.atomic, .completeFileProtection])
@@ -77,28 +97,24 @@ public final class AccountRepository: @unchecked Sendable {
     private func scrubLegacyNotesFromBackup() throws {
         let backup = dataDirectory.appendingPathComponent("Accounts.backup.json")
         guard fileManager.fileExists(atPath: backup.path) else { return }
-        do {
-            let data = try Data(contentsOf: backup)
-            let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-            guard rows?.contains(where: { $0["notes"] != nil }) == true else { return }
-            let accounts = try decoder.decode(
-                [ManagedAccount].self,
-                from: data
-            )
-            try encoder.encode(accounts).write(
-                to: backup,
-                options: [.atomic, .completeFileProtection]
-            )
-        } catch {
-            try fileManager.removeItem(at: backup)
-        }
+        guard let data = try? Data(contentsOf: backup),
+              let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              rows.contains(where: { $0["notes"] != nil }),
+              let accounts = try? readAccounts(at: backup) else { return }
+        try encoder.encode(accounts).write(to: backup, options: [.atomic, .completeFileProtection])
     }
 
     public enum RepositoryError: LocalizedError {
         case duplicateAccount
+        case recoveryRequired
 
         public var errorDescription: String? {
-            "Accounts.json contains a duplicate account. Restore Accounts.backup.json or remove the duplicate record."
+            switch self {
+            case .duplicateAccount:
+                return "Accounts.json contains a duplicate account. Restore Accounts.backup.json or remove the duplicate record."
+            case .recoveryRequired:
+                return "Reload the account backup before saving changes."
+            }
         }
     }
 }

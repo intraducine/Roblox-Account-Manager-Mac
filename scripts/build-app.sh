@@ -110,8 +110,32 @@ else
     print "Using a stable installed code-signing identity."
 fi
 
-codesign_arguments=(--force --deep --sign "$signing_identity")
-codesign_arguments+=(--timestamp=none)
+if (( requires_project_certificate )) && [[ "$signing_identity" != "-" ]]; then
+    keychain_archive="$project_dir/packaging/KeychainService.xpc.zip"
+    expected_keychain_archive_sha256=136d4757e0ee4c04ffde1be5cd3fa13e039793e339e3171e7fc285b46c28c056
+    keychain_archive_sha256=$(/usr/bin/shasum -a 256 "$keychain_archive" | /usr/bin/awk '{ print $1 }')
+    if [[ "$keychain_archive_sha256" != "$expected_keychain_archive_sha256" ]]; then
+        print -u2 "The Keychain service changed. Its signature must stay the same across updates."
+        exit 1
+    fi
+    keychain_certificate_sha1=${(L)signing_identity}
+    if [[ ! "$keychain_certificate_sha1" =~ '^[a-f0-9]{40}$' ]]; then
+        print -u2 "Use the approved certificate fingerprint as the release signing identity."
+        exit 1
+    fi
+    xpc_dir="$contents_dir/XPCServices"
+    xpc_id=com.intraducine.RobloxAccountManager.Keychain
+    /bin/mkdir -p "$xpc_dir"
+    /usr/bin/ditto -x -k "$keychain_archive" "$xpc_dir"
+    /usr/bin/codesign --verify --strict --all-architectures \
+        -R="identifier \"$xpc_id\" and certificate leaf = H\"$keychain_certificate_sha1\"" \
+        "$xpc_dir/$xpc_id.xpc"
+    /usr/libexec/PlistBuddy -c 'Add :RAMKeychainAccessVersion string 1' "$contents_dir/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :RAMKeychainCertificateSHA1 string $keychain_certificate_sha1" "$contents_dir/Info.plist"
+fi
+
+# Re-sign the app without re-signing its Keychain service.
+codesign_arguments=(--force --sign "$signing_identity" --options runtime --timestamp=none)
 /usr/bin/codesign "${codesign_arguments[@]}" "$app_dir"
 /usr/bin/plutil -lint "$contents_dir/Info.plist"
 /usr/bin/codesign --verify --deep --strict "$app_dir"

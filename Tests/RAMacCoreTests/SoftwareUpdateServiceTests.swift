@@ -375,6 +375,23 @@ final class SoftwareUpdateServiceTests: XCTestCase {
         )
     }
 
+    func testRestoreReportsMissingBackupAndKeepsTheAppInPlace() throws {
+        let fixture = try Self.makeInstallerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.workspaceURL) }
+        let missing = fixture.workspaceURL.appendingPathComponent("missing.app")
+        let installer = SoftwareUpdateInstaller(
+            validateApplication: { _, _, _ in },
+            prepareProtectedKeychainAccess: { _, _, _ in }
+        )
+        XCTAssertThrowsError(try installer.restorePreviousVersion(from: missing, to: fixture.currentURL)) { error in
+            XCTAssertEqual(error as? SoftwareUpdateError, .restorationFailed(backupURL: missing))
+        }
+        XCTAssertEqual(
+            try String(contentsOf: fixture.currentURL.appendingPathComponent("marker"), encoding: .utf8),
+            "current"
+        )
+    }
+
     func testInstallerKeepsTheValidatedReplacementAndBackup() throws {
         let fixture = try Self.makeInstallerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.workspaceURL) }

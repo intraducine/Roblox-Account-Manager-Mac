@@ -63,13 +63,19 @@ public final class KeychainVault: SecretVault, @unchecked Sendable {
     private static let containerAccount = "sessions-v2"
     private static let legacyContainerAccount = "sessions-v1"
     private static let privateServerPrefix = "private-server:"
-    private let service: String
+    private let access: KeychainItemAccess
     private let lock = NSLock()
     private var cachedSessions: [String: String]?
 
     public init(service: String = "com.intraducine.RobloxAccountManager.session") {
-        self.service = service
+        access = KeychainItemAccess(service: service)
     }
+
+    #if RAM_KEYCHAIN_FIXTURE
+    init(access: KeychainItemAccess) {
+        self.access = access
+    }
+    #endif
 
     public func save(_ secret: String, for accountID: UUID) throws {
         lock.lock()
@@ -121,9 +127,10 @@ public final class KeychainVault: SecretVault, @unchecked Sendable {
     public func savePrivateServerCapabilities(_ capabilities: [String: String]) throws {
         lock.lock()
         defer { lock.unlock() }
-        var sessions = try loadSessionsLocked()
-        sessions = sessions.filter { !$0.key.hasPrefix(Self.privateServerPrefix) }
+        let previous = try loadSessionsLocked()
+        var sessions = previous.filter { !$0.key.hasPrefix(Self.privateServerPrefix) }
         sessions.merge(capabilities.filter { $0.key.hasPrefix(Self.privateServerPrefix) }) { _, new in new }
+        guard sessions != previous else { return }
         try saveSessionsLocked(sessions)
     }
 
@@ -168,24 +175,9 @@ public final class KeychainVault: SecretVault, @unchecked Sendable {
 
     private func saveSessionsLocked(_ sessions: [String: String]) throws {
         let data = try JSONEncoder().encode(SessionContainer(sessions: sessions))
-        let base = itemQuery(account: Self.containerAccount)
-        let status = SecItemUpdate(
-            base as CFDictionary,
-            [kSecValueData as String: data] as CFDictionary
-        )
-        if status == errSecSuccess {
-            cachedSessions = sessions
-            return
-        }
-        guard status == errSecItemNotFound else {
+        let status = access.write(data, account: Self.containerAccount)
+        guard status == errSecSuccess else {
             throw SecretVaultError.unexpectedStatus(status)
-        }
-        var add = base
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        let addStatus = SecItemAdd(add as CFDictionary, nil)
-        guard addStatus == errSecSuccess else {
-            throw SecretVaultError.unexpectedStatus(addStatus)
         }
         cachedSessions = sessions
     }
@@ -199,32 +191,20 @@ public final class KeychainVault: SecretVault, @unchecked Sendable {
     }
 
     private func readDataLocked(account: String) throws -> Data? {
-        var query = itemQuery(account: account)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let (status, data) = access.read(account)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess else {
             throw SecretVaultError.unexpectedStatus(status)
         }
-        guard let data = result as? Data else { throw SecretVaultError.invalidData }
+        guard let data else { throw SecretVaultError.invalidData }
         return data
     }
 
     private func deleteItemLocked(account: String) throws {
-        let status = SecItemDelete(itemQuery(account: account) as CFDictionary)
+        let status = access.delete(account)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw SecretVaultError.unexpectedStatus(status)
         }
-    }
-
-    private func itemQuery(account: String) -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
     }
 
     private static func isLegacyAccessFailure(_ error: Error) -> Bool {
@@ -248,13 +228,19 @@ public final class KeychainProfileNoteVault: ProfileNoteVault, @unchecked Sendab
     }
 
     private static let containerAccount = "notes-v1"
-    private let service: String
+    private let access: KeychainItemAccess
     private let lock = NSLock()
     private var cachedNotes: [String: String]?
 
     public init(service: String = "com.intraducine.RobloxAccountManager.profile-notes") {
-        self.service = service
+        access = KeychainItemAccess(service: service)
     }
+
+    #if RAM_KEYCHAIN_FIXTURE
+    init(access: KeychainItemAccess) {
+        self.access = access
+    }
+    #endif
 
     public func saveNote(_ note: String, for accountID: UUID) throws {
         lock.lock()
@@ -276,7 +262,7 @@ public final class KeychainProfileNoteVault: ProfileNoteVault, @unchecked Sendab
         var notes = try loadNotesLocked()
         notes[accountID.uuidString] = nil
         if notes.isEmpty {
-            let status = SecItemDelete(itemQuery() as CFDictionary)
+            let status = access.delete(Self.containerAccount)
             guard status == errSecSuccess || status == errSecItemNotFound else {
                 throw ProfileNoteVaultError.unexpectedStatus(status)
             }
@@ -288,11 +274,7 @@ public final class KeychainProfileNoteVault: ProfileNoteVault, @unchecked Sendab
 
     private func loadNotesLocked() throws -> [String: String] {
         if let cachedNotes { return cachedNotes }
-        var query = itemQuery()
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let (status, data) = access.read(Self.containerAccount)
         if status == errSecItemNotFound {
             cachedNotes = [:]
             return [:]
@@ -300,7 +282,7 @@ public final class KeychainProfileNoteVault: ProfileNoteVault, @unchecked Sendab
         guard status == errSecSuccess else {
             throw ProfileNoteVaultError.unexpectedStatus(status)
         }
-        guard let data = result as? Data,
+        guard let data,
               let container = try? JSONDecoder().decode(NoteContainer.self, from: data),
               container.version == 1 else {
             throw ProfileNoteVaultError.invalidData
@@ -311,33 +293,10 @@ public final class KeychainProfileNoteVault: ProfileNoteVault, @unchecked Sendab
 
     private func saveNotesLocked(_ notes: [String: String]) throws {
         let data = try JSONEncoder().encode(NoteContainer(notes: notes))
-        let base = itemQuery()
-        let status = SecItemUpdate(
-            base as CFDictionary,
-            [kSecValueData as String: data] as CFDictionary
-        )
-        if status == errSecSuccess {
-            cachedNotes = notes
-            return
-        }
-        guard status == errSecItemNotFound else {
+        let status = access.write(data, account: Self.containerAccount)
+        guard status == errSecSuccess else {
             throw ProfileNoteVaultError.unexpectedStatus(status)
         }
-        var add = base
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        let addStatus = SecItemAdd(add as CFDictionary, nil)
-        guard addStatus == errSecSuccess else {
-            throw ProfileNoteVaultError.unexpectedStatus(addStatus)
-        }
         cachedNotes = notes
-    }
-
-    private func itemQuery() -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: Self.containerAccount
-        ]
     }
 }

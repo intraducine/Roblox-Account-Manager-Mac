@@ -49,18 +49,21 @@ final class JSONFileRepositoryTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.backupURL.path))
     }
 
-    func testSavingOverDamagedCurrentFileDoesNotReplaceAValidBackup() throws {
+    func testSavingRequiresRecoveryBeforeChangingADamagedCurrentFile() throws {
         let fixture = try makeFixture()
         defer { fixture.remove() }
 
         try fixture.repository.save([Record(value: "first")])
         try fixture.repository.save([Record(value: "second")])
         let backupData = try Data(contentsOf: fixture.backupURL)
-        try Data("not json".utf8).write(to: fixture.fileURL)
+        let damaged = Data("not json".utf8)
+        try damaged.write(to: fixture.fileURL)
 
-        try fixture.repository.save([Record(value: "third")])
-
+        XCTAssertThrowsError(try fixture.repository.save([Record(value: "third")]))
+        XCTAssertEqual(try Data(contentsOf: fixture.fileURL), damaged)
         XCTAssertEqual(try Data(contentsOf: fixture.backupURL), backupData)
+        XCTAssertTrue(try fixture.repository.loadWithRecovery().recoveredFromBackup)
+        try fixture.repository.save([Record(value: "third")])
         XCTAssertEqual(try fixture.repository.load(), [Record(value: "third")])
     }
 

@@ -38,6 +38,15 @@ final class SecretVaultTests: XCTestCase {
         XCTAssertEqual(try keychainAccounts(service: service), ["sessions-v2"])
     }
 
+    func testEmptyPrivateServerLinksDoNotCreateAKeychainItem() throws {
+        let service = "com.intraducine.RobloxAccountManager.tests.\(UUID().uuidString)"
+        let vault = KeychainVault(service: service)
+        defer { deleteAll(service: service) }
+
+        try vault.savePrivateServerCapabilities([:])
+        XCTAssertTrue(try keychainAccounts(service: service).isEmpty)
+    }
+
     func testProfileNotesUseTheirOwnKeychainContainer() throws {
         let service = "com.intraducine.RobloxAccountManager.notes-tests.\(UUID().uuidString)"
         let accountID = UUID()

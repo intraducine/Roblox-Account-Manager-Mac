@@ -57,3 +57,5 @@ gh release create "v$release_version" dist/Roblox-Account-Manager-for-Mac-"$rele
 ```
 
 Read the published release back, download its assets, and verify them. Keep the updater's signature checks, backup, installation validation, and restore path intact.
+
+Run `scripts/test-keychain-continuity.sh` on the signing Mac to verify two signed updates against an isolated macOS Keychain. The signed Keychain service archive in `packaging` is reused byte for byte so its approval survives app updates. Changing the service binary or its signature requires a new Keychain approval.

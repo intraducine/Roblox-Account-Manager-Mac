@@ -27,6 +27,28 @@ final class AccountRepositoryTests: XCTestCase {
         ))
     }
 
+    func testDamagedAccountsKeepTheBackupUntilRecovery() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = AccountRepository(dataDirectory: directory)
+        let saved = ManagedAccount(userID: 42, username: "builder", displayName: "Builder")
+        try repository.save([saved])
+        try repository.save([])
+        let primary = directory.appendingPathComponent("Accounts.json")
+        let backup = directory.appendingPathComponent("Accounts.backup.json")
+        let originalBackup = try Data(contentsOf: backup)
+        let damage = Data("not json".utf8)
+        try damage.write(to: primary)
+
+        XCTAssertThrowsError(try repository.save([]))
+        XCTAssertEqual(try Data(contentsOf: backup), originalBackup)
+        XCTAssertEqual(try Data(contentsOf: primary), damage)
+        let result = try repository.loadWithRecovery()
+        XCTAssertTrue(result.recoveredFromBackup)
+        XCTAssertEqual(result.records, [saved])
+        XCTAssertEqual(try repository.load(), [saved])
+    }
+
     func testLoadsLegacySingleGroupAndSavesMultipleGroups() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

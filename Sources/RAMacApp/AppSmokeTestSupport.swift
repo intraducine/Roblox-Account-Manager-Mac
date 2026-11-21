@@ -37,3 +37,20 @@ enum AppSmokeTestConfiguration {
         }
     }
 }
+
+struct AppSmokeTestStorage: SecretVault, ProfileNoteVault, WindowLayoutPersisting {
+    func read(for accountID: UUID) throws -> String? { nil }
+    func save(_ secret: String, for accountID: UUID) throws { throw CocoaError(.featureUnsupported) }
+    func delete(for accountID: UUID) throws {}
+    func readPrivateServerCapabilities() throws -> [String: String] { [:] }
+    func savePrivateServerCapabilities(_ capabilities: [String: String]) throws {
+        guard capabilities.isEmpty else { throw CocoaError(.featureUnsupported) }
+    }
+
+    func readNote(for accountID: UUID) throws -> String? { nil }
+    func saveNote(_ note: String, for accountID: UUID) throws { throw CocoaError(.featureUnsupported) }
+    func deleteNote(for accountID: UUID) throws {}
+
+    func load() -> [WindowLayoutAssignment] { [] }
+    func save(_ assignments: [WindowLayoutAssignment]) {}
+}

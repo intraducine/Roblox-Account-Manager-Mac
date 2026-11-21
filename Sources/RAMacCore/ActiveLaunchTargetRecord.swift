@@ -37,3 +37,23 @@ public struct ActiveLaunchTargetRecord: Codable, Identifiable, Equatable, Sendab
 }
 
 public typealias ActiveLaunchTargetRepository = JSONFileRepository<ActiveLaunchTargetRecord>
+
+public struct SessionLaunch: Codable, Identifiable, Equatable, Sendable {
+    public var id: UUID { accountID }
+    public let accountID: UUID
+    public let placeID: Int64?
+    public let publicJobID: String?
+    public let usesPrivateServer: Bool
+    public let settings: RobloxLaunchSettings
+
+    public init(
+        accountID: UUID, placeID: Int64?, publicJobID: String?,
+        usesPrivateServer: Bool, settings: RobloxLaunchSettings
+    ) {
+        self.accountID = accountID
+        self.placeID = placeID
+        self.publicJobID = publicJobID
+        self.usesPrivateServer = usesPrivateServer
+        self.settings = settings
+    }
+}

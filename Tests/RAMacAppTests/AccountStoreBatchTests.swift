@@ -151,6 +151,30 @@ final class AccountStoreBatchTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: launchSetURL), damagedData)
     }
 
+    func testSavingAProfileDoesNotEraseLinksWhenTheirFileCannotBeRead() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let server = await fixture.store.savePrivateServer(
+            name: "Test server", link: "https://www.roblox.com/games/1818?privateServerLinkCode=synthetic-recovery"
+        )
+        XCTAssertNotNil(server)
+        let original = try fixture.vault.readPrivateServerCapabilities()
+        XCTAssertEqual(original.count, 1)
+        let primary = fixture.directory.appendingPathComponent("PrivateServers.json")
+        let damaged = Data("not json".utf8)
+        try damaged.write(to: primary)
+        let store = AccountStore(
+            repository: fixture.repository, vault: fixture.vault, api: fixture.api, launcher: fixture.launcher
+        )
+        var account = fixture.accounts[0]
+        account.alias = "Do not save while recovery is pending"
+        store.update(account)
+        XCTAssertEqual(store.notice?.title, "Changes were not saved")
+        XCTAssertEqual(try fixture.vault.readPrivateServerCapabilities(), original)
+        XCTAssertEqual(try Data(contentsOf: primary), damaged)
+        XCTAssertEqual(try fixture.repository.load().first?.alias, "")
+    }
+
     func testDamagedLaunchSetsRestoreTheLastValidBackupAndWarnTheUser() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ram-recovered-launch-sets-\(UUID().uuidString)", isDirectory: true)
@@ -1257,8 +1281,8 @@ final class AccountStoreBatchTests: XCTestCase {
             placeID: 12345
         )
 
-        async let firstRun: Void = fixture.store.runLaunchSet(launchSet)
-        async let secondRun: Void = fixture.store.runLaunchSet(launchSet)
+        async let firstRun = fixture.store.runLaunchSet(launchSet)
+        async let secondRun = fixture.store.runLaunchSet(launchSet)
         _ = await (firstRun, secondRun)
 
         let attempts = await fixture.launcher.orderedAttemptedAccountIDs()
@@ -1334,11 +1358,377 @@ final class AccountStoreBatchTests: XCTestCase {
             windowArrangement: .custom([assignment])
         )
 
-        await fixture.store.runLaunchSet(launchSet)
+        fixture.store.batchPlaceID = "222"
+        fixture.store.batchServerSelection = .manualJob("previous-job")
+        let nextStep = await fixture.store.runLaunchSet(launchSet)
 
+        XCTAssertEqual(nextStep, .browsePublicServers)
+        XCTAssertEqual(fixture.store.batchPlaceID, "12345")
+        XCTAssertEqual(fixture.store.batchServerSelection, .automatic)
+        XCTAssertTrue(fixture.store.showsBatchPublicServers)
         XCTAssertEqual(fixture.store.batchSelectedIDs, Set(fixture.accounts.map(\.id)))
         XCTAssertEqual(fixture.store.batchWindowArrangement, .custom([assignment]))
         XCTAssertEqual(fixture.store.batchLaunchSettingsOverride, launchSettings)
+    }
+
+    func testSavingBatchUsesARepeatableServerChoiceAndPersistsPin() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let settings = RobloxLaunchSettings(graphics: .manual, graphicsQuality: 2)
+        fixture.store.toggleBatchGroup("Wave")
+        fixture.store.batchServerSelection = .manualJob("temporary-job")
+        fixture.store.batchLaunchSettingsOverride = settings
+
+        XCTAssertTrue(fixture.store.saveBatchAsLaunchSet(name: "  Evening  ", placeID: 123, pinned: true))
+
+        let sets = LaunchSetRepository(fileName: "LaunchSets.json", dataDirectory: fixture.directory)
+        let saved = try XCTUnwrap(sets.load().first)
+        XCTAssertEqual(saved.name, "Evening")
+        XCTAssertEqual(saved.placeID, 123)
+        XCTAssertEqual(saved.serverStrategy, .browseBeforeLaunch)
+        XCTAssertTrue(saved.isPinned)
+        XCTAssertEqual(saved.launchSettings, settings)
+        XCTAssertEqual(Set(saved.accountIDs), Set(fixture.accounts.map(\.id)))
+    }
+
+    func testRetryLastBatchUsesOriginalGameAndOnlyFailedAccounts() async throws {
+        let fixture = try makeFixture(failingIndex: 0)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let failed = fixture.accounts[0].id
+        fixture.store.toggleBatchGroup("Wave")
+        await fixture.store.launchBatch(placeText: "123", server: .automatic)
+
+        XCTAssertEqual(fixture.store.lastBatchResults.count, 3)
+        XCTAssertEqual(fixture.store.lastBatchResults[fixture.accounts[1].id], .started)
+        XCTAssertTrue(fixture.store.canRetryLastBatch)
+        fixture.store.clearBatchSelection()
+        fixture.store.batchPlaceID = "456"
+        fixture.store.batchServerSelection = .manualJob("other-job")
+
+        await fixture.store.retryLastBatch()
+
+        let attempts = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertEqual(attempts.count, 4)
+        XCTAssertEqual(attempts.last, failed)
+        XCTAssertEqual(fixture.store.batchPlaceID, "123")
+        XCTAssertEqual(fixture.store.batchServerSelection, .automatic)
+    }
+
+    func testHealthPreflightDistinguishesConnectionFailureFromSignOut() async throws {
+        let fixture = try makeFixture(healthChecker: UnavailableBatchHealthChecker())
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        fixture.store.toggleBatchGroup("Wave")
+        await fixture.store.launchBatch(placeText: "123", server: .automatic)
+
+        XCTAssertEqual(fixture.store.lastBatchResults[fixture.accounts[0].id], .accountUnavailable(.networkUnavailable))
+        XCTAssertEqual(fixture.store.lastBatchResults[fixture.accounts[1].id], .accountUnavailable(.signedOut))
+        XCTAssertNil(fixture.store.lastBatchResults[fixture.accounts[2].id])
+        let attempts = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertTrue(attempts.isEmpty)
+    }
+
+    func testLaunchReadyAccountsStartsOnlyTheReviewedAccounts() async throws {
+        let fixture = try makeFixture(healthChecker: UnavailableBatchHealthChecker())
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        fixture.store.toggleBatchGroup("Wave")
+        await fixture.store.launchBatch(placeText: "123", server: .automatic)
+        XCTAssertEqual(fixture.store.batchReadyIDs, [fixture.accounts[2].id])
+        XCTAssertTrue(fixture.store.batchPausedForReview)
+
+        await fixture.store.launchReadyAccounts()
+
+        let attempts = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertEqual(attempts, [fixture.accounts[2].id])
+        XCTAssertEqual(fixture.store.lastBatchResults[fixture.accounts[2].id], .started)
+        XCTAssertEqual(fixture.store.lastBatchResults[fixture.accounts[1].id], .accountUnavailable(.signedOut))
+        XCTAssertTrue(fixture.store.batchReadyIDs.isEmpty)
+        XCTAssertFalse(fixture.store.batchPausedForReview)
+    }
+
+    func testOldWindowCannotLaunchOrDismissANewerReview() async throws {
+        let fixture = try makeFixture(healthChecker: UnavailableBatchHealthChecker())
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let ids = Set(fixture.accounts.map(\.id))
+        let old = UUID()
+        let newer = UUID()
+        await fixture.store.launchFromLibrary(accountIDs: ids, placeID: 111, server: .automatic, requestID: old)
+        XCTAssertEqual(fixture.store.batchReviewID, old)
+        await fixture.store.runLaunchSet(
+            LaunchSet(name: "Second game", accountIDs: Array(ids), placeID: 222), requestID: newer
+        )
+        XCTAssertEqual(fixture.store.batchReviewID, newer)
+        fixture.store.dismissBatchReview(expectedID: old)
+        await fixture.store.launchReadyAccounts(expectedID: old)
+        let premature = await fixture.launcher.attemptedURLs()
+        XCTAssertTrue(premature.isEmpty)
+        XCTAssertEqual(fixture.store.batchReviewID, newer)
+        await fixture.store.launchReadyAccounts(expectedID: newer)
+        let launched = await fixture.launcher.attemptedURLs()
+        XCTAssertEqual(launched.count, 1)
+        XCTAssertTrue(launched.first?.absoluteString.contains("placeId%3D222") == true)
+    }
+
+    func testOpenAppsUsesTheSameReadyReviewAsAGameLaunch() async throws {
+        let fixture = try makeFixture(healthChecker: UnavailableBatchHealthChecker())
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let ready = fixture.accounts[2].id
+        fixture.store.toggleBatchGroup("Wave")
+        await fixture.store.launchSelectedApps()
+        XCTAssertEqual(fixture.store.batchReadyIDs, [ready])
+        let premature = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertTrue(premature.isEmpty)
+        await fixture.store.launchReadyAccounts()
+        let launched = await fixture.launcher.launchesByAccount()
+        XCTAssertEqual(Set(launched.keys), [ready])
+        XCTAssertNil(fixture.store.lastSession.first?.placeID)
+    }
+
+    func testPlayerServerIgnoresAnUnrelatedPerAccountGame() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let account = fixture.accounts[0]
+        let jobID = "11111111-2222-3333-4444-555555555555"
+        let player = DiscoveredPlayer(
+            candidate: PlayerCandidate(
+                userID: 900, username: "test_player", displayName: "Test Player", sourceAccountIDs: [account.id]
+            ),
+            presence: PlayerPresenceSnapshot(
+                userID: 900, presenceType: .inExperience, placeID: 1818, jobID: jobID
+            ),
+            verification: .unconfirmed(pagesSearched: 1), isPubliclyVisible: false
+        )
+        fixture.store.batchAccountGames[account.id] = LaunchSetGame(placeID: 999)
+        await fixture.store.tryUnconfirmedPlayer(player, accountIDs: [account.id])
+        let launched = await fixture.launcher.launchesByAccount()
+        XCTAssertTrue(launched[account.id]?.url.absoluteString.contains("placeId%3D1818") == true)
+        XCTAssertTrue(launched[account.id]?.url.absoluteString.contains(jobID) == true)
+    }
+
+    func testChangingTheSelectionOrGameInvalidatesAReadyAccountOffer() async throws {
+        let fixture = try makeFixture(healthChecker: UnavailableBatchHealthChecker())
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let ready = fixture.accounts[2]
+        fixture.store.toggleBatchGroup("Wave")
+        await fixture.store.launchBatch(placeText: "123", server: .automatic)
+        XCTAssertEqual(fixture.store.batchReadyIDs, [ready.id])
+
+        fixture.store.toggleBatchSelection(ready)
+        await fixture.store.launchReadyAccounts()
+        XCTAssertTrue(fixture.store.batchReadyIDs.isEmpty)
+        var attempts = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertTrue(attempts.isEmpty, "A deselected account must not launch from an old offer.")
+
+        fixture.store.toggleBatchSelection(ready)
+        await fixture.store.launchBatch(placeText: "123", server: .automatic)
+        XCTAssertEqual(fixture.store.batchReadyIDs, [ready.id])
+        fixture.store.batchPlaceID = "456"
+        await fixture.store.launchReadyAccounts()
+        attempts = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertTrue(attempts.isEmpty, "An old offer must not launch the previous game after it changes.")
+    }
+
+    func testReadyOfferRechecksThePlanAfterRefreshingRunningClients() async throws {
+        let fixture = try makeFixture(healthChecker: UnavailableBatchHealthChecker())
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        fixture.store.toggleBatchGroup("Wave")
+        await fixture.store.launchBatch(placeText: "123", server: .automatic)
+        XCTAssertEqual(fixture.store.batchReadyIDs, [fixture.accounts[2].id])
+        let refreshing = expectation(description: "Refreshing running Roblox clients")
+        await fixture.launcher.pauseNextRunningRefresh(onEntry: { refreshing.fulfill() })
+
+        let review = Task { await fixture.store.launchReadyAccounts() }
+        await fulfillment(of: [refreshing], timeout: 2)
+        fixture.store.batchPlaceID = "456"
+        await fixture.launcher.resumeRunningRefresh()
+        await review.value
+
+        let attempts = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertTrue(attempts.isEmpty)
+        XCTAssertEqual(fixture.store.batchPlaceID, "456")
+    }
+
+    func testImportSessionKeepsErrorsLocalAndUpdatesTheExistingAccount() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let account = fixture.accounts[0]
+        let api = WebSessionMockAPI(usersByCookie: [
+            "synthetic-replacement": RobloxUser(id: account.userID, name: "updated_account", displayName: "Updated Account"),
+            "synthetic-new-session": RobloxUser(id: 9000, name: "new_account", displayName: "New Account")
+        ])
+        let store = AccountStore(
+            repository: fixture.repository, vault: fixture.vault, api: api, launcher: fixture.launcher
+        )
+        let previousNotice = AccountStore.Notice(title: "Other window", message: "Keep this notice separate.")
+        store.notice = previousNotice
+
+        do {
+            try await store.importSession(".ROBLOSECURITY=")
+            XCTFail("An empty session must fail.")
+        } catch RobloxAPIError.invalidSession {}
+        XCTAssertEqual(store.notice?.id, previousNotice.id)
+        XCTAssertEqual(store.accounts.count, 3)
+
+        store.isWorking = true
+        do {
+            try await store.importSession("synthetic-replacement")
+            XCTFail("A second request must wait.")
+        } catch AccountStore.SessionImportError.busy {}
+        XCTAssertTrue(store.isWorking)
+        store.isWorking = false
+
+        try await store.importSession(".ROBLOSECURITY=synthetic-replacement")
+        XCTAssertEqual(store.accounts.count, 3)
+        XCTAssertEqual(store.selectedAccount?.id, account.id)
+        XCTAssertEqual(store.selectedAccount?.username, "updated_account")
+        XCTAssertEqual(try fixture.vault.read(for: account.id), "synthetic-replacement")
+
+        try await store.importSession("synthetic-new-session")
+        XCTAssertEqual(store.accounts.count, 4)
+        let newID = try XCTUnwrap(store.selectedID)
+        XCTAssertEqual(try fixture.vault.read(for: newID), "synthetic-new-session")
+        XCTAssertEqual(store.notice?.id, previousNotice.id)
+        XCTAssertFalse(store.isWorking)
+    }
+
+    func testSetWithOnlyPerAccountGamesSavesReloadsAndLaunches() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let first = fixture.accounts[0].id
+        let second = fixture.accounts[1].id
+        let unselected = fixture.accounts[2].id
+        fixture.store.toggleBatchSelection(fixture.accounts[0])
+        fixture.store.toggleBatchSelection(fixture.accounts[1])
+        fixture.store.batchAccountGames = [
+            first: LaunchSetGame(placeID: 111, name: "First Game"),
+            second: LaunchSetGame(placeID: 0),
+            unselected: LaunchSetGame(placeID: 333)
+        ]
+        fixture.store.batchServerSelection = .manualJob("synthetic-stale-selection")
+
+        XCTAssertFalse(fixture.store.saveBatchAsLaunchSet(name: "Two Games", placeID: nil, pinned: true))
+        await fixture.store.launchBatch(placeText: "", server: .automatic)
+        let incomplete = await fixture.launcher.launchesByAccount()
+        XCTAssertTrue(incomplete.isEmpty)
+
+        fixture.store.batchAccountGames[second] = LaunchSetGame(placeID: 222, name: "Second Game")
+        XCTAssertTrue(fixture.store.saveBatchAsLaunchSet(name: "Two Games", placeID: nil, pinned: true))
+        let reloaded = AccountStore(
+            repository: fixture.repository, vault: fixture.vault, api: fixture.api, launcher: fixture.launcher
+        )
+        let set = try XCTUnwrap(reloaded.launchSets.first)
+        XCTAssertEqual(set.placeID, 0)
+        XCTAssertEqual(set.serverStrategy, .robloxChooses)
+        XCTAssertEqual(Set(set.accountGames.keys), [first, second])
+        XCTAssertTrue(set.isPinned)
+
+        let nextStep = await reloaded.runLaunchSet(set)
+        XCTAssertNil(nextStep)
+        XCTAssertEqual(reloaded.batchPlaceID, "")
+        let launched = await fixture.launcher.launchesByAccount()
+        XCTAssertEqual(Set(launched.keys), [first, second])
+        XCTAssertTrue(launched[first]?.url.absoluteString.contains("placeId%3D111") == true)
+        XCTAssertTrue(launched[second]?.url.absoluteString.contains("placeId%3D222") == true)
+    }
+
+    func testMixedLaunchSetRestoresSeparateGamesAndSettingsAfterRestart() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let first = fixture.accounts[0]
+        let second = fixture.accounts[1]
+        let quieter = RobloxLaunchSettings(graphics: .manual, graphicsQuality: 2, overridesVolume: true, volume: 0)
+        let link = "https://www.roblox.com/games/222?privateServerLinkCode=synthetic-session-link"
+        let savedServer = await fixture.store.savePrivateServer(name: "Friends", link: link)
+        let server = try XCTUnwrap(savedServer)
+        let launchSet = LaunchSet(
+            name: "Two games", accountIDs: [first.id, second.id], placeID: 111,
+            accountGames: [second.id: LaunchSetGame(placeID: 222, privateServerID: server.id)],
+            accountSettings: [second.id: quieter]
+        )
+        await fixture.store.runLaunchSet(launchSet)
+
+        let original = await fixture.launcher.launchesByAccount()
+        XCTAssertTrue(original[first.id]?.url.absoluteString.contains("placeId%3D111") == true)
+        XCTAssertTrue(original[second.id]?.url.absoluteString.contains("placeId%3D222") == true)
+        XCTAssertEqual(original[second.id]?.settings, quieter)
+        let sessionJSON = try String(contentsOf: fixture.directory.appendingPathComponent("LastSession.json"), encoding: .utf8)
+        XCTAssertFalse(sessionJSON.contains("synthetic-session-link"))
+        XCTAssertEqual(fixture.store.lastSession.first(where: { $0.accountID == second.id })?.usesPrivateServer, true)
+
+        let launcher = BatchMockLauncher(failingAccountID: nil)
+        let reloaded = AccountStore(repository: fixture.repository, vault: fixture.vault, api: fixture.api, launcher: launcher)
+        XCTAssertEqual(reloaded.lastSession.count, 2)
+        await reloaded.resumeLastSession(accountIDs: [second.id], useAnotherPublicServer: false)
+        let resumed = await launcher.launchesByAccount()
+        XCTAssertEqual(Set(resumed.keys), [second.id])
+        XCTAssertTrue(resumed[second.id]?.url.absoluteString.contains("placeId%3D222") == true)
+        XCTAssertEqual(resumed[second.id]?.settings, quieter)
+        XCTAssertEqual(reloaded.lastSession.count, 2)
+    }
+
+    func testResumeChecksPreviousPublicServersAndFallsBackOnlyWhenAllowed() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let existingJob = "11111111-2222-3333-4444-555555555555"
+        let expiredJob = "55555555-4444-3333-2222-111111111111"
+        let first = fixture.accounts[0].id
+        let second = fixture.accounts[1].id
+        try JSONFileRepository<SessionLaunch>(fileName: "LastSession.json", dataDirectory: fixture.directory).save([
+            SessionLaunch(accountID: first, placeID: 111, publicJobID: existingJob, usesPrivateServer: false, settings: .unchanged),
+            SessionLaunch(accountID: second, placeID: 222, publicJobID: expiredJob, usesPrivateServer: false, settings: .unchanged)
+        ])
+        fixture.store.load()
+
+        await fixture.store.resumeLastSession(accountIDs: [first, second], useAnotherPublicServer: false)
+        let beforeFallback = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertTrue(beforeFallback.isEmpty)
+        XCTAssertEqual(fixture.store.batchReadyIDs, [first])
+
+        await fixture.store.resumeLastSession(accountIDs: [first, second], useAnotherPublicServer: true)
+        let launched = await fixture.launcher.launchesByAccount()
+        XCTAssertTrue(launched[first]?.url.absoluteString.contains(existingJob) == true)
+        XCTAssertTrue(launched[second]?.url.absoluteString.contains("placeId%3D222") == true)
+        XCTAssertFalse(launched[second]?.url.absoluteString.contains(expiredJob) == true)
+    }
+
+    func testResumeSkipsRunningAccountsAndOpensOnlyTheMissingApp() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let first = fixture.accounts[0]
+        let second = fixture.accounts[1]
+        await fixture.store.launchApp(account: first)
+        await fixture.store.launchApp(account: second)
+        await fixture.launcher.simulateExit(accountID: second.id)
+
+        await fixture.store.resumeLastSession(accountIDs: [first.id, second.id], useAnotherPublicServer: false)
+
+        let attempts = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertEqual(attempts, [first.id, second.id, second.id])
+        XCTAssertEqual(fixture.store.runningAccountIDs, [first.id, second.id])
+        XCTAssertTrue(fixture.store.lastSession.allSatisfy { $0.placeID == nil })
+    }
+
+    func testRobloxUpdateRecoveryRechecksBeforeRetryingSavedLaunch() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        await fixture.launcher.setNeedsUpdate(true)
+        fixture.store.toggleBatchGroup("Wave")
+
+        await fixture.store.launchBatch(placeText: "123", server: .automatic)
+        await fixture.store.checkRobloxUpdate()
+        await fixture.store.retryAfterRobloxUpdate()
+        let beforeUpdate = await fixture.launcher.orderedAttemptedAccountIDs()
+        XCTAssertEqual(beforeUpdate.count, 3)
+        XCTAssertNotEqual(fixture.store.robloxUpdateRecovery, .ready)
+
+        await fixture.launcher.setNeedsUpdate(false)
+        await fixture.store.checkRobloxUpdate()
+        XCTAssertEqual(fixture.store.robloxUpdateRecovery, .ready)
+        fixture.store.batchPlaceID = "456"
+        await fixture.store.retryAfterRobloxUpdate()
+
+        XCTAssertEqual(fixture.store.runningAccountIDs, Set(fixture.accounts.map(\.id)))
+        XCTAssertEqual(fixture.store.batchPlaceID, "123")
+        XCTAssertNil(fixture.store.robloxUpdateRecovery)
     }
 
     func testLaunchSetUsesItsSavedLaunchSettingsOverride() async throws {
@@ -1466,6 +1856,11 @@ final class AccountStoreBatchTests: XCTestCase {
         guard case .failed = store.batchStates[accounts[1].id] else {
             return XCTFail("Denied account must be shown before launch")
         }
+        XCTAssertEqual(store.batchReadyIDs, [accounts[0].id])
+        await store.launchReadyAccounts()
+        let started = await launcher.orderedAttemptedAccountIDs()
+        XCTAssertEqual(started, [accounts[0].id])
+        XCTAssertNotNil(store.lastBatchResults[accounts[1].id]?.errorMessage)
     }
 
     func testCurrentShareLinkAccessDenialsAppearBeforeAnyLaunch() async throws {
@@ -1699,6 +2094,7 @@ final class AccountStoreBatchTests: XCTestCase {
             accounts: accounts,
             api: api,
             launcher: launcher,
+            vault: vault,
             friendRelay: friendRelay,
             store: store
         )
@@ -1715,6 +2111,16 @@ private actor SlowReadyHealthChecker: AccountHealthChecking {
     }
 
     func checkCount() -> Int { checks }
+}
+
+private struct UnavailableBatchHealthChecker: AccountHealthChecking {
+    func check(_ account: ManagedAccount) async -> AccountHealth {
+        switch account.userID {
+        case 1: return .networkUnavailable
+        case 2: return .signedOut
+        default: return .ready(lastChecked: Date())
+        }
+    }
 }
 
 private actor CountingHealthChecker: AccountHealthChecking {
@@ -1789,6 +2195,7 @@ private struct Fixture {
     let accounts: [ManagedAccount]
     let api: BatchMockAPI
     let launcher: BatchMockLauncher
+    let vault: MemoryVault
     let friendRelay: BatchMockFriendRelay
     let store: AccountStore
 }
@@ -1979,6 +2386,10 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     private var urls: [URL] = []
     private var batchStopRequests: [[UUID]] = []
     private var processIdentifiers: [UUID: Int32] = [:]
+    private var launchRequests: [UUID: (url: URL, settings: RobloxLaunchSettings)] = [:]
+    private var runningRefreshHook: (@Sendable () -> Void)?
+    private var pendingRunningRefresh: CheckedContinuation<Void, Never>?
+    private var needsUpdate = false
 
     init(
         failingAccountID: UUID?,
@@ -2005,6 +2416,8 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
         modes.insert(mode)
         launchSettings.append(settings)
         urls.append(url)
+        launchRequests[accountID] = (url, settings)
+        if needsUpdate { throw RobloxLaunchError.robloxUpdateOpened }
         if accountID == failingAccountID { throw RobloxLaunchError.openFailed }
         if blockedAccountIDs.contains(accountID), releasedBlockedAccountIDs.remove(accountID) == nil {
             await withCheckedContinuation { pendingBlockedLaunches[accountID] = $0 }
@@ -2024,7 +2437,30 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     }
 
     func runningAccountIDs(from accountIDs: [UUID]) async -> Set<UUID> {
-        running.intersection(accountIDs)
+        if let hook = runningRefreshHook {
+            runningRefreshHook = nil
+            await withCheckedContinuation { continuation in
+                pendingRunningRefresh = continuation
+                hook()
+            }
+        }
+        return running.intersection(accountIDs)
+    }
+
+    func pauseNextRunningRefresh(onEntry: @escaping @Sendable () -> Void) {
+        runningRefreshHook = onEntry
+    }
+
+    func resumeRunningRefresh() {
+        runningRefreshHook = nil
+        pendingRunningRefresh?.resume()
+        pendingRunningRefresh = nil
+    }
+
+    func setNeedsUpdate(_ value: Bool) { needsUpdate = value }
+
+    func checkRobloxVersion(openUpdater: Bool) async throws {
+        if needsUpdate { throw RobloxLaunchError.robloxUpdateRequired }
     }
 
     func stop(accountID: UUID) async -> Bool {
@@ -2060,6 +2496,7 @@ private actor BatchMockLauncher: ParallelRobloxLaunching {
     func attemptedLaunchSettings() -> [RobloxLaunchSettings] { launchSettings }
 
     func attemptedURLs() -> [URL] { urls }
+    func launchesByAccount() -> [UUID: (url: URL, settings: RobloxLaunchSettings)] { launchRequests }
 
     func batchStopRequestCount() -> Int { batchStopRequests.count }
 

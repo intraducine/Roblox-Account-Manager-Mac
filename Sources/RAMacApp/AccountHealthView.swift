@@ -12,9 +12,11 @@ struct AccountHealthRow: View {
                 .foregroundStyle(statusColor)
                 .accessibilityLabel("Account status: \(statusText)")
             Spacer()
-            Button("Check Account") { Task { await store.checkAccount(account) } }
+            Button(health == .networkUnavailable ? "Retry Check" : "Check Account") {
+                Task { await store.checkAccount(account) }
+            }
                 .disabled(isChecking)
-            if needsSignIn {
+            if health.needsSignIn {
                 Button("Sign In Again") { showsSignIn = true }
             }
         }
@@ -25,9 +27,6 @@ struct AccountHealthRow: View {
 
     private var health: AccountHealth { store.accountHealth[account.id] ?? .unchecked }
     private var isChecking: Bool { if case .checking = health { return true }; return false }
-    private var needsSignIn: Bool {
-        switch health { case .signedOut, .wrongAccount: return true; default: return false }
-    }
     private var statusText: String {
         switch health {
         case .unchecked: return "Not checked"
@@ -55,7 +54,27 @@ struct AccountHealthRow: View {
     }
 }
 
-private struct AccountReauthenticationView: View {
+extension AccountHealth {
+    var needsSignIn: Bool {
+        switch self {
+        case .signedOut, .wrongAccount: return true
+        default: return false
+        }
+    }
+
+    var launchIssue: String {
+        switch self {
+        case .signedOut: return "Signed out. Sign in again to launch."
+        case .wrongAccount: return "A different account signed in. Sign in as this account."
+        case .networkUnavailable: return "Could not check the sign-in. Try again."
+        case .checking: return "Checking the sign-in…"
+        case .ready: return "Ready to retry."
+        case .unchecked: return "Check this account and try again."
+        }
+    }
+}
+
+struct AccountReauthenticationView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var store: AccountStore
     let account: ManagedAccount
@@ -64,7 +83,7 @@ private struct AccountReauthenticationView: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Sign in as @\(account.username). Only the saved Roblox sign-in will change. The account name, groups, notes, favorite games, and Launch Sets will stay the same.")
+                Text("Sign in as @\(account.username).")
                     .foregroundStyle(.secondary)
                 ZStack {
                     RobloxLoginWebView(model: browser)

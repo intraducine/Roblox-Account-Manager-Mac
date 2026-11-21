@@ -7,6 +7,14 @@ import XCTest
 
 @MainActor
 final class WindowLayoutControllerTests: XCTestCase {
+    func testFullScreenWindowOnlyMatchesItsOwnDisplay() {
+        let left = CGRect(x: -1600, y: 40, width: 1600, height: 1000)
+        let right = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        XCTAssertTrue(WindowPlacementGeometry.isOnDisplay(left, display: left))
+        XCTAssertFalse(WindowPlacementGeometry.isOnDisplay(left, display: right))
+        XCTAssertFalse(WindowPlacementGeometry.isOnDisplay(.zero, display: right))
+    }
+
     func testRegionsUseHalvesQuartersAndWholeVisibleFrame() {
         let visible = CGRect(x: 100, y: 50, width: 1200, height: 800)
 
@@ -76,11 +84,11 @@ final class WindowLayoutControllerTests: XCTestCase {
         )
     }
 
-    func testAdjustedPlacementDoesNotBecomeLaunchError() {
+    func testAdjustedPlacementReportsTheWindowSizeLimit() {
         let result = WindowPlacementResult.adjusted("Roblox kept this window at 800 × 628.")
 
         XCTAssertEqual(result.message, "Roblox kept this window at 800 × 628.")
-        XCTAssertNil(result.requiresAttentionMessage)
+        XCTAssertEqual(result.requiresAttentionMessage, result.message)
     }
 
     func testOverlapDetectionMatchesSnapRegions() {
@@ -356,6 +364,117 @@ final class WindowLayoutControllerTests: XCTestCase {
         )
     }
 
+    func testCapturedWindowReappliesItsPositionWithinTheDisplay() async throws {
+        let frame = CGRect(x: 340, y: 310, width: 600, height: 400)
+        let placer = RecordingWindowPlacer(snapshot: RobloxWindowSnapshot(frame: frame, isFullScreen: false))
+        let fixture = makeControllerFixture(placer: placer)
+        let accountID = UUID()
+        let launches = [(accountID: accountID, processIdentifier: Int32(4321))]
+        let assignments = await fixture.controller.captureWindows(launches)
+        let assignment = try XCTUnwrap(assignments.first)
+        XCTAssertEqual(assignment.relativeFrame, CGRect(x: 0.2, y: 0.2, width: 0.5, height: 0.5))
+
+        let result = await fixture.controller.placeWindows(launches, with: assignments)
+        let requests = await placer.recordedRequests()
+        XCTAssertEqual(result[accountID], .placed)
+        XCTAssertEqual(requests.first?.request.targetFrame, frame)
+        XCTAssertEqual(requests.first?.request.usesCapturedFrame, true)
+    }
+
+    func testInvalidSavedWindowPositionDoesNotReachAccessibility() async {
+        let placer = RecordingWindowPlacer()
+        let fixture = makeControllerFixture(placer: placer)
+        let accountID = UUID()
+        let display = fixture.display
+        let invalid = WindowLayoutAssignment(
+            accountID: accountID, displayID: display.id, displayName: display.name,
+            displayPixelWidth: display.pixelWidth, displayPixelHeight: display.pixelHeight,
+            region: .wholeScreen, relativeFrame: CGRect(x: 0.8, y: 0, width: 0.8, height: 0.5)
+        )
+
+        let results = await fixture.controller.placeWindows(
+            [(accountID: accountID, processIdentifier: 4321)], with: [invalid]
+        )
+        let requests = await placer.recordedRequests()
+        XCTAssertEqual(results[accountID], .failed("This saved window position is invalid."))
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testLiveWindowLayoutCaptureAndRestoreWhenEnabled() async throws {
+        guard ProcessInfo.processInfo.environment["RAM_RUN_LIVE_WINDOW_LAYOUT"] == "1" else {
+            throw XCTSkip("Enable RAM_RUN_LIVE_WINDOW_LAYOUT for the isolated Roblox window test.")
+        }
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("The test runner needs macOS Accessibility permission.")
+        }
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ram-layout-integration-\(UUID().uuidString)", isDirectory: true)
+        let launcher = ParallelRobloxLauncher(instancesRoot: root)
+        let accountID = UUID()
+        addTeardownBlock {
+            _ = await launcher.stop(accountID: accountID)
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+
+        let url = try RobloxLaunchURLBuilder().makeAppURL(ticket: "invalid-layout-integration-ticket")
+        let instance = try await launcher.launch(url, for: accountID, mode: .unmodifiedParallel)
+        let launches = [(accountID: accountID, processIdentifier: instance.processIdentifier)]
+
+        let controller = WindowLayoutController(repository: MemoryWindowLayoutRepository())
+        var original: [WindowLayoutAssignment] = []
+        for _ in 0..<20 {
+            original = await controller.captureWindows(launches)
+            if !original.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        if let fullScreen = original.first, fullScreen.region == .fullScreen {
+            let windowed = WindowLayoutAssignment(
+                accountID: accountID, displayID: fullScreen.displayID, displayName: fullScreen.displayName,
+                displayPixelWidth: fullScreen.displayPixelWidth, displayPixelHeight: fullScreen.displayPixelHeight,
+                region: .wholeScreen, relativeFrame: CGRect(x: 0.12, y: 0.1, width: 0.75, height: 0.75)
+            )
+            let results = await controller.placeWindows(launches, with: [windowed])
+            XCTAssertEqual(results[accountID], .placed)
+            original = await controller.captureWindows(launches)
+        }
+        let window = try XCTUnwrap(original.first)
+        let expected = try XCTUnwrap(window.relativeFrame)
+        let destination = WindowLayoutAssignment(
+            accountID: accountID, displayID: window.displayID, displayName: window.displayName,
+            displayPixelWidth: window.displayPixelWidth, displayPixelHeight: window.displayPixelHeight,
+            region: expected.midX < 0.5 ? .right : .left
+        )
+        let fullScreen = WindowLayoutAssignment(
+            accountID: accountID, displayID: window.displayID, displayName: window.displayName,
+            displayPixelWidth: window.displayPixelWidth, displayPixelHeight: window.displayPixelHeight,
+            region: .fullScreen
+        )
+        let enteredFullScreen = await controller.placeWindows(launches, with: [fullScreen])
+        XCTAssertEqual(enteredFullScreen[accountID], .placed)
+        let fullScreenCapture = await controller.captureWindows(launches)
+        XCTAssertEqual(fullScreenCapture.first?.region, .fullScreen)
+
+        let moved = await controller.placeWindows(launches, with: [destination])
+        let moveResult = try XCTUnwrap(moved[accountID])
+        if case .adjusted = moveResult {} else { XCTAssertEqual(moveResult, .placed) }
+        let rearranged = await controller.captureWindows(launches)
+        XCTAssertEqual(rearranged.count, 1)
+        XCTAssertNotEqual(rearranged.first?.region, .fullScreen)
+        XCTAssertNotEqual(rearranged, original)
+
+        let restored = await controller.placeWindows(launches, with: original)
+        XCTAssertEqual(restored[accountID], .placed)
+        let final = await controller.captureWindows(launches)
+        let actual = try XCTUnwrap(final.first?.relativeFrame)
+        let tolerance = 0.006
+        XCTAssertEqual(actual.minX, expected.minX, accuracy: tolerance)
+        XCTAssertEqual(actual.minY, expected.minY, accuracy: tolerance)
+        XCTAssertEqual(actual.width, expected.width, accuracy: tolerance)
+        XCTAssertEqual(actual.height, expected.height, accuracy: tolerance)
+    }
+
     private func makeControllerFixture(
         repository: MemoryWindowLayoutRepository = MemoryWindowLayoutRepository(),
         placer: RecordingWindowPlacer = RecordingWindowPlacer(),
@@ -413,6 +532,11 @@ private actor RecordingWindowPlacer: RobloxWindowPlacing {
     }
 
     private var requests: [Request] = []
+    private let snapshot: RobloxWindowSnapshot?
+
+    init(snapshot: RobloxWindowSnapshot? = nil) { self.snapshot = snapshot }
+
+    func currentWindow(processIdentifier: Int32) async -> RobloxWindowSnapshot? { snapshot }
 
     func place(processIdentifier: Int32, request: RobloxWindowPlacementRequest) async -> WindowPlacementResult {
         requests.append(Request(processIdentifier: processIdentifier, request: request))

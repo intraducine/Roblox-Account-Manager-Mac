@@ -2,17 +2,26 @@ import RAMacCore
 import SwiftUI
 
 struct LaunchSetsView: View {
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject var store: AccountStore
     @State private var selectedID: UUID?
     @State private var draft: LaunchSet?
+    @State private var reviewedSet: (setID: UUID, requestID: UUID)?
 
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 List(store.launchSets, selection: $selectedID) { launchSet in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(launchSet.name).fontWeight(.medium)
-                        Text("\(launchSet.experienceName ?? (launchSet.placeID > 0 ? "Saved game" : "No game chosen")) · \(launchSet.serverStrategy.title)")
+                        HStack(spacing: 6) {
+                            Text(launchSet.name).fontWeight(.medium)
+                            if launchSet.isPinned {
+                                Image(systemName: "pin.fill")
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityLabel("Pinned")
+                            }
+                        }
+                        Text(gameSummary(for: launchSet))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Text("\(resolvedAccountLabel(for: launchSet)) · \(arrangementTitle(for: launchSet.windowArrangement))")
@@ -34,6 +43,10 @@ struct LaunchSetsView: View {
                             Label("Run Launch Set", systemImage: "play.fill")
                         }
 
+                        Button(launchSet.isPinned ? "Unpin from Accounts" : "Pin in Accounts") {
+                            store.setLaunchSetPinned(launchSet.id, pinned: !launchSet.isPinned)
+                        }
+
                         Divider()
 
                         Button("Delete", role: .destructive) {
@@ -52,15 +65,20 @@ struct LaunchSetsView: View {
             .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
         } detail: {
             if let draft {
-                LaunchSetEditor(store: store, draft: binding(for: draft)) {
-                    store.saveLaunchSet(self.draft ?? draft)
-                    selectedID = draft.id
-                }
+                LaunchSetEditor(
+                    store: store,
+                    draft: binding(for: draft),
+                    reviewID: reviewedSet?.setID == draft.id ? reviewedSet?.requestID : nil,
+                    onRun: run,
+                    onSave: {
+                        if store.saveLaunchSet(self.draft ?? draft) { selectedID = draft.id }
+                    }
+                )
                 .id(draft.id)
             } else {
                 VStack(spacing: 10) {
                     Image(systemName: "square.stack.3d.up").font(.system(size: 30)).foregroundStyle(.secondary)
-                    Text("A Launch Set is a saved shortcut for accounts, a game, and a server choice. Choose one or create a new one.")
+                    Text("Save which accounts to open and where they should join.")
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: 420)
@@ -69,6 +87,7 @@ struct LaunchSetsView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 600)
+        .robloxUpdateRecovery(store)
         .onChange(of: selectedID) { id in
             guard let id else {
                 draft = nil
@@ -78,8 +97,10 @@ struct LaunchSetsView: View {
                 draft = store.launchSets.first(where: { $0.id == id })
             }
         }
-        .alert(item: $store.notice) { notice in
-            Alert(title: Text(notice.title), message: Text(notice.message), dismissButton: .default(Text("OK")))
+        .onChange(of: store.launchSets) { sets in
+            if let saved = sets.first(where: { $0.id == draft?.id }) {
+                draft?.isPinned = saved.isPinned
+            }
         }
     }
 
@@ -95,7 +116,16 @@ struct LaunchSetsView: View {
               !store.isBatchLaunching,
               !store.isOpeningSelectedApps else { return }
         selectedID = launchSet.id
-        Task { await store.runLaunchSet(launchSet) }
+        let requestID = UUID()
+        reviewedSet = (launchSet.id, requestID)
+        Task {
+            let nextStep = await store.runLaunchSet(launchSet, requestID: requestID)
+            switch nextStep {
+            case .browsePublicServers: openWindow(id: "accounts")
+            case .choosePlayer: openWindow(id: "joinable-players")
+            case nil: break
+            }
+        }
     }
 
     private func launchSet(in selectedIDs: Set<UUID>) -> LaunchSet? {
@@ -112,11 +142,28 @@ struct LaunchSetsView: View {
     }
 
     private func resolvedAccountLabel(for launchSet: LaunchSet) -> String {
-        let count = store.accounts.filter { account in
+        let count = resolvedAccounts(for: launchSet).count
+        return "\(count) account\(count == 1 ? "" : "s")"
+    }
+
+    private func resolvedAccounts(for launchSet: LaunchSet) -> [ManagedAccount] {
+        store.accounts.filter { account in
             launchSet.accountIDs.contains(account.id)
                 || launchSet.groupNames.contains { account.belongs(to: $0) }
-        }.count
-        return "\(count) account\(count == 1 ? "" : "s")"
+        }
+    }
+
+    private func gameSummary(for launchSet: LaunchSet) -> String {
+        let accounts = resolvedAccounts(for: launchSet)
+        let overrides = accounts.compactMap { launchSet.accountGames[$0.id] }.filter { $0.placeID > 0 }
+        let usesSharedGame = overrides.count < accounts.count && launchSet.placeID > 0
+        var places = Set(overrides.map(\.placeID))
+        if usesSharedGame { places.insert(launchSet.placeID) }
+        if places.count > 1 { return "\(places.count) games" }
+        if usesSharedGame || (accounts.isEmpty && launchSet.placeID > 0) {
+            return "\(launchSet.experienceName ?? "Saved game") · \(launchSet.serverStrategy.title)"
+        }
+        return overrides.first.map { $0.name ?? "Saved game" } ?? "No game chosen"
     }
 
     private func arrangementTitle(for policy: WindowArrangementPolicy) -> String {
@@ -135,14 +182,21 @@ struct LaunchSetsView: View {
 private struct LaunchSetEditor: View {
     @ObservedObject var store: AccountStore
     @Binding var draft: LaunchSet
+    let reviewID: UUID?
+    let onRun: (LaunchSet) -> Void
     let onSave: () -> Void
     @State private var placeText: String
     @State private var strategyKind: String
     @State private var privateLink: String
 
-    init(store: AccountStore, draft: Binding<LaunchSet>, onSave: @escaping () -> Void) {
+    init(
+        store: AccountStore, draft: Binding<LaunchSet>, reviewID: UUID?,
+        onRun: @escaping (LaunchSet) -> Void, onSave: @escaping () -> Void
+    ) {
         self.store = store
         _draft = draft
+        self.reviewID = reviewID
+        self.onRun = onRun
         self.onSave = onSave
         _placeText = State(initialValue: draft.wrappedValue.placeID > 0 ? String(draft.wrappedValue.placeID) : "")
         if case .privateServerLink(let link) = draft.wrappedValue.serverStrategy {
@@ -157,14 +211,14 @@ private struct LaunchSetEditor: View {
     var body: some View {
         Form {
             Section {
-                Text("Save the accounts, game, and server choice that you often use together. Running a Launch Set starts every available account in it.")
+                Text("Choose one game for everyone or set a game for each account in Per-Account Options.")
                     .foregroundStyle(.secondary)
             }
             Section("Launch Set") {
                 TextField("Name", text: $draft.name)
             }
             Section("Launch") {
-                LabeledContent("Game") {
+                LabeledContent("Shared Game") {
                     ExperienceChooserButton(
                         store: store,
                         placeID: gamePlaceID,
@@ -173,13 +227,18 @@ private struct LaunchSetEditor: View {
                         draft.experienceName = experience.experienceName
                     }
                 }
-                Picker("Server choice", selection: $strategyKind) {
-                    Text("Let Roblox choose").tag("automatic")
-                    Text("Browse public servers when run").tag("browse")
-                    Text("Choose a player when run").tag("player")
-                    Text("Use a private server link").tag("private")
+                if sharedPlaceID > 0 {
+                    Button("Clear Shared Game") { gamePlaceID.wrappedValue = "" }
                 }
-                if strategyKind == "private" {
+                if usesSharedGame {
+                    Picker("Shared Server", selection: $strategyKind) {
+                        Text("Let Roblox choose").tag("automatic")
+                        Text("Browse public servers when run").tag("browse")
+                        Text("Choose a player when run").tag("player")
+                        Text("Use a private server link").tag("private")
+                    }
+                }
+                if usesSharedGame && strategyKind == "private" {
                     SecureField("Private server link", text: $privateLink)
                     if !store.privateServers.isEmpty {
                         Menu("Choose Saved Private Server") {
@@ -215,22 +274,6 @@ private struct LaunchSetEditor: View {
                     customDescription: "Using settings saved with this Launch Set."
                 )
             }
-            Section("Windows") {
-                InlineWindowArrangementEditor(
-                    controller: store.windowLayout,
-                    accounts: resolvedAccounts,
-                    assignments: effectiveWindowAssignments,
-                    usesSavedPlacements: draft.windowArrangement.usesSavedPlacements,
-                    customStatus: "Using the custom window arrangement saved with this Launch Set.",
-                    disabled: false,
-                    onAssignmentsChange: { assignments in
-                        draft.windowArrangement = .custom(assignments)
-                    },
-                    onUseSavedPlacements: {
-                        draft.windowArrangement = .savedPlacements
-                    }
-                )
-            }
             Section("Accounts") {
                 ForEach(store.accounts) { account in
                     Toggle(account.title, isOn: membership(account.id, in: $draft.accountIDs))
@@ -243,26 +286,63 @@ private struct LaunchSetEditor: View {
                         .toggleStyle(.checkbox)
                 }
             }
-            Section {
-                HStack {
-                    Button("Run Launch Set") {
-                        applyFields()
-                        Task { await store.runLaunchSet(draft) }
+            if !resolvedAccounts.isEmpty {
+                Section {
+                    FullWidthDisclosure("Per-Account Options") {
+                        AccountLaunchOptions(
+                            store: store, accounts: resolvedAccounts, hasSharedGame: sharedPlaceID > 0,
+                            defaults: draft.launchSettings ?? store.launchSettings,
+                            games: $draft.accountGames, settings: $draft.accountSettings
+                        )
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!isValid
-                        || store.runningLaunchSetID != nil
-                        || store.isWorking
-                        || store.isBatchLaunching
-                        || store.isOpeningSelectedApps)
-                    Spacer()
-                    Button("Save Changes") { applyFields(); onSave() }
-                        .disabled(!isValid)
+                    if usesSharedGame && strategyKind == "player" && hasAccountGames {
+                        Text("Choose a player requires a shared game for all accounts.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Section {
+                FullWidthDisclosure("Window Layout") {
+                    InlineWindowArrangementEditor(
+                        controller: store.windowLayout,
+                        accounts: resolvedAccounts,
+                        assignments: effectiveWindowAssignments,
+                        usesSavedPlacements: draft.windowArrangement.usesSavedPlacements,
+                        customStatus: "Using the custom window arrangement saved with this Launch Set.",
+                        disabled: false,
+                        onAssignmentsChange: { draft.windowArrangement = .custom($0) },
+                        onUseSavedPlacements: { draft.windowArrangement = .savedPlacements }
+                    )
                 }
             }
         }
         .formStyle(.grouped)
         .navigationTitle(draft.name)
+        .onChange(of: draft) { _ in dismissPreviousReview() }
+        .onChange(of: placeText) { _ in dismissPreviousReview() }
+        .onChange(of: strategyKind) { _ in dismissPreviousReview() }
+        .onChange(of: privateLink) { _ in dismissPreviousReview() }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                if let reviewID {
+                    BatchReadinessView(store: store, expectedID: reviewID)
+                }
+                HStack(spacing: 12) {
+                    Spacer()
+                    Button("Save Changes") { applyFields(); onSave() }
+                        .disabled(!isValid)
+                    Button("Run Launch Set") { applyFields(); onRun(draft) }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!isValid || store.runningLaunchSetID != nil || store.isBusyWithRoblox)
+                }
+            }
+            .padding(14)
+            .background(.bar)
+        }
+    }
+
+    private func dismissPreviousReview() {
+        if let reviewID { store.dismissBatchReview(expectedID: reviewID) }
     }
 
     private var resolvedAccounts: [ManagedAccount] {
@@ -282,10 +362,24 @@ private struct LaunchSetEditor: View {
 
     private var isValid: Bool {
         !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && (Int64(placeText) ?? 0) > 0
-            && (strategyKind != "private"
+            && !resolvedAccounts.isEmpty
+            && (sharedPlaceID > 0 || allAccountsHaveGames)
+            && (!usesSharedGame || strategyKind != "player" || !hasAccountGames)
+            && (!usesSharedGame || strategyKind != "private"
                 || RobloxLaunchURLBuilder.privateLinkCode(from: privateLink) != nil
                 || RobloxLaunchURLBuilder.privateShareCode(from: privateLink) != nil)
+    }
+
+    private var sharedPlaceID: Int64 { max(0, Int64(placeText) ?? 0) }
+
+    private var allAccountsHaveGames: Bool {
+        LaunchSetGame.covers(Set(resolvedAccounts.map(\.id)), games: draft.accountGames)
+    }
+
+    private var usesSharedGame: Bool { sharedPlaceID > 0 && !allAccountsHaveGames }
+
+    private var hasAccountGames: Bool {
+        resolvedAccounts.contains { (draft.accountGames[$0.id]?.placeID ?? 0) > 0 }
     }
 
     private var gamePlaceID: Binding<String> {
@@ -300,8 +394,11 @@ private struct LaunchSetEditor: View {
 
     private func applyFields() {
         draft.name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        draft.placeID = Int64(placeText) ?? 0
-        switch strategyKind {
+        draft.placeID = sharedPlaceID
+        let selectedIDs = Set(resolvedAccounts.map(\.id))
+        draft.accountGames = draft.accountGames.filter { selectedIDs.contains($0.key) && $0.value.placeID > 0 }
+        draft.accountSettings = draft.accountSettings.filter { selectedIDs.contains($0.key) }
+        switch usesSharedGame ? strategyKind : "automatic" {
         case "browse": draft.serverStrategy = .browseBeforeLaunch
         case "player": draft.serverStrategy = .joinPlayer
         case "private": draft.serverStrategy = .privateServerLink(privateLink)

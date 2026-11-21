@@ -68,7 +68,7 @@ struct ExperienceChooserButton: View {
     }
 }
 
-private struct ExperienceChooserView: View {
+struct ExperienceChooserView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var store: AccountStore
     let onChoose: (ExperienceRecord) -> Void
@@ -196,7 +196,7 @@ private struct ExperienceChooserView: View {
     }
 }
 
-private struct ExperienceIcon: View {
+struct ExperienceIcon: View {
     let experience: ExperienceRecord
     let size: CGFloat
     var showsProgress = false

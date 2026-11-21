@@ -144,13 +144,6 @@ private struct ServerChooserView: View {
             .navigationTitle("Choose a Server")
         }
         .frame(width: 680, height: 560)
-        .alert(item: $store.notice) { notice in
-            Alert(
-                title: Text(notice.title),
-                message: Text(notice.message),
-                dismissButton: .default(Text("OK"))
-            )
-        }
     }
 
     private func choose(_ newSelection: RobloxServerSelection) {
@@ -231,7 +224,7 @@ private struct MissingPlaceView: View {
     }
 }
 
-private struct PublicServerListView: View {
+struct PublicServerListView: View {
     @ObservedObject var store: AccountStore
     let placeID: Int64
     let requiredSpaces: Int
@@ -464,7 +457,7 @@ private struct PlayerServerSearchView: View {
     }
 }
 
-private struct PrivateServerLibraryView: View {
+struct PrivateServerLibraryView: View {
     @ObservedObject var store: AccountStore
     let onChoose: (SavedPrivateServer) -> Void
     @State private var name = ""

@@ -22,21 +22,70 @@ final class AccountStore: ObservableObject {
         let message: String
     }
 
+    enum SessionImportError: LocalizedError {
+        case busy
+
+        var errorDescription: String? {
+            "Wait for the current task to finish, then try again."
+        }
+    }
+
     enum BatchLaunchState: Equatable {
         case starting
+        case started
+        case accountUnavailable(AccountHealth)
         case failed(String)
 
         var label: String {
             switch self {
             case .starting: return "Starting"
+            case .started: return "Opened"
+            case .accountUnavailable(let health): return health.launchIssue
             case .failed: return "Failed"
             }
         }
 
-        var errorMessage: String? {
-            guard case .failed(let message) = self else { return nil }
-            return message
+        var healthMessage: String? {
+            guard case .accountUnavailable(let health) = self else { return nil }
+            return health.launchIssue
         }
+
+        var errorMessage: String? {
+            switch self {
+            case .accountUnavailable(let health): return health.launchIssue
+            case .failed(let message): return message
+            default: return nil
+            }
+        }
+    }
+
+    enum RobloxUpdateRecovery: Equatable {
+        case waiting(String, canOpenUpdater: Bool)
+        case checking
+        case ready
+    }
+
+    enum LaunchSetNextStep: Equatable {
+        case browsePublicServers
+        case choosePlayer
+    }
+
+    private struct BatchDestination: Hashable, Sendable {
+        let placeID: Int64?
+        var server: RobloxServerSelection = .automatic
+        var allowPublicFallback = false
+    }
+
+    private struct BatchRetry {
+        var id = UUID()
+        var accountIDs: Set<UUID>
+        let windowArrangement: WindowArrangementPolicy
+        let settings: RobloxLaunchSettings
+        let game: (place: String, server: RobloxServerSelection, rememberSelection: Bool)?
+        let destinations: [UUID: BatchDestination]
+        var accountGames: [UUID: LaunchSetGame] = [:]
+        var accountSettings: [UUID: RobloxLaunchSettings] = [:]
+        var preserveSession = false
     }
 
     enum FriendRelayState: Equatable {
@@ -74,6 +123,7 @@ final class AccountStore: ObservableObject {
         let placeID: Int64?
         let errorMessage: String?
         let placementResult: WindowPlacementResult?
+        var updateError: RobloxLaunchError? = nil
     }
 
     @Published private(set) var accounts: [ManagedAccount] = []
@@ -85,13 +135,37 @@ final class AccountStore: ObservableObject {
     @Published private(set) var runningAccountIDs = Set<UUID>()
     @Published private(set) var batchSelectedIDs = Set<UUID>()
     @Published private(set) var batchStates: [UUID: BatchLaunchState] = [:]
+    @Published private(set) var lastBatchResults: [UUID: BatchLaunchState] = [:]
+    @Published private(set) var batchReadyIDs = Set<UUID>()
+    @Published private(set) var batchPausedForReview = false
+    @Published var batchAccountGames: [UUID: LaunchSetGame] = [:] {
+        didSet { if oldValue != batchAccountGames { dismissBatchReview() } }
+    }
+    @Published var batchAccountSettings: [UUID: RobloxLaunchSettings] = [:] {
+        didSet { if oldValue != batchAccountSettings { dismissBatchReview() } }
+    }
+    @Published private(set) var lastSession: [SessionLaunch] = []
+    @Published private(set) var namedWindowLayouts: [NamedWindowLayout] = []
+    @Published var batchPlaceID = "" {
+        didSet { if oldValue != batchPlaceID { dismissBatchReview() } }
+    }
+    @Published var batchServerSelection = RobloxServerSelection.automatic {
+        didSet { if oldValue != batchServerSelection { dismissBatchReview() } }
+    }
+    @Published var showsBatchPublicServers = false
+    @Published private(set) var launchSetPlayerAccounts: Set<UUID>?
     @Published private(set) var isBatchLaunching = false
     @Published private(set) var isOpeningSelectedApps = false
-    @Published var batchWindowArrangement: WindowArrangementPolicy = .savedPlacements
-    @Published var batchLaunchSettingsOverride: RobloxLaunchSettings? = nil
+    @Published var batchWindowArrangement: WindowArrangementPolicy = .savedPlacements {
+        didSet { if oldValue != batchWindowArrangement { dismissBatchReview() } }
+    }
+    @Published var batchLaunchSettingsOverride: RobloxLaunchSettings? = nil {
+        didSet { if oldValue != batchLaunchSettingsOverride { dismissBatchReview() } }
+    }
     @Published private(set) var appOpeningAccountIDs = Set<UUID>()
     @Published private(set) var isStoppingAll = false
-    @Published private(set) var batchStatus = "Select accounts from the shelf"
+    @Published private(set) var batchStatus = "Select accounts"
+    @Published private(set) var robloxUpdateRecovery: RobloxUpdateRecovery?
     @Published private(set) var launchMode: RobloxLaunchMode
     @Published var launchSettings: RobloxLaunchSettings {
         didSet {
@@ -133,12 +207,25 @@ final class AccountStore: ObservableObject {
     private let experienceMetadataProvider: any ExperienceMetadataProviding
     private let privateServerRepository: PrivateServerRepository
     private let activeLaunchRepository: ActiveLaunchTargetRepository
+    private let lastSessionRepository: JSONFileRepository<SessionLaunch>
+    private let namedLayoutRepository: JSONFileRepository<NamedWindowLayout>
     private let settingsDefaults: UserDefaults
     private let archiveService = MetadataArchiveService()
     private var serverPageCache: [String: PublicServerSnapshot] = [:]
     private let serverCacheLifetime: TimeInterval = 60
     private var didStartInitialAccountCheck = false
     private var friendRelayCancellationRequested = false
+    private var friendRelayUpdateError: RobloxLaunchError?
+    private var lastBatchRetry: BatchRetry?
+    private var updateRetries: [Set<UUID>: @MainActor () async -> Void] = [:]
+    private var updateRecoveryID = UUID()
+    private var isPollingRunningAccounts = false
+    private var sessionPrivateLinks: [UUID: String] = [:]
+    private var canSaveProtectedData = false
+
+    private struct SavedDataRecoveryRequired: LocalizedError {
+        var errorDescription: String? { "Recover the files listed in the startup warning, then reopen the app." }
+    }
 
     init(
         repository: AccountRepository = AccountRepository(),
@@ -191,6 +278,8 @@ final class AccountStore: ObservableObject {
             fileName: "ActiveLaunches.json",
             dataDirectory: repository.dataDirectory
         )
+        self.lastSessionRepository = JSONFileRepository(fileName: "LastSession.json", dataDirectory: repository.dataDirectory)
+        self.namedLayoutRepository = JSONFileRepository(fileName: "WindowLayouts.json", dataDirectory: repository.dataDirectory)
         self.settingsDefaults = settingsDefaults
         self.launchSettings = settingsDefaults.data(forKey: Self.launchSettingsDefaultsKey)
             .flatMap { try? JSONDecoder().decode(RobloxLaunchSettings.self, from: $0) }
@@ -303,16 +392,27 @@ final class AccountStore: ObservableObject {
     }
 
     func load() {
+        canSaveProtectedData = false
         do {
             var storageWarnings: [String] = []
-            accounts = try repository.load()
+            let loadedAccounts = try repository.loadWithRecovery { account in
+                if try self.profileNoteVault.readNote(for: account.id) == nil {
+                    try self.profileNoteVault.saveNote(account.notes, for: account.id)
+                }
+            }
+            accounts = loadedAccounts.records
+            if loadedAccounts.recoveredFromBackup {
+                storageWarnings.append("Accounts were recovered from the last valid backup.")
+            }
             var metadataNeedsSave = try loadSecureProfileNotes()
             groups = ManagedAccount.normalizedGroups(
                 (try repository.loadGroups()) + accounts.flatMap(\.groups)
             )
+            canSaveProtectedData = true
             launchSets = loadStoredRecords(
                 from: launchSetRepository,
                 name: "Launch Sets",
+                containsPrivateLinks: true,
                 warnings: &storageWarnings
             )
             experiences = loadStoredRecords(
@@ -323,10 +423,18 @@ final class AccountStore: ObservableObject {
             privateServers = sortedPrivateServers(loadStoredRecords(
                 from: privateServerRepository,
                 name: "Private servers",
+                containsPrivateLinks: true,
                 warnings: &storageWarnings
             ))
+            lastSession = loadStoredRecords(
+                from: lastSessionRepository, name: "Last session", containsPrivateLinks: true, warnings: &storageWarnings
+            )
+            namedWindowLayouts = loadStoredRecords(
+                from: namedLayoutRepository, name: "Window layouts", warnings: &storageWarnings
+            )
             try loadPrivateServerCapabilities()
             for index in accounts.indices {
+                guard privateServerCapabilityKey(from: accounts[index].savedServer) == nil else { continue }
                 guard case .manualJob = RobloxServerSelection.savedValue(accounts[index].savedServer) else {
                     continue
                 }
@@ -336,7 +444,7 @@ final class AccountStore: ObservableObject {
                 accounts[index].savedServer = ""
                 metadataNeedsSave = true
             }
-            if metadataNeedsSave {
+            if metadataNeedsSave && canSaveProtectedData {
                 try saveAccounts(accounts)
             }
             activeLaunchTargets = Dictionary(
@@ -361,6 +469,7 @@ final class AccountStore: ObservableObject {
                 await launcher.removeStaleCopies()
             }
         } catch {
+            canSaveProtectedData = false
             notice = Notice(title: "Accounts could not load", message: error.localizedDescription)
         }
     }
@@ -368,6 +477,7 @@ final class AccountStore: ObservableObject {
     private func loadStoredRecords<Record: Codable & Sendable>(
         from repository: JSONFileRepository<Record>,
         name: String,
+        containsPrivateLinks: Bool = false,
         warnings: inout [String]
     ) -> [Record] {
         do {
@@ -377,6 +487,7 @@ final class AccountStore: ObservableObject {
             }
             return result.records
         } catch {
+            if containsPrivateLinks { canSaveProtectedData = false }
             warnings.append("\(name) could not load. \(error.localizedDescription)")
             return []
         }
@@ -391,16 +502,21 @@ final class AccountStore: ObservableObject {
             + privateServers.map(\.link)
         guard storedValues.contains(where: {
             privateServerCapabilityKey(from: $0) != nil || isPrivateServerLink($0)
-        }) else { return }
+        }) || lastSession.contains(where: \.usesPrivateServer) else { return }
 
         var capabilities = try vault.readPrivateServerCapabilities()
+        sessionPrivateLinks = Dictionary(lastSession.compactMap { launch in
+            capabilities[privateServerCapabilityKey(kind: "session", id: launch.accountID)].map {
+                (launch.accountID, $0)
+            }
+        }, uniquingKeysWith: { first, _ in first })
         var migrated = false
 
         for index in accounts.indices {
             let key = privateServerCapabilityKey(kind: "account", id: accounts[index].id)
             let value = accounts[index].savedServer
             if privateServerCapabilityKey(from: value) != nil {
-                accounts[index].savedServer = capabilities[key] ?? ""
+                accounts[index].savedServer = capabilities[key] ?? value
             } else if isPrivateServerLink(value) {
                 capabilities[key] = value
                 migrated = true
@@ -411,7 +527,7 @@ final class AccountStore: ObservableObject {
             let key = privateServerCapabilityKey(kind: "launch-set", id: launchSets[index].id)
             if privateServerCapabilityKey(from: value) != nil {
                 launchSets[index].serverStrategy = capabilities[key].map(ServerStrategy.privateServerLink)
-                    ?? .robloxChooses
+                    ?? .privateServerLink(value)
             } else if isPrivateServerLink(value) {
                 capabilities[key] = value
                 migrated = true
@@ -421,14 +537,14 @@ final class AccountStore: ObservableObject {
             let key = privateServerCapabilityKey(kind: "library", id: privateServers[index].id)
             let value = privateServers[index].link
             if privateServerCapabilityKey(from: value) != nil {
-                privateServers[index].link = capabilities[key] ?? ""
+                privateServers[index].link = capabilities[key] ?? value
             } else if isPrivateServerLink(value) {
                 capabilities[key] = value
                 migrated = true
             }
         }
 
-        guard migrated else { return }
+        guard migrated, canSaveProtectedData else { return }
         try vault.savePrivateServerCapabilities(capabilities)
         for _ in 0..<2 {
             try repository.save(redactedAccounts(accounts))
@@ -457,6 +573,7 @@ final class AccountStore: ObservableObject {
         launchSets: [LaunchSet],
         privateServers: [SavedPrivateServer]
     ) throws {
+        try requireWritableProtectedData()
         var capabilities: [String: String] = [:]
         for account in accounts where isPrivateServerLink(account.savedServer) {
             capabilities[privateServerCapabilityKey(kind: "account", id: account.id)] = account.savedServer
@@ -469,7 +586,14 @@ final class AccountStore: ObservableObject {
         for server in privateServers where isPrivateServerLink(server.link) {
             capabilities[privateServerCapabilityKey(kind: "library", id: server.id)] = server.link
         }
+        for (id, link) in sessionPrivateLinks where isPrivateServerLink(link) {
+            capabilities[privateServerCapabilityKey(kind: "session", id: id)] = link
+        }
         try vault.savePrivateServerCapabilities(capabilities)
+    }
+
+    private func requireWritableProtectedData() throws {
+        guard canSaveProtectedData else { throw SavedDataRecoveryRequired() }
     }
 
     private func redactedAccounts(_ records: [ManagedAccount]) -> [ManagedAccount] {
@@ -536,6 +660,7 @@ final class AccountStore: ObservableObject {
 
     func toggleBatchSelection(_ account: ManagedAccount) {
         guard !isBatchLaunching, !isOpeningSelectedApps, !isRunning(account), !isOpeningApp(account) else { return }
+        dismissBatchReview()
         if batchSelectedIDs.remove(account.id) == nil {
             batchSelectedIDs.insert(account.id)
         }
@@ -549,6 +674,7 @@ final class AccountStore: ObservableObject {
             $0.belongs(to: group) && !self.isRunning($0) && !self.isOpeningApp($0)
         }.map(\.id))
         guard !eligible.isEmpty else { return }
+        dismissBatchReview()
         if eligible.isSubset(of: batchSelectedIDs) {
             batchSelectedIDs.subtract(eligible)
             for accountID in eligible { batchStates[accountID] = nil }
@@ -569,6 +695,10 @@ final class AccountStore: ObservableObject {
         guard !isBatchLaunching, !isOpeningSelectedApps else { return }
         batchSelectedIDs.removeAll()
         batchStates.removeAll()
+        dismissBatchReview()
+        batchAccountGames.removeAll()
+        batchAccountSettings.removeAll()
+        showsBatchPublicServers = false
         batchWindowArrangement = .savedPlacements
         batchLaunchSettingsOverride = nil
         updateBatchSelectionStatus()
@@ -576,6 +706,10 @@ final class AccountStore: ObservableObject {
 
     @discardableResult
     func createGroup(_ rawName: String, addingTo accountIDs: Set<UUID> = []) -> String? {
+        guard canSaveProtectedData else {
+            notice = Notice(title: "Group was not saved", message: SavedDataRecoveryRequired().localizedDescription)
+            return nil
+        }
         let cleanName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanName.isEmpty else {
             notice = Notice(title: "Enter a group name", message: "A group name cannot be empty.")
@@ -614,6 +748,10 @@ final class AccountStore: ObservableObject {
     }
 
     func deleteGroup(_ group: String) {
+        guard canSaveProtectedData else {
+            notice = Notice(title: "Group was not deleted", message: SavedDataRecoveryRequired().localizedDescription)
+            return
+        }
         let originalGroups = groups
         let originalAccounts = accounts
         let originalLaunchSets = launchSets
@@ -640,11 +778,22 @@ final class AccountStore: ObservableObject {
         }
     }
 
+    func pollRunningAccounts() async {
+        guard !isPollingRunningAccounts, !isBusyWithRoblox else { return }
+        isPollingRunningAccounts = true
+        defer { isPollingRunningAccounts = false }
+        await refreshRunningInstances()
+    }
+
     func refreshRunningInstances() async {
         let previousIDs = runningAccountIDs
         let refreshedIDs = await launcher.runningAccountIDs(from: accounts.map(\.id))
         if refreshedIDs != runningAccountIDs {
             runningAccountIDs = refreshedIDs
+        }
+        if !updateRetries.isEmpty {
+            updateRetries = updateRetries.filter { !$0.key.isSubset(of: refreshedIDs) }
+            if updateRetries.isEmpty { cancelRobloxUpdateRecovery() }
         }
         if !previousIDs.isEmpty,
            refreshedIDs.isEmpty,
@@ -660,6 +809,325 @@ final class AccountStore: ObservableObject {
             for accountID in staleTargets { activeLaunchTargets[accountID] = nil }
             try? activeLaunchRepository.save(Array(activeLaunchTargets.values))
         }
+    }
+
+    func bringToFront(_ account: ManagedAccount) async {
+        guard await launcher.bringToFront(accountID: account.id) else {
+            await refreshRunningInstances()
+            notice = Notice(
+                title: "Could not bring Roblox forward",
+                message: "Check whether Roblox is still open for @\(account.username)."
+            )
+            return
+        }
+    }
+
+    private func runningWindowProcesses() async -> [(accountID: UUID, processIdentifier: Int32)] {
+        var processes: [(UUID, Int32)] = []
+        for account in accounts where runningAccountIDs.contains(account.id) {
+            if let pid = await launcher.runningProcessIdentifier(accountID: account.id) {
+                processes.append((account.id, pid))
+            }
+        }
+        return processes
+    }
+
+    func captureWindowLayout(name: String) async -> Bool {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !isBusyWithRoblox else { return false }
+        guard !namedWindowLayouts.contains(where: { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) else {
+            notice = Notice(title: "That layout name is in use", message: "Enter a different name.")
+            return false
+        }
+        isWorking = true
+        defer { isWorking = false }
+        await refreshRunningInstances()
+        let processes = await runningWindowProcesses()
+        let assignments = await windowLayout.captureWindows(processes)
+        guard !assignments.isEmpty else {
+            notice = Notice(
+                title: "No windows were saved",
+                message: "Open a Roblox window and allow Window Control, then try again."
+            )
+            return false
+        }
+        let saved = saveWindowLayouts(namedWindowLayouts + [NamedWindowLayout(name: name, assignments: assignments)])
+        if saved, assignments.count < runningAccountIDs.count {
+            notice = Notice(title: "Some windows were skipped", message: "Only visible Roblox windows were saved.")
+        }
+        return saved
+    }
+
+    func applyWindowLayout(_ layout: NamedWindowLayout) async {
+        guard !isBusyWithRoblox else { return }
+        isWorking = true
+        defer { isWorking = false }
+        await refreshRunningInstances()
+        let processes = await runningWindowProcesses().filter { process in
+            layout.assignments.contains { $0.accountID == process.accountID }
+        }
+        guard !processes.isEmpty else {
+            notice = Notice(title: "No matching windows", message: "Start an account in this layout and try again.")
+            return
+        }
+        showWindowPlacementNoticeIfNeeded(await windowLayout.placeWindows(processes, with: layout.assignments))
+    }
+
+    func removeWindowLayout(_ layout: NamedWindowLayout) {
+        _ = saveWindowLayouts(namedWindowLayouts.filter { $0.id != layout.id })
+    }
+
+    private func saveWindowLayouts(_ layouts: [NamedWindowLayout]) -> Bool {
+        do {
+            try namedLayoutRepository.save(layouts)
+            namedWindowLayouts = layouts
+            return true
+        } catch {
+            notice = Notice(title: "Window layouts could not be saved", message: error.localizedDescription)
+            return false
+        }
+    }
+
+    func checkRobloxUpdate(openUpdater: Bool = false) async {
+        guard robloxUpdateRecovery != nil, robloxUpdateRecovery != .checking else { return }
+        let recoveryID = updateRecoveryID
+        robloxUpdateRecovery = .checking
+        do {
+            try await launcher.checkRobloxVersion(openUpdater: openUpdater)
+            guard updateRecoveryID == recoveryID else { return }
+            robloxUpdateRecovery = .ready
+        } catch {
+            guard updateRecoveryID == recoveryID else { return }
+            let launchError = error as? RobloxLaunchError
+            switch launchError {
+            case .robloxUpdateOpened:
+                robloxUpdateRecovery = .waiting("Let Roblox finish updating, then quit Roblox and check again.", canOpenUpdater: false)
+            case .robloxUpdateRequired:
+                let message = openUpdater
+                    ? "Quit all Roblox clients before opening the updater."
+                    : "Roblox still needs an update. If the installer has finished, try opening it again."
+                robloxUpdateRecovery = .waiting(message, canOpenUpdater: true)
+            case .robloxUpdaterOpenFailed:
+                robloxUpdateRecovery = .waiting(
+                    "The installer did not open. Start a game at roblox.com to update Roblox, then check again.",
+                    canOpenUpdater: true
+                )
+            default:
+                robloxUpdateRecovery = .waiting(error.localizedDescription, canOpenUpdater: false)
+            }
+        }
+    }
+
+    var isBusyWithRoblox: Bool {
+        isWorking || isBatchLaunching || isFriendRelayLaunching || !appOpeningAccountIDs.isEmpty
+    }
+
+    func cancelRobloxUpdateRecovery() {
+        updateRecoveryID = UUID()
+        updateRetries.removeAll()
+        robloxUpdateRecovery = nil
+    }
+
+    func retryAfterRobloxUpdate() async {
+        guard robloxUpdateRecovery == .ready, !isBusyWithRoblox else { return }
+        let retries = Array(updateRetries.values)
+        cancelRobloxUpdateRecovery()
+        for retry in retries { await retry() }
+    }
+
+    private func offerUpdateRecovery(
+        _ error: RobloxLaunchError?,
+        accountIDs: Set<UUID>,
+        retry: @escaping @MainActor () async -> Void
+    ) -> Bool {
+        guard let error, error.blocksLaunchForUpdate else { return false }
+        updateRetries[accountIDs] = retry
+        updateRecoveryID = UUID()
+        if error == .robloxUpdateOpened {
+            robloxUpdateRecovery = .waiting("Let Roblox finish updating, then quit Roblox and check again.", canOpenUpdater: false)
+        } else if error == .robloxUpdateRequired {
+            robloxUpdateRecovery = .waiting("Quit all Roblox clients, then open the Roblox updater.", canOpenUpdater: true)
+        } else {
+            robloxUpdateRecovery = .waiting(error.localizedDescription, canOpenUpdater: true)
+        }
+        return true
+    }
+
+    var canRetryLastBatch: Bool {
+        guard let lastBatchRetry else { return false }
+        let eligible = accounts.filter {
+            lastBatchRetry.accountIDs.contains($0.id) && !isRunning($0)
+        }
+        return robloxUpdateRecovery == nil && !isBusyWithRoblox && !eligible.isEmpty
+            && eligible.allSatisfy { accountHealth[$0.id]?.needsSignIn != true }
+    }
+
+    func retryLastBatch() async {
+        guard canRetryLastBatch, let lastBatchRetry else { return }
+        await retryBatch(lastBatchRetry)
+    }
+
+    var batchReviewID: UUID? {
+        batchPausedForReview ? lastBatchRetry?.id : nil
+    }
+
+    func dismissBatchReview(expectedID: UUID? = nil) {
+        guard expectedID == nil || batchReviewID == expectedID else { return }
+        guard !isBatchLaunching, !isOpeningSelectedApps,
+              batchPausedForReview || !batchReadyIDs.isEmpty else { return }
+        batchReadyIDs.removeAll()
+        batchPausedForReview = false
+    }
+
+    func launchReadyAccounts(expectedID: UUID? = nil) async {
+        guard expectedID == nil || batchReviewID == expectedID else { return }
+        guard !batchReadyIDs.isEmpty, !isBusyWithRoblox, var request = lastBatchRetry else { return }
+        let ready = batchReadyIDs
+        await refreshRunningInstances()
+        guard !isBusyWithRoblox, lastBatchRetry?.id == request.id, batchReadyIDs == ready else { return }
+        let deferred = request.accountIDs.subtracting(ready)
+        let previousResults = lastBatchResults.filter { deferred.contains($0.key) }
+        let originalRequest = request
+        request.accountIDs = ready
+        dismissBatchReview()
+        guard await retryBatch(request, refreshRunning: false) else { return }
+        lastBatchResults.merge(previousResults) { current, _ in current }
+        if !originalRequest.preserveSession {
+            batchStates.merge(previousResults) { current, _ in current }
+            batchSelectedIDs.formUnion(deferred.subtracting(runningAccountIDs))
+            batchWindowArrangement = originalRequest.windowArrangement
+            batchLaunchSettingsOverride = originalRequest.settings
+            batchAccountGames = originalRequest.accountGames
+            batchAccountSettings = originalRequest.accountSettings
+        }
+        request = originalRequest
+        request.accountIDs = deferred.union(lastBatchRetry?.accountIDs ?? [])
+        lastBatchRetry = request
+    }
+
+    @discardableResult
+    private func retryBatch(_ request: BatchRetry, refreshRunning: Bool = true) async -> Bool {
+        guard !isBusyWithRoblox else { return false }
+        if refreshRunning { await refreshRunningInstances() }
+        guard !isBusyWithRoblox else { return false }
+        let eligible = accounts.filter { request.accountIDs.contains($0.id) && !isRunning($0) }
+        guard !eligible.isEmpty else { return false }
+        batchSelectedIDs = Set(eligible.map(\.id))
+        batchStates.removeAll()
+        batchWindowArrangement = request.windowArrangement
+        batchLaunchSettingsOverride = request.settings
+        batchAccountGames = request.accountGames
+        batchAccountSettings = request.accountSettings
+        await executeBatch(request)
+        return true
+    }
+
+    private func finishBatch(
+        _ outcomes: [LaunchOutcome],
+        request: BatchRetry,
+        wasBlockedBeforeLaunch: Bool = false
+    ) {
+        lastBatchResults = Dictionary(uniqueKeysWithValues: outcomes.compactMap { outcome in
+            if let state = batchStates[outcome.accountID] { return (outcome.accountID, state) }
+            return wasBlockedBeforeLaunch ? nil : (outcome.accountID, .started)
+        })
+        let failedIDs = Set(outcomes.filter { $0.errorMessage != nil || wasBlockedBeforeLaunch }.map(\.accountID))
+        var retry = request
+        retry.accountIDs = failedIDs
+        lastBatchRetry = failedIDs.isEmpty ? nil : retry
+        let updateFailures = outcomes.filter { $0.updateError != nil }
+        if let error = updateFailures.compactMap(\.updateError).first {
+            let ids = Set(updateFailures.map(\.accountID))
+            var updateRetry = request
+            updateRetry.accountIDs = ids
+            let request = updateRetry
+            _ = offerUpdateRecovery(error, accountIDs: ids) { [weak self] in
+                await self?.retryBatch(request)
+            }
+        }
+    }
+
+    private func sessionEntry(
+        accountID: UUID, placeID: Int64?, server: RobloxServerSelection, settings: RobloxLaunchSettings
+    ) -> (SessionLaunch, String?) {
+        let link: String?
+        if case .privateLink(let value) = server, isPrivateServerLink(value) { link = value }
+        else { link = nil }
+        return (SessionLaunch(
+            accountID: accountID, placeID: placeID,
+            publicJobID: server.jobIDValue.isEmpty ? nil : server.jobIDValue,
+            usesPrivateServer: link != nil, settings: settings
+        ), link)
+    }
+
+    private func saveSessionEntries(_ entries: [(SessionLaunch, String?)], preservingPrevious: Bool = false) {
+        guard !entries.isEmpty else { return }
+        let currentIDs = Set(accounts.map(\.id))
+        let updatedIDs = Set(entries.map { $0.0.accountID })
+        let kept = lastSession.filter {
+            currentIDs.contains($0.accountID) && !updatedIDs.contains($0.accountID)
+                && (preservingPrevious || runningAccountIDs.contains($0.accountID))
+        }
+        let keptIDs = Set(kept.map(\.accountID))
+        let previousLinks = sessionPrivateLinks
+        sessionPrivateLinks = previousLinks.filter { keptIDs.contains($0.key) }
+        for (record, link) in entries { sessionPrivateLinks[record.accountID] = link }
+        let records = kept + entries.map { $0.0 }
+        do {
+            if previousLinks != sessionPrivateLinks {
+                try savePrivateServerCapabilities(accounts: accounts, launchSets: launchSets, privateServers: privateServers)
+            }
+            try lastSessionRepository.save(records)
+            lastSession = records
+        } catch {
+            if sessionPrivateLinks != previousLinks {
+                sessionPrivateLinks = previousLinks
+                try? savePrivateServerCapabilities(accounts: accounts, launchSets: launchSets, privateServers: privateServers)
+            }
+            notice = Notice(title: "Last Session could not be saved", message: "Roblox opened. This session might not be available to resume.")
+        }
+    }
+
+    private func forgetSessionAccount(_ id: UUID) {
+        let hadPrivateLink = sessionPrivateLinks.removeValue(forKey: id) != nil
+        guard hadPrivateLink || lastSession.contains(where: { $0.accountID == id }) else { return }
+        lastSession.removeAll { $0.accountID == id }
+        do {
+            if hadPrivateLink {
+                try savePrivateServerCapabilities(accounts: accounts, launchSets: launchSets, privateServers: privateServers)
+            }
+            try lastSessionRepository.save(lastSession)
+        } catch {
+            notice = Notice(title: "Last Session could not be updated", message: "The removed account cannot be reopened.")
+        }
+    }
+
+    func resumeLastSession(accountIDs: Set<UUID>, useAnotherPublicServer: Bool) async {
+        guard !isBusyWithRoblox else { return }
+        await refreshRunningInstances()
+        guard !isBusyWithRoblox else { return }
+        let records = lastSession.filter { accountIDs.contains($0.accountID) && !runningAccountIDs.contains($0.accountID) }
+        var destinations: [UUID: BatchDestination] = [:]
+        var settings: [UUID: RobloxLaunchSettings] = [:]
+        for record in records {
+            var destination = BatchDestination(placeID: record.placeID)
+            if record.usesPrivateServer {
+                destination.server = .privateLink(sessionPrivateLinks[record.accountID] ?? "")
+            } else if let jobID = record.publicJobID {
+                destination.server = .publicInstance(jobID: jobID, playing: 0, maxPlayers: 0)
+                destination.allowPublicFallback = useAnotherPublicServer
+            }
+            destinations[record.accountID] = destination
+            settings[record.accountID] = record.settings
+        }
+        guard !destinations.isEmpty else { return }
+        batchSelectedIDs = Set(destinations.keys)
+        batchAccountGames.removeAll()
+        batchAccountSettings = settings
+        await executeBatch(BatchRetry(
+            accountIDs: batchSelectedIDs, windowArrangement: .savedPlacements, settings: launchSettings,
+            game: nil, destinations: destinations, accountSettings: settings, preserveSession: true
+        ))
     }
 
     private func refreshAvatarURLs() async {
@@ -829,6 +1297,7 @@ final class AccountStore: ObservableObject {
             )
             return
         }
+        batchAccountGames.removeAll()
         batchSelectedIDs = expectedIDs
         await launchBatch(
             placeText: String(placeID),
@@ -867,11 +1336,13 @@ final class AccountStore: ObservableObject {
 
         isFriendRelayLaunching = true
         friendRelayCancellationRequested = false
+        friendRelayUpdateError = nil
         friendRelayPlayerID = player.id
         friendRelayStates = Dictionary(uniqueKeysWithValues: selected.map { ($0.id, .planning) })
         defer {
             isFriendRelayLaunching = false
             friendRelayCancellationRequested = false
+            friendRelayUpdateError = nil
         }
 
         await checkAccounts(accountIDs)
@@ -879,7 +1350,7 @@ final class AccountStore: ObservableObject {
         guard notReady.isEmpty else {
             notice = Notice(
                 title: "Some accounts are not ready",
-                message: "Sign in to the marked accounts. No Roblox client was started."
+                message: "Review the sign-in status of the selected accounts."
             )
             return
         }
@@ -1008,7 +1479,15 @@ final class AccountStore: ObservableObject {
             let message = friendRelayStates[accountID]?.detail ?? "Roblox did not confirm this account in the server."
             return (accountID, .failed(message))
         })
-        if friendRelayCancellationRequested {
+        if let error = friendRelayUpdateError {
+            _ = offerUpdateRecovery(error, accountIDs: failedIDs) { [weak self] in
+                guard let self else { return }
+                let available = accountIDs.subtracting(self.runningAccountIDs)
+                await self.launchFriendPlayer(player, accountIDs: available)
+            }
+            batchStatus = "Roblox needs an update"
+            launchStatus = batchStatus
+        } else if friendRelayCancellationRequested {
             batchStatus = "Friend relay stopped after \(joinedIDs.count) joined"
             launchStatus = "Friend relay stopped"
             notice = Notice(
@@ -1040,6 +1519,10 @@ final class AccountStore: ObservableObject {
         startingStatus: String,
         joinedThrough: String?
     ) async -> Bool {
+        guard friendRelayUpdateError == nil else {
+            friendRelayStates[account.id] = .failed("Roblox needs an update.")
+            return false
+        }
         friendRelayStates[account.id] = initialState
         batchStatus = startingStatus
         await launch(
@@ -1048,8 +1531,9 @@ final class AccountStore: ObservableObject {
             server: server,
             rememberSelection: false,
             friendRelayStep: true,
-            settingsOverride: batchLaunchSettingsOverride
+            settingsOverride: batchAccountSettings[account.id] ?? batchLaunchSettingsOverride
         )
+        guard friendRelayUpdateError == nil else { return false }
         guard runningAccountIDs.contains(account.id) else {
             friendRelayStates[account.id] = .failed(notice?.message ?? "Roblox did not start.")
             return false
@@ -1151,6 +1635,7 @@ final class AccountStore: ObservableObject {
             return
         }
 
+        batchAccountGames.removeAll()
         batchSelectedIDs = accountIDs
         await launchBatch(
             placeText: String(placeID),
@@ -1194,6 +1679,7 @@ final class AccountStore: ObservableObject {
 
     func replaceSession(_ rawCookie: String, for account: ManagedAccount) async -> Bool {
         do {
+            try requireWritableProtectedData()
             let cookie = RobloxAPIClient.normalizedCookie(from: rawCookie)
             let user = try await api.authenticatedUser(cookie: cookie)
             guard user.id == account.userID else {
@@ -1216,23 +1702,76 @@ final class AccountStore: ObservableObject {
         }
     }
 
-    func saveLaunchSet(_ launchSet: LaunchSet) {
+    @discardableResult
+    func saveLaunchSet(_ launchSet: LaunchSet) -> Bool {
         var updated = launchSet
         updated.updatedAt = Date()
-        if let index = launchSets.firstIndex(where: { $0.id == launchSet.id }) {
-            launchSets[index] = updated
+        var records = launchSets
+        if let index = records.firstIndex(where: { $0.id == launchSet.id }) {
+            records[index] = updated
         } else {
-            launchSets.append(updated)
+            records.append(updated)
         }
-        launchSets.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        do { try saveLaunchSets(launchSets) }
-        catch { notice = Notice(title: "Launch Set was not saved", message: error.localizedDescription) }
+        records.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return persistLaunchSets(records, failureTitle: "Launch Set was not saved")
+    }
+
+    @discardableResult
+    private func persistLaunchSets(_ records: [LaunchSet], failureTitle: String) -> Bool {
+        do {
+            try saveLaunchSets(records)
+            launchSets = records
+            return true
+        } catch {
+            try? savePrivateServerCapabilities(accounts: accounts, launchSets: launchSets, privateServers: privateServers)
+            notice = Notice(title: failureTitle, message: error.localizedDescription)
+            return false
+        }
+    }
+
+    func setLaunchSetPinned(_ id: UUID, pinned: Bool) {
+        guard var launchSet = launchSets.first(where: { $0.id == id }) else { return }
+        launchSet.isPinned = pinned
+        saveLaunchSet(launchSet)
+    }
+
+    func saveBatchAsLaunchSet(name: String, placeID: Int64?, pinned: Bool) -> Bool {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let accountIDs = accounts.filter { batchSelectedIDs.contains($0.id) }.map(\.id)
+        let games = batchAccountGames.filter { batchSelectedIDs.contains($0.key) && $0.value.placeID > 0 }
+        let allAccountsHaveGames = LaunchSetGame.covers(Set(accountIDs), games: games)
+        let sharedPlaceID = max(0, placeID ?? 0)
+        guard !name.isEmpty, !accountIDs.isEmpty, sharedPlaceID > 0 || allAccountsHaveGames else { return false }
+        let strategy: ServerStrategy
+        switch allAccountsHaveGames ? .automatic : batchServerSelection {
+        case .automatic: strategy = .robloxChooses
+        case .privateLink(let link): strategy = .privateServerLink(link)
+        case .player: strategy = .joinPlayer
+        case .manualJob, .publicInstance: strategy = .browseBeforeLaunch
+        }
+        if strategy == .joinPlayer, !games.isEmpty {
+            notice = Notice(
+                title: "Choose a different server option",
+                message: "Choose a player requires a shared game for all accounts."
+            )
+            return false
+        }
+        return saveLaunchSet(LaunchSet(
+            name: name,
+            accountIDs: accountIDs,
+            placeID: sharedPlaceID,
+            experienceName: experiences.first(where: { $0.placeID == sharedPlaceID })?.experienceName,
+            serverStrategy: strategy,
+            launchSettings: batchLaunchSettingsOverride,
+            windowArrangement: batchWindowArrangement,
+            isPinned: pinned,
+            accountGames: games,
+            accountSettings: batchAccountSettings.filter { batchSelectedIDs.contains($0.key) }
+        ))
     }
 
     func removeLaunchSet(_ launchSet: LaunchSet) {
-        launchSets.removeAll { $0.id == launchSet.id }
-        do { try saveLaunchSets(launchSets) }
-        catch { notice = Notice(title: "Launch Set was not removed", message: error.localizedDescription) }
+        persistLaunchSets(launchSets.filter { $0.id != launchSet.id }, failureTitle: "Launch Set was not removed")
     }
 
     @discardableResult
@@ -1328,12 +1867,13 @@ final class AccountStore: ObservableObject {
         }
     }
 
-    func runLaunchSet(_ launchSet: LaunchSet) async {
+    @discardableResult
+    func runLaunchSet(_ launchSet: LaunchSet, requestID: UUID = UUID()) async -> LaunchSetNextStep? {
         guard runningLaunchSetID == nil,
               !isWorking,
               !isBatchLaunching,
               !isFriendRelayLaunching,
-              !isOpeningSelectedApps else { return }
+              appOpeningAccountIDs.isEmpty else { return nil }
         runningLaunchSetID = launchSet.id
         defer { runningLaunchSetID = nil }
 
@@ -1341,30 +1881,70 @@ final class AccountStore: ObservableObject {
             launchSet.groupNames.contains { account.belongs(to: $0) }
         }.map(\.id))
         let requested = Set(launchSet.accountIDs).union(groupAccountIDs)
+        batchStates.removeAll()
+        batchReadyIDs.removeAll()
+        batchPausedForReview = false
         batchSelectedIDs = Set(accounts.filter { requested.contains($0.id) && !isRunning($0) }.map(\.id))
         updateBatchSelectionStatus()
         guard !batchSelectedIDs.isEmpty else {
             notice = Notice(title: "No accounts are ready", message: "Every account in this Launch Set is missing or already running.")
-            return
+            return nil
         }
         batchWindowArrangement = launchSet.windowArrangement
         batchLaunchSettingsOverride = launchSet.launchSettings
+        batchAccountGames = launchSet.accountGames
+        batchAccountSettings = launchSet.accountSettings
+        let sharedPlace = launchSet.placeID > 0 ? String(launchSet.placeID) : ""
+        batchPlaceID = sharedPlace
+        batchServerSelection = .automatic
+        showsBatchPublicServers = false
+        launchSetPlayerAccounts = nil
+        if sharedPlace.isEmpty || LaunchSetGame.covers(batchSelectedIDs, games: launchSet.accountGames) {
+            await launchBatch(placeText: sharedPlace, server: .automatic, requestID: requestID)
+            return nil
+        }
         switch launchSet.serverStrategy {
         case .robloxChooses:
-            await launchBatch(placeText: String(launchSet.placeID), server: .automatic)
+            await launchBatch(placeText: sharedPlace, server: .automatic, requestID: requestID)
         case .privateServerLink(let link):
-            await launchBatch(placeText: String(launchSet.placeID), server: .privateLink(link))
+            batchServerSelection = .privateLink(link)
+            await launchBatch(placeText: sharedPlace, server: batchServerSelection, requestID: requestID)
         case .browseBeforeLaunch:
-            notice = Notice(
-                title: "Launch Set loaded",
-                message: "The accounts are selected. Use Choose Server in the main window to browse before launch."
-            )
+            showsBatchPublicServers = true
+            return .browsePublicServers
         case .joinPlayer:
-            notice = Notice(
-                title: "Launch Set loaded",
-                message: "The accounts are selected. Open Find Players and choose a visible player."
-            )
+            guard batchSelectedIDs.allSatisfy({ (launchSet.accountGames[$0]?.placeID ?? 0) <= 0 }) else {
+                notice = Notice(
+                    title: "Choose a different server option",
+                    message: "Choose a player works when all accounts use the same game."
+                )
+                return nil
+            }
+            launchSetPlayerAccounts = batchSelectedIDs
+            return .choosePlayer
         }
+        return nil
+    }
+
+    func takeLaunchSetPlayerAccounts() -> Set<UUID>? {
+        defer { launchSetPlayerAccounts = nil }
+        return launchSetPlayerAccounts
+    }
+
+    func launchFromLibrary(
+        accountIDs: Set<UUID>, placeID: Int64, server: RobloxServerSelection, requestID: UUID = UUID()
+    ) async {
+        guard !isBusyWithRoblox else { return }
+        await refreshRunningInstances()
+        guard !isBusyWithRoblox else { return }
+        let eligible = accounts.filter { accountIDs.contains($0.id) && !isRunning($0) }
+        guard !eligible.isEmpty else {
+            notice = Notice(title: "No accounts can start", message: "Choose accounts that are not running.")
+            return
+        }
+        clearBatchSelection()
+        batchSelectedIDs = Set(eligible.map(\.id))
+        await launchBatch(placeText: String(placeID), server: server, requestID: requestID)
     }
 
     func setExperienceFavorite(_ experience: ExperienceRecord, isFavorite: Bool) {
@@ -1372,6 +1952,21 @@ final class AccountStore: ObservableObject {
         experiences[index].isFavorite = isFavorite
         do { try experienceRepository.save(experiences) }
         catch { notice = Notice(title: "Favorite was not saved", message: error.localizedDescription) }
+    }
+
+    func addGameToLibrary(_ experience: ExperienceRecord) {
+        if experiences.contains(where: { $0.placeID == experience.placeID }) {
+            setExperienceFavorite(experience, isFavorite: true)
+            return
+        }
+        var favorite = experience
+        favorite.isFavorite = true
+        do {
+            try experienceRepository.save(experiences + [favorite])
+            experiences.append(favorite)
+        } catch {
+            notice = Notice(title: "Game could not be saved", message: error.localizedDescription)
+        }
     }
 
     func refreshExperienceMetadata(placeIDs: Set<Int64>? = nil, force: Bool = false) async {
@@ -1426,6 +2021,10 @@ final class AccountStore: ObservableObject {
         )
     }
 
+    func runDiagnostics() async -> DiagnosticReport {
+        await DiagnosticService(accountRepository: repository, vault: vault).run()
+    }
+
     func exportMetadata(includePrivateLinks: Bool = false) throws -> Data {
         try archiveService.exportData(
             accounts: accounts,
@@ -1437,6 +2036,7 @@ final class AccountStore: ObservableObject {
     }
 
     func importMetadata(_ data: Data) throws -> Int {
+        try requireWritableProtectedData()
         let result = try archiveService.importData(
             data,
             existingAccounts: accounts,
@@ -1478,48 +2078,40 @@ final class AccountStore: ObservableObject {
         return copy
     }
 
-    func importSession(_ rawCookie: String) async -> Bool {
+    func importSession(_ rawCookie: String) async throws {
+        guard !isWorking else { throw SessionImportError.busy }
+        try requireWritableProtectedData()
+        let cookie = RobloxAPIClient.normalizedCookie(from: rawCookie)
+        guard !cookie.isEmpty else { throw RobloxAPIError.invalidSession }
         isWorking = true
         defer { isWorking = false }
-        do {
-            let cookie = RobloxAPIClient.normalizedCookie(from: rawCookie)
-            let user = try await api.authenticatedUser(cookie: cookie)
-            let avatarURL = await api.avatarURL(userID: user.id)
-            if let index = accounts.firstIndex(where: { $0.userID == user.id }) {
-                try vault.save(cookie, for: accounts[index].id)
-                accounts[index].username = user.name
-                accounts[index].displayName = user.displayName
-                accounts[index].avatarURLString = avatarURL?.absoluteString
-                try saveAccounts(accounts)
-                selectedID = accounts[index].id
-                accountHealth[accounts[index].id] = .ready(lastChecked: Date())
-                notice = Notice(title: "Session updated", message: "\(user.name) is ready to launch.")
-            } else {
-                let account = ManagedAccount(
-                    userID: user.id,
-                    username: user.name,
-                    displayName: user.displayName
-                )
-                var accountWithAvatar = account
-                accountWithAvatar.avatarURLString = avatarURL?.absoluteString
-                try vault.save(cookie, for: accountWithAvatar.id)
-                accounts.append(accountWithAvatar)
-                do {
-                    try saveAccounts(accounts)
-                } catch {
-                    accounts.removeAll(where: { $0.id == accountWithAvatar.id })
-                    try? vault.delete(for: accountWithAvatar.id)
-                    throw error
-                }
-                selectedID = accountWithAvatar.id
-                accountHealth[accountWithAvatar.id] = .ready(lastChecked: Date())
-                notice = Notice(title: "Account added", message: "\(user.name) is saved securely on this Mac.")
-            }
-            return true
-        } catch {
-            notice = Notice(title: "Account was not added", message: error.localizedDescription)
-            return false
+        let user = try await api.authenticatedUser(cookie: cookie)
+        let avatarURL = await api.avatarURL(userID: user.id)
+        try Task.checkCancellation()
+
+        var updated = accounts
+        var account = accounts.first { $0.userID == user.id } ?? ManagedAccount(
+            userID: user.id, username: user.name, displayName: user.displayName
+        )
+        account.username = user.name
+        account.displayName = user.displayName
+        account.avatarURLString = avatarURL?.absoluteString
+        let existingIndex = updated.firstIndex { $0.id == account.id }
+        if let existingIndex {
+            updated[existingIndex] = account
+        } else {
+            updated.append(account)
         }
+        try vault.save(cookie, for: account.id)
+        do {
+            try saveAccounts(updated)
+        } catch {
+            if existingIndex == nil { try? vault.delete(for: account.id) }
+            throw error
+        }
+        accounts = updated
+        selectedID = account.id
+        accountHealth[account.id] = .ready(lastChecked: Date())
     }
 
     func update(_ account: ManagedAccount) {
@@ -1533,6 +2125,10 @@ final class AccountStore: ObservableObject {
         var updatedAccounts = accounts
         updatedAccounts[index] = updated
         let updatedGroups = ManagedAccount.normalizedGroups(groups + updated.groups)
+        guard canSaveProtectedData else {
+            notice = Notice(title: "Changes were not saved", message: SavedDataRecoveryRequired().localizedDescription)
+            return
+        }
         do {
             try saveSecureProfileNote(updated.notes, for: updated.id)
             try saveAccounts(updatedAccounts)
@@ -1547,6 +2143,10 @@ final class AccountStore: ObservableObject {
     }
 
     func remove(_ account: ManagedAccount) {
+        guard canSaveProtectedData else {
+            notice = Notice(title: "Account was not removed", message: SavedDataRecoveryRequired().localizedDescription)
+            return
+        }
         guard !isRunning(account), !isOpeningApp(account) else {
             notice = Notice(title: "Account is still active", message: "Wait for this account to finish opening or stop its Roblox instance before removing it.")
             return
@@ -1558,6 +2158,7 @@ final class AccountStore: ObservableObject {
             try saveAccounts(updated)
             try vault.delete(for: account.id)
             accounts = updated
+            forgetSessionAccount(account.id)
             batchSelectedIDs.remove(account.id)
             batchStates[account.id] = nil
             accountHealth[account.id] = nil
@@ -1694,10 +2295,7 @@ final class AccountStore: ObservableObject {
 
         await checkAccount(account)
         guard accountHealth[account.id]?.isReady == true else {
-            notice = Notice(
-                title: "This account is not ready",
-                message: "Use Sign In Again, then try to open the Roblox app again."
-            )
+            notice = Notice(title: "Could not open Roblox", message: accountHealth[account.id]?.launchIssue ?? "Check this account and try again.")
             return
         }
 
@@ -1726,6 +2324,9 @@ final class AccountStore: ObservableObject {
             update(updated)
             activeLaunchTargets[account.id] = nil
             try? activeLaunchRepository.save(Array(activeLaunchTargets.values))
+            saveSessionEntries([sessionEntry(
+                accountID: account.id, placeID: nil, server: .automatic, settings: launchSettings
+            )])
             switch launchMode {
             case .unmodifiedParallel:
                 launchStatus = "Roblox is open as @\(account.username)"
@@ -1737,174 +2338,27 @@ final class AccountStore: ObservableObject {
             await applyWindowPlacement(accountID: account.id, processIdentifier: instance.processIdentifier)
         } catch {
             launchStatus = "Open failed"
+            let accountID = account.id
+            if offerUpdateRecovery(error as? RobloxLaunchError, accountIDs: [accountID], retry: { [weak self] in
+                guard let self, let account = self.accounts.first(where: { $0.id == accountID }),
+                      !self.isRunning(account) else { return }
+                await self.launchApp(account: account)
+            }) { return }
             notice = Notice(title: "Roblox did not open", message: error.localizedDescription)
         }
     }
 
     func launchSelectedApps(skipHealthPreflight: Bool = false) async {
-        guard !isWorking,
-              !isBatchLaunching,
-              !isFriendRelayLaunching,
-              !isOpeningSelectedApps,
-              appOpeningAccountIDs.isEmpty else { return }
-        let selectedAccounts = accounts.filter {
-            batchSelectedIDs.contains($0.id) && !isRunning($0) && !isOpeningApp($0)
+        let destinations = batchSelectedIDs.reduce(into: [UUID: BatchDestination]()) {
+            $0[$1] = BatchDestination(placeID: nil)
         }
-        guard !selectedAccounts.isEmpty else {
-            batchSelectedIDs.removeAll()
-            batchStates.removeAll()
-            batchStatus = "Select accounts that are not running"
-            return
-        }
-        let selectedIDs = Set(selectedAccounts.map(\.id))
-        let total = selectedAccounts.count
-        let windowArrangement = batchWindowArrangement
-        isOpeningSelectedApps = true
-        appOpeningAccountIDs.formUnion(selectedIDs)
-        batchStates = Dictionary(uniqueKeysWithValues: selectedAccounts.map { ($0.id, .starting) })
-        batchStatus = "Opening 0 of \(total) apps"
-        launchStatus = "Opening selected Roblox apps"
-        defer {
-            appOpeningAccountIDs.subtract(selectedIDs)
-            isOpeningSelectedApps = false
-        }
-
-        if !skipHealthPreflight {
-            await checkAccounts(selectedIDs)
-        }
-
-        let readyAccounts = selectedAccounts.filter {
-            skipHealthPreflight || accountHealth[$0.id]?.isReady == true
-        }
-        var outcomes = selectedAccounts.compactMap { account -> LaunchOutcome? in
-            guard !readyAccounts.contains(where: { $0.id == account.id }) else { return nil }
-            let message = "Sign in again before opening this account."
-            batchStates[account.id] = .failed(message)
-            return LaunchOutcome(
-                accountID: account.id,
-                username: account.username,
-                processIdentifier: nil,
-                placeID: nil,
-                errorMessage: message,
-                placementResult: nil
-            )
-        }
-
-        let vault = self.vault
-        let api = self.api
-        let builder = self.builder
-        let launcher = self.launcher
-        let launchMode = self.launchMode
-        let launchSettings = batchLaunchSettingsOverride ?? self.launchSettings
-        let windowLayout = self.windowLayout
-        await withTaskGroup(of: LaunchOutcome.self) { group in
-            for account in readyAccounts {
-                group.addTask {
-                    do {
-                        guard let cookie = try vault.read(for: account.id), !cookie.isEmpty else {
-                            throw RobloxAPIError.invalidSession
-                        }
-                        let ticket = try await api.authenticationTicket(cookie: cookie)
-                        let url = try builder.makeAppURL(ticket: ticket)
-                        let instance = try await launcher.launch(
-                            url,
-                            for: account.id,
-                            mode: launchMode,
-                            settings: launchSettings
-                        )
-                        let placementResult = await windowLayout.placeWindow(
-                            accountID: account.id,
-                            processIdentifier: instance.processIdentifier,
-                            arrangement: windowArrangement
-                        )
-                        return LaunchOutcome(
-                            accountID: account.id,
-                            username: account.username,
-                            processIdentifier: instance.processIdentifier,
-                            placeID: nil,
-                            errorMessage: nil,
-                            placementResult: placementResult
-                        )
-                    } catch {
-                        return LaunchOutcome(
-                            accountID: account.id,
-                            username: account.username,
-                            processIdentifier: nil,
-                            placeID: nil,
-                            errorMessage: error.localizedDescription,
-                            placementResult: nil
-                        )
-                    }
-                }
-            }
-
-            for await outcome in group {
-                outcomes.append(outcome)
-                if let message = outcome.errorMessage {
-                    batchStates[outcome.accountID] = .failed(message)
-                } else {
-                    batchStates[outcome.accountID] = nil
-                }
-                let started = outcomes.filter { $0.errorMessage == nil }.count
-                batchStatus = "Opened \(started) of \(total) apps"
-            }
-        }
-
-        await refreshRunningInstances()
-        outcomes = outcomes.map { outcome in
-            guard outcome.errorMessage == nil,
-                  !runningAccountIDs.contains(outcome.accountID) else { return outcome }
-            let message = "Roblox closed before the manager could confirm that it was running."
-            batchStates[outcome.accountID] = .failed(message)
-            return LaunchOutcome(
-                accountID: outcome.accountID,
-                username: outcome.username,
-                processIdentifier: outcome.processIdentifier,
-                placeID: nil,
-                errorMessage: message,
-                placementResult: outcome.placementResult
-            )
-        }
-
-        let placementResults = Dictionary(
-            uniqueKeysWithValues: outcomes.compactMap { outcome in
-                outcome.placementResult.map { (outcome.accountID, $0) }
-            }
-        )
-
-        let now = Date()
-        for outcome in outcomes where outcome.errorMessage == nil {
-            if let index = accounts.firstIndex(where: { $0.id == outcome.accountID }) {
-                accounts[index].lastUsed = now
-            }
-            activeLaunchTargets[outcome.accountID] = nil
-        }
-        do {
-            try saveAccounts(accounts)
-            try activeLaunchRepository.save(Array(activeLaunchTargets.values))
-        } catch {
-            notice = Notice(title: "Launch details were not saved", message: error.localizedDescription)
-        }
-
-        let failures = outcomes.filter { $0.errorMessage != nil }
-        if failures.isEmpty {
-            batchSelectedIDs.removeAll()
-            batchStates.removeAll()
-            batchStatus = "Opened all \(total) apps"
-            launchStatus = "Running \(total) Roblox apps"
-            showWindowPlacementNoticeIfNeeded(placementResults)
-            batchWindowArrangement = .savedPlacements
-            batchLaunchSettingsOverride = nil
-        } else {
-            batchSelectedIDs = Set(failures.map(\.accountID))
-            batchStates = batchStates.filter { batchSelectedIDs.contains($0.key) }
-            batchStatus = "\(total - failures.count) opened, \(failures.count) failed"
-            launchStatus = "\(total - failures.count) running, \(failures.count) failed"
-            notice = Notice(
-                title: "\(failures.count) account\(failures.count == 1 ? "" : "s") did not open",
-                message: launchFailureMessage(failures)
-            )
-        }
+        await executeBatch(BatchRetry(
+            accountIDs: batchSelectedIDs,
+            windowArrangement: batchWindowArrangement,
+            settings: batchLaunchSettingsOverride ?? launchSettings,
+            game: nil, destinations: destinations,
+            accountGames: batchAccountGames, accountSettings: batchAccountSettings
+        ), skipHealthPreflight: skipHealthPreflight)
     }
 
     func launch(
@@ -1958,10 +2412,7 @@ final class AccountStore: ObservableObject {
         }
         await checkAccount(account)
         guard accountHealth[account.id]?.isReady == true else {
-            notice = Notice(
-                title: "This account is not ready",
-                message: "Use Sign In Again, then try the launch again."
-            )
+            notice = Notice(title: "Could not start Roblox", message: accountHealth[account.id]?.launchIssue ?? "Check this account and try again.")
             return
         }
         launchStatus = "Requesting a launch ticket"
@@ -1980,7 +2431,7 @@ final class AccountStore: ObservableObject {
                 api: api
             )
 
-            launchStatus = "Requesting a launch ticket"
+            launchStatus = "Connecting to Roblox"
             let ticket = try await api.authenticationTicket(cookie: cookie)
             let url = try builder.makeURL(
                 ticket: ticket,
@@ -2021,6 +2472,10 @@ final class AccountStore: ObservableObject {
                 placeID: resolved.placeID,
                 server: launchServer
             )
+            saveSessionEntries([sessionEntry(
+                accountID: account.id, placeID: resolved.placeID, server: launchServer,
+                settings: settingsOverride ?? launchSettings
+            )])
             recordExperienceLaunch(placeID: resolved.placeID)
             switch launchMode {
             case .unmodifiedParallel:
@@ -2033,6 +2488,20 @@ final class AccountStore: ObservableObject {
             await applyWindowPlacement(accountID: account.id, processIdentifier: instance.processIdentifier)
         } catch {
             launchStatus = "Launch failed"
+            let accountID = account.id
+            if friendRelayStep, let launchError = error as? RobloxLaunchError, launchError.blocksLaunchForUpdate {
+                friendRelayUpdateError = launchError
+                friendRelayStates[accountID] = .failed("Roblox needs an update.")
+                return
+            }
+            if !friendRelayStep, offerUpdateRecovery(error as? RobloxLaunchError, accountIDs: [accountID], retry: { [weak self] in
+                guard let self, let account = self.accounts.first(where: { $0.id == accountID }),
+                      !self.isRunning(account) else { return }
+                await self.launch(
+                    account: account, placeText: placeText, server: server,
+                    rememberSelection: rememberSelection, settingsOverride: settingsOverride
+                )
+            }) { return }
             notice = Notice(title: "Roblox did not launch", message: error.localizedDescription)
         }
     }
@@ -2046,96 +2515,171 @@ final class AccountStore: ObservableObject {
         server: RobloxServerSelection,
         skipPublicServerPreflight: Bool = false,
         skipHealthPreflight: Bool = false,
-        rememberSelection: Bool = true
+        rememberSelection: Bool = true,
+        requestID: UUID = UUID()
     ) async {
-        guard !isWorking,
-              !isBatchLaunching,
-              !isFriendRelayLaunching,
-              appOpeningAccountIDs.isEmpty else { return }
-        guard let placeID = Int64(placeText.trimmingCharacters(in: .whitespacesAndNewlines)), placeID > 0 else {
-            notice = Notice(title: "Check the shared place ID", message: RobloxLaunchError.invalidPlaceID.localizedDescription)
+        let parsedPlaceID = Int64(placeText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        let placeID: Int64? = parsedPlaceID > 0 ? parsedPlaceID : nil
+        guard placeID != nil || LaunchSetGame.covers(batchSelectedIDs, games: batchAccountGames) else {
+            notice = Notice(title: "Choose a game", message: "Choose a shared game or give each account its own game in Per-Account Options.")
             return
         }
+        let targets = Dictionary(uniqueKeysWithValues: batchSelectedIDs.map { id in
+            let destination: BatchDestination
+            if let game = batchAccountGames[id], game.placeID > 0 {
+                let server = game.privateServerID.map { serverID in
+                    RobloxServerSelection.privateLink(privateServers.first { $0.id == serverID }?.link ?? "")
+                } ?? .automatic
+                destination = BatchDestination(placeID: game.placeID, server: server)
+            } else {
+                destination = BatchDestination(placeID: placeID, server: server)
+            }
+            return (id, destination)
+        })
+        let request = BatchRetry(
+            id: requestID,
+            accountIDs: batchSelectedIDs,
+            windowArrangement: batchWindowArrangement,
+            settings: batchLaunchSettingsOverride ?? launchSettings,
+            game: (placeID.map(String.init) ?? "", server, rememberSelection),
+            destinations: targets,
+            accountGames: batchAccountGames,
+            accountSettings: batchAccountSettings
+        )
+        await executeBatch(request, skipPublicServerPreflight: skipPublicServerPreflight, skipHealthPreflight: skipHealthPreflight)
+    }
 
+    private func executeBatch(
+        _ request: BatchRetry,
+        skipPublicServerPreflight: Bool = false,
+        skipHealthPreflight: Bool = false
+    ) async {
+        guard !isBusyWithRoblox else { return }
+        let destinations = request.destinations
         let selectedAccounts = accounts.filter {
-            batchSelectedIDs.contains($0.id) && !isRunning($0) && !isOpeningApp($0)
+            request.accountIDs.contains($0.id) && !isRunning($0) && !isOpeningApp($0) && destinations[$0.id] != nil
         }
         guard !selectedAccounts.isEmpty else {
-            batchSelectedIDs.removeAll()
-            batchStates.removeAll()
-            batchStatus = "Select accounts that are not running"
+            clearBatchSelection()
             return
         }
+
+        let opensAppsOnly = request.game == nil && !request.preserveSession
+        let selectedIDs = Set(selectedAccounts.map(\.id))
         isWorking = true
-        isBatchLaunching = true
+        isOpeningSelectedApps = opensAppsOnly
+        isBatchLaunching = !opensAppsOnly
+        if opensAppsOnly { appOpeningAccountIDs.formUnion(selectedIDs) }
         defer {
+            if request.preserveSession {
+                batchSelectedIDs.removeAll()
+                batchStates.removeAll()
+                batchWindowArrangement = .savedPlacements
+                batchLaunchSettingsOverride = nil
+                batchAccountGames.removeAll()
+                batchAccountSettings.removeAll()
+            }
             isWorking = false
             isBatchLaunching = false
+            isOpeningSelectedApps = false
+            if opensAppsOnly { appOpeningAccountIDs.subtract(selectedIDs) }
         }
-
-        let windowArrangement = batchWindowArrangement
+        batchStates.removeAll()
+        batchReadyIDs.removeAll()
+        batchPausedForReview = false
+        if let game = request.game {
+            batchPlaceID = game.place
+            batchServerSelection = game.server
+        }
+        let windowArrangement = request.windowArrangement
+        let launchSettings = request.settings
+        let accountSettings = request.accountSettings
         if !skipHealthPreflight {
             await checkAccounts(Set(selectedAccounts.map(\.id)))
-            let notReady = selectedAccounts.filter { accountHealth[$0.id]?.isReady != true }
-            if !notReady.isEmpty {
-                for account in notReady {
-                    batchStates[account.id] = .failed("Sign in again before launching this account.")
-                }
-                batchStatus = "\(notReady.count) account\(notReady.count == 1 ? " is" : "s are") not ready"
-                notice = Notice(
-                    title: "Some accounts are not ready",
-                    message: "Review the marked accounts. No account was launched."
-                )
-                return
+            for account in selectedAccounts {
+                let health = accountHealth[account.id] ?? .unchecked
+                if !health.isReady { batchStates[account.id] = .accountUnavailable(health) }
             }
         }
 
-        var launchServer = server
-        if !skipPublicServerPreflight,
-           case .publicInstance(let jobID, _, _) = server {
-            let verification = await verifyPublicServer(
-                placeID: placeID,
-                jobID: jobID,
-                maximumPages: 100,
-                forceRefresh: true
-            )
-            guard case .verifiedPublic(let current) = verification else {
-                notice = Notice(
-                    title: "The selected server is no longer public",
-                    message: "Choose another public server or let Roblox choose. No account was launched."
-                )
-                return
+        let candidates = selectedAccounts.filter { batchStates[$0.id] == nil }
+        var groups: [BatchDestination: [ManagedAccount]] = [:]
+        for account in candidates {
+            if let destination = destinations[account.id] {
+                groups[destination, default: []].append(account)
             }
-            guard current.openSpaces >= selectedAccounts.count else {
-                notice = Notice(
-                    title: "The server no longer has enough space",
-                    message: "It has \(current.openSpaces) open space\(current.openSpaces == 1 ? "" : "s") for \(selectedAccounts.count) selected accounts. Change the selection before launching."
-                )
-                return
-            }
-            launchServer = .publicInstance(jobID: current.id, playing: current.playing, maxPlayers: current.maxPlayers)
         }
-
         var preparedPrivateTargets: [UUID: ResolvedServerTarget] = [:]
-        if case .privateLink = launchServer {
-            let prepared = await privateServerTargets(
-                accounts: selectedAccounts,
-                placeID: placeID,
-                selection: launchServer
-            )
-            let denied = prepared.failures
-            if !denied.isEmpty {
-                let deniedIDs = Set(denied.keys)
-                batchSelectedIDs.subtract(deniedIDs)
-                for (accountID, message) in denied { batchStates[accountID] = .failed(message) }
-                batchStatus = "\(selectedAccounts.count - denied.count) allowed, \(denied.count) denied"
-                notice = Notice(
-                    title: "Some accounts cannot access this private server",
-                    message: "The denied accounts are marked in the sidebar. Review the selection, then launch the allowed accounts."
+        var checkedDestinations = destinations
+        var privateDenied = Set<UUID>()
+        var blockedNotice: Notice?
+        for (destination, group) in groups {
+            guard let placeID = destination.placeID else { continue }
+            switch destination.server {
+            case .publicInstance(let jobID, _, _) where !skipPublicServerPreflight || destination.allowPublicFallback:
+                let verification = await verifyPublicServer(
+                    placeID: placeID, jobID: jobID, maximumPages: 100, forceRefresh: true
                 )
-                return
+                if case .verifiedPublic(let current) = verification, current.openSpaces >= group.count {
+                    continue
+                }
+                if destination.allowPublicFallback {
+                    for account in group { checkedDestinations[account.id]?.server = .automatic }
+                    continue
+                }
+                if case .verifiedPublic(let current) = verification {
+                    let capacity = max(0, current.openSpaces)
+                    for account in group.dropFirst(capacity) {
+                        batchStates[account.id] = .failed("There is no room for this account in the selected server.")
+                    }
+                    blockedNotice = Notice(
+                        title: "The server no longer has enough space",
+                        message: "It has \(capacity) open spaces for \(group.count) accounts. Review the ready accounts before launching."
+                    )
+                } else {
+                    for account in group {
+                        batchStates[account.id] = .failed("Choose another public server.")
+                    }
+                    blockedNotice = Notice(
+                        title: "The selected server is no longer public",
+                        message: "Choose another server or let Roblox choose."
+                    )
+                }
+            case .privateLink(let link):
+                guard !link.isEmpty else {
+                    for account in group { batchStates[account.id] = .failed("Choose a saved private server for this account.") }
+                    continue
+                }
+                let prepared = await privateServerTargets(accounts: group, placeID: placeID, selection: destination.server)
+                preparedPrivateTargets.merge(prepared.targets) { current, _ in current }
+                for (id, message) in prepared.failures {
+                    batchStates[id] = .failed(message)
+                    privateDenied.insert(id)
+                }
+                if !prepared.failures.isEmpty {
+                    blockedNotice = Notice(
+                        title: "Some accounts cannot access this private server",
+                        message: "Review the results before starting the accounts that can join."
+                    )
+                }
+            default:
+                break
             }
-            preparedPrivateTargets = prepared.targets
+        }
+        if !batchStates.isEmpty {
+            let blocked = selectedAccounts.map { account in
+                LaunchOutcome(
+                    accountID: account.id, username: account.username, processIdentifier: nil,
+                    placeID: nil, errorMessage: batchStates[account.id]?.errorMessage, placementResult: nil
+                )
+            }
+            batchReadyIDs = Set(selectedAccounts.filter { batchStates[$0.id] == nil }.map(\.id))
+            batchPausedForReview = true
+            batchSelectedIDs.subtract(privateDenied)
+            batchStatus = "Launch paused. Review the account results."
+            finishBatch(blocked, request: request, wasBlockedBeforeLaunch: true)
+            if batchReadyIDs.isEmpty { notice = blockedNotice }
+            return
         }
 
         let vault = self.vault
@@ -2143,47 +2687,49 @@ final class AccountStore: ObservableObject {
         let builder = self.builder
         let launcher = self.launcher
         let launchMode = self.launchMode
-        let launchSettings = batchLaunchSettingsOverride ?? self.launchSettings
         let windowLayout = self.windowLayout
         let privateTargets = preparedPrivateTargets
-        let resolvedLaunchServer = launchServer
+        let finalDestinations = checkedDestinations
         let total = selectedAccounts.count
 
         batchStates = Dictionary(uniqueKeysWithValues: selectedAccounts.map { ($0.id, .starting) })
-        batchStatus = "Starting 0 of \(total)"
-        launchStatus = "Starting selected accounts"
+        batchStatus = opensAppsOnly ? "Opening 0 of \(total) apps" : "Starting 0 of \(total)"
+        launchStatus = opensAppsOnly ? "Opening selected Roblox apps" : "Starting selected accounts"
 
         var outcomes: [LaunchOutcome] = []
         await withTaskGroup(of: LaunchOutcome.self) { group in
             for account in selectedAccounts {
+                guard let destination = finalDestinations[account.id] else { continue }
+                let settings = accountSettings[account.id] ?? launchSettings
                 group.addTask {
                     do {
                         guard let cookie = try vault.read(for: account.id), !cookie.isEmpty else {
                             throw RobloxAPIError.invalidSession
                         }
 
-                        let resolved = if let prepared = privateTargets[account.id] {
-                            prepared
-                        } else {
-                            try await resolveServerTarget(
-                                resolvedLaunchServer,
-                                placeID: placeID,
-                                cookie: cookie,
-                                api: api
-                            )
-                        }
-
                         let ticket = try await api.authenticationTicket(cookie: cookie)
-                        let url = try builder.makeURL(
-                            ticket: ticket,
-                            placeID: resolved.placeID,
-                            target: resolved.target
-                        )
+                        let url: URL
+                        let launchedPlaceID: Int64?
+                        if let placeID = destination.placeID {
+                            let resolved: ResolvedServerTarget
+                            if let prepared = privateTargets[account.id] {
+                                resolved = prepared
+                            } else {
+                                resolved = try await resolveServerTarget(
+                                    destination.server, placeID: placeID, cookie: cookie, api: api
+                                )
+                            }
+                            url = try builder.makeURL(ticket: ticket, placeID: resolved.placeID, target: resolved.target)
+                            launchedPlaceID = resolved.placeID
+                        } else {
+                            url = try builder.makeAppURL(ticket: ticket)
+                            launchedPlaceID = nil
+                        }
                         let instance = try await launcher.launch(
                             url,
                             for: account.id,
                             mode: launchMode,
-                            settings: launchSettings
+                            settings: settings
                         )
                         let placementResult = await windowLayout.placeWindow(
                             accountID: account.id,
@@ -2194,7 +2740,7 @@ final class AccountStore: ObservableObject {
                             accountID: account.id,
                             username: account.username,
                             processIdentifier: instance.processIdentifier,
-                            placeID: resolved.placeID,
+                            placeID: launchedPlaceID,
                             errorMessage: nil,
                             placementResult: placementResult
                         )
@@ -2205,7 +2751,9 @@ final class AccountStore: ObservableObject {
                             processIdentifier: nil,
                             placeID: nil,
                             errorMessage: error.localizedDescription,
-                            placementResult: nil
+                            placementResult: nil,
+                            updateError: (error as? RobloxLaunchError)?.blocksLaunchForUpdate == true
+                                ? error as? RobloxLaunchError : nil
                         )
                     }
                 }
@@ -2218,7 +2766,8 @@ final class AccountStore: ObservableObject {
                 } else {
                     batchStates[outcome.accountID] = nil
                 }
-                batchStatus = "Started \(outcomes.filter { $0.errorMessage == nil }.count) of \(total)"
+                let started = outcomes.filter { $0.errorMessage == nil }.count
+                batchStatus = opensAppsOnly ? "Opened \(started) of \(total) apps" : "Started \(started) of \(total)"
             }
         }
 
@@ -2244,23 +2793,26 @@ final class AccountStore: ObservableObject {
                 outcome.placementResult.map { (outcome.accountID, $0) }
             }
         )
+        var sessionEntries: [(SessionLaunch, String?)] = []
         for outcome in outcomes where outcome.errorMessage == nil {
-            let launchedPlaceID = outcome.placeID ?? placeID
+            guard let destination = finalDestinations[outcome.accountID] else { continue }
             if let index = accounts.firstIndex(where: { $0.id == outcome.accountID }) {
                 accounts[index].lastUsed = Date()
-                if rememberSelection {
-                    accounts[index].savedPlaceID = String(launchedPlaceID)
-                    accounts[index].savedServer = launchServer.persistedValue
+                if request.game?.rememberSelection == true, let placeID = outcome.placeID {
+                    accounts[index].savedPlaceID = String(placeID)
+                    accounts[index].savedServer = destination.server.persistedValue
                 }
             }
-            if let processIdentifier = outcome.processIdentifier {
+            if let processIdentifier = outcome.processIdentifier, let placeID = outcome.placeID {
                 recordLaunchTarget(
-                    accountID: outcome.accountID,
-                    processIdentifier: processIdentifier,
-                    placeID: launchedPlaceID,
-                    server: launchServer
+                    accountID: outcome.accountID, processIdentifier: processIdentifier,
+                    placeID: placeID, server: destination.server
                 )
             }
+            sessionEntries.append(sessionEntry(
+                accountID: outcome.accountID, placeID: outcome.placeID, server: destination.server,
+                settings: accountSettings[outcome.accountID] ?? launchSettings
+            ))
         }
         let launchedPlaceIDs = Set(outcomes.compactMap { $0.errorMessage == nil ? $0.placeID : nil })
         for launchedPlaceID in launchedPlaceIDs { recordExperienceLaunch(placeID: launchedPlaceID) }
@@ -2273,31 +2825,41 @@ final class AccountStore: ObservableObject {
             )
         }
 
+        saveSessionEntries(sessionEntries, preservingPrevious: request.preserveSession)
+        finishBatch(outcomes, request: request)
         let failures = outcomes.filter { $0.errorMessage != nil }
         if failures.isEmpty {
             batchSelectedIDs.removeAll()
             batchStates.removeAll()
-            batchStatus = "Started all \(total) accounts"
-            switch launchMode {
-            case .unmodifiedParallel:
-                launchStatus = "Running \(total) accounts with the recommended method"
-            case .official:
-                launchStatus = "Running \(total) accounts with official Roblox"
-            case .modifiedParallel:
-                launchStatus = "Running \(total) accounts with the advanced fallback"
+            batchStatus = opensAppsOnly ? "Opened all \(total) apps" : "Started all \(total) accounts"
+            if opensAppsOnly {
+                launchStatus = "Running \(total) Roblox app\(total == 1 ? "" : "s")"
+            } else {
+                switch launchMode {
+                case .unmodifiedParallel:
+                    launchStatus = "Running \(total) accounts with the recommended method"
+                case .official:
+                    launchStatus = "Running \(total) accounts with official Roblox"
+                case .modifiedParallel:
+                    launchStatus = "Running \(total) accounts with the advanced fallback"
+                }
             }
             showWindowPlacementNoticeIfNeeded(placementResults)
             batchWindowArrangement = .savedPlacements
             batchLaunchSettingsOverride = nil
+            batchAccountGames.removeAll()
+            batchAccountSettings.removeAll()
         } else {
             batchSelectedIDs = Set(failures.map(\.accountID))
             batchStates = batchStates.filter { batchSelectedIDs.contains($0.key) }
             batchStatus = "\(total - failures.count) started, \(failures.count) failed"
             launchStatus = "\(total - failures.count) running, \(failures.count) failed"
-            notice = Notice(
-                title: "\(failures.count) account\(failures.count == 1 ? "" : "s") did not start",
-                message: launchFailureMessage(failures)
-            )
+            if failures.contains(where: { $0.updateError == nil }) {
+                notice = Notice(
+                    title: "\(failures.count) account\(failures.count == 1 ? "" : "s") did not start",
+                    message: launchFailureMessage(failures)
+                )
+            }
         }
     }
 
@@ -2306,9 +2868,11 @@ final class AccountStore: ObservableObject {
         if count == 0 {
             batchWindowArrangement = .savedPlacements
             batchLaunchSettingsOverride = nil
+            batchAccountGames.removeAll()
+            batchAccountSettings.removeAll()
         }
         batchStatus = count == 0
-            ? "Select accounts from the shelf"
+            ? "Select accounts"
             : "\(count) account\(count == 1 ? "" : "s") ready"
     }
 

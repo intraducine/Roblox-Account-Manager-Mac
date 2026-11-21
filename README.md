@@ -10,15 +10,13 @@ Run several Roblox accounts on one Mac, with a separate Roblox app copy and data
 
 **[Download the latest release](https://github.com/intraducine/Roblox-Account-Manager-Mac/releases/latest)** · [User guide](docs/USER_GUIDE.md) · [Build from source](docs/DEVELOPMENT.md)
 
-This is an independent project. Roblox Corporation does not make or approve it. Use only accounts that you own or have permission to use.
-
 ## Install
 
 You need **macOS 13 or newer** and Roblox at `/Applications/Roblox.app`. Release builds support Apple silicon and Intel Macs.
 
 1. Download the release ZIP.
 2. Extract the ZIP and move **Roblox Account Manager.app** to Applications.
-3. Open the manager. If macOS blocks the first launch, follow the [security warning steps](docs/USER_GUIDE.md#install-and-update). Keep macOS security checks on.
+3. Open the manager. If macOS blocks the first launch, follow the [first-launch steps](docs/USER_GUIDE.md#install-and-update).
 
 For later updates, choose **Roblox Account Manager > Check for Updates**. If an older manager rejects the update, follow the [manual update steps](docs/USER_GUIDE.md#install-and-update).
 

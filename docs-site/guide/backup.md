@@ -22,6 +22,8 @@ Import adds the backup to the data already on your Mac. It replaces details for 
 
 On a new Mac, select each imported account, choose **Check Account**, then select **Sign In Again** if the account is signed out. Add any profile notes you want to keep. The maximum backup size is 10 MB.
 
+If the app reports that a saved file and its backup are unreadable, it pauses saves that depend on those files. Recover the named files, then reopen the app.
+
 ## Share a diagnostic report
 
 Select **Run Check**, then **Export Redacted Report**. The report checks Roblox, app copies, storage, saved sign-ins, and Roblox services. The report excludes Roblox sign-ins, launch tickets, and private server links. Review it before sharing.

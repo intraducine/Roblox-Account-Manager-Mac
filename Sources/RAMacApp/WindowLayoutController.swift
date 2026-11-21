@@ -88,15 +88,20 @@ enum WindowPlacementResult: Equatable, Sendable {
 
     var requiresAttentionMessage: String? {
         switch self {
-        case .noAssignment, .placed, .adjusted:
+        case .noAssignment, .placed:
             return nil
-        case .permissionRequired, .displayUnavailable, .failed:
+        case .adjusted, .permissionRequired, .displayUnavailable, .failed:
             return message
         }
     }
 }
 
 enum WindowPlacementGeometry {
+    static func isOnDisplay(_ window: CGRect, display: CGRect) -> Bool {
+        guard !window.isEmpty, !window.isInfinite else { return false }
+        return display.contains(CGPoint(x: window.midX, y: window.midY))
+    }
+
     static func frame(in visibleFrame: CGRect, region: WindowPlacementRegion) -> CGRect {
         let halfWidth = visibleFrame.width / 2
         let halfHeight = visibleFrame.height / 2
@@ -367,6 +372,16 @@ struct UserDefaultsWindowLayoutRepository: WindowLayoutPersisting {
 
 protocol RobloxWindowPlacing: Sendable {
     func place(processIdentifier: Int32, request: RobloxWindowPlacementRequest) async -> WindowPlacementResult
+    func currentWindow(processIdentifier: Int32) async -> RobloxWindowSnapshot?
+}
+
+extension RobloxWindowPlacing {
+    func currentWindow(processIdentifier: Int32) async -> RobloxWindowSnapshot? { nil }
+}
+
+struct RobloxWindowSnapshot: Equatable, Sendable {
+    let frame: CGRect
+    let isFullScreen: Bool
 }
 
 struct RobloxWindowPlacementRequest: Equatable, Sendable {
@@ -374,6 +389,7 @@ struct RobloxWindowPlacementRequest: Equatable, Sendable {
     let availableFrame: CGRect
     let screenFrame: CGRect
     let region: WindowPlacementRegion
+    var usesCapturedFrame = false
 }
 
 actor AccessibilityRobloxWindowPlacer: RobloxWindowPlacing {
@@ -394,6 +410,18 @@ actor AccessibilityRobloxWindowPlacer: RobloxWindowPlacing {
     private var fullScreenTransitionInProgress = false
     private var fullScreenWaiters: [CheckedContinuation<Void, Never>] = []
 
+    func currentWindow(processIdentifier: Int32) async -> RobloxWindowSnapshot? {
+        guard processIdentifier > 0, AXIsProcessTrusted() else { return nil }
+        for window in candidateWindows(of: AXUIElementCreateApplication(processIdentifier)) {
+            guard copyBoolean(attribute: kAXMinimizedAttribute as CFString, from: window) != true,
+                  let frame = copyFrame(of: window), frame.width > 0, frame.height > 0 else { continue }
+            return RobloxWindowSnapshot(
+                frame: frame, isFullScreen: copyBoolean(attribute: nativeFullScreenAttribute, from: window) == true
+            )
+        }
+        return nil
+    }
+
     func place(processIdentifier: Int32, request: RobloxWindowPlacementRequest) async -> WindowPlacementResult {
         guard processIdentifier > 0 else {
             return .failed("The Roblox process could not be identified.")
@@ -401,8 +429,9 @@ actor AccessibilityRobloxWindowPlacer: RobloxWindowPlacing {
         guard AXIsProcessTrusted() else { return .permissionRequired }
 
         let application = AXUIElementCreateApplication(processIdentifier)
+        let deadline = ContinuousClock.now + .seconds(20)
         var foundWindow = false
-        for _ in 0..<60 {
+        while ContinuousClock.now < deadline {
             if Task.isCancelled { return .failed("Window placement was cancelled.") }
             let windows = candidateWindows(of: application)
             foundWindow = foundWindow || !windows.isEmpty
@@ -456,10 +485,19 @@ actor AccessibilityRobloxWindowPlacer: RobloxWindowPlacing {
         _ request: RobloxWindowPlacementRequest,
         window: AXUIElement
     ) async -> PlacementAttempt {
-        if request.region.isNativeFullScreen {
-            if nativeFullScreenState(window, request: request) == .active {
-                return .finished(.placed)
+        if nativeFullScreenState(window, request: request) == .active {
+            if request.region.isNativeFullScreen {
+                guard let frame = copyFrame(of: window) else { return .retry }
+                if WindowPlacementGeometry.isOnDisplay(frame, display: request.screenFrame) {
+                    return .finished(.placed)
+                }
             }
+            await acquireFullScreenTransition()
+            defer { releaseFullScreenTransition() }
+            return await leaveNativeFullScreen(request, window: window)
+        }
+
+        if request.region.isNativeFullScreen {
             let canSetFullScreenState = isAttributeSettable(
                 nativeFullScreenAttribute,
                 on: window
@@ -472,13 +510,22 @@ actor AccessibilityRobloxWindowPlacer: RobloxWindowPlacing {
                 return .retry
             }
             await acquireFullScreenTransition()
+            defer { releaseFullScreenTransition() }
+            if nativeFullScreenState(window, request: request) == .active {
+                return .retry
+            }
             let result = await enterNativeFullScreen(
                 request,
                 window: window,
                 canSetFullScreenState: canSetFullScreenState,
                 fullScreenButton: fullScreenButton
             )
-            releaseFullScreenTransition()
+            if result == .placed {
+                guard let frame = copyFrame(of: window) else { return .retry }
+                if !WindowPlacementGeometry.isOnDisplay(frame, display: request.screenFrame) {
+                    return .retry
+                }
+            }
             return .finished(result)
         }
 
@@ -497,34 +544,68 @@ actor AccessibilityRobloxWindowPlacer: RobloxWindowPlacing {
             return .retry
         }
 
-        guard let settledFrame = await waitForSettledFrame(of: window) else {
+        guard let settledFrame = await waitForSettledFrame(of: window),
+              !Task.isCancelled,
+              nativeFullScreenState(window, request: request) == .inactive else {
             return .retry
         }
 
-        let anchoredFrame = WindowPlacementGeometry.anchoredAccessibilityFrame(
-            size: settledFrame.size,
-            in: request.availableFrame,
-            region: request.region
-        )
+        let anchoredFrame: CGRect
+        if request.usesCapturedFrame {
+            let available = request.availableFrame
+            anchoredFrame = CGRect(
+                x: max(available.minX, min(request.targetFrame.minX, available.maxX - settledFrame.width)),
+                y: max(available.minY, min(request.targetFrame.minY, available.maxY - settledFrame.height)),
+                width: settledFrame.width, height: settledFrame.height
+            )
+        } else {
+            anchoredFrame = WindowPlacementGeometry.anchoredAccessibilityFrame(
+                size: settledFrame.size, in: request.availableFrame, region: request.region
+            )
+        }
         if frameDifference(settledFrame, anchoredFrame) > 2 {
             guard setPosition(anchoredFrame.origin, for: window) == .success else {
                 return .retry
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
-            if let finalFrame = copyFrame(of: window),
-               positionDifference(finalFrame.origin, anchoredFrame.origin) > 4 {
-                return .finished(.adjusted(
-                    "Roblox kept this window at \(pixelSize(settledFrame.size)) and moved it as close as possible to \(request.region.title.lowercased())."
-                ))
-            }
         }
-
-        if sizeDifference(settledFrame.size, request.targetFrame.size) > 4 {
+        guard nativeFullScreenState(window, request: request) == .inactive,
+              let finalFrame = copyFrame(of: window) else { return .retry }
+        if positionDifference(finalFrame.origin, anchoredFrame.origin) > 4 {
+            return .finished(.adjusted("Roblox kept part of its previous window position."))
+        }
+        if sizeDifference(finalFrame.size, request.targetFrame.size) > 4 {
             return .finished(.adjusted(
-                "Roblox kept this window at \(pixelSize(settledFrame.size)). The app placed that size in \(request.region.title.lowercased())."
+                "Roblox kept this window at \(pixelSize(finalFrame.size)). It may overlap other windows."
             ))
         }
         return .finished(.placed)
+    }
+
+    private func leaveNativeFullScreen(
+        _ request: RobloxWindowPlacementRequest,
+        window: AXUIElement
+    ) async -> PlacementAttempt {
+        guard !Task.isCancelled, nativeFullScreenState(window, request: request) == .active else {
+            return .retry
+        }
+        let result: AXError
+        if isAttributeSettable(nativeFullScreenAttribute, on: window) {
+            result = AXUIElementSetAttributeValue(window, nativeFullScreenAttribute, kCFBooleanFalse)
+        } else if copyBoolean(attribute: nativeFullScreenAttribute, from: window) == true,
+                  let button = copyElement(attribute: kAXFullScreenButtonAttribute as CFString, from: window) {
+            result = AXUIElementPerformAction(button, kAXPressAction as CFString)
+        } else {
+            return .retry
+        }
+        guard result == .success || result == .cannotComplete else { return .retry }
+        for _ in 0..<25 {
+            if Task.isCancelled { return .retry }
+            try? await Task.sleep(for: .milliseconds(200))
+            if nativeFullScreenState(window, request: request) == .inactive { return .retry }
+        }
+        guard nativeFullScreenState(window, request: request) == .active else { return .retry }
+        return .finished(.failed("Roblox stayed in full screen. Exit full screen, then apply the layout again."))
     }
 
     private func enterNativeFullScreen(
@@ -971,6 +1052,43 @@ final class WindowLayoutController: ObservableObject {
         await placeWindows(launches, with: Array(assignments.values))
     }
 
+    func captureWindows(_ launches: [(accountID: UUID, processIdentifier: Int32)]) async -> [WindowLayoutAssignment] {
+        guard ensureAccessibilityPermission() else { return [] }
+        refreshDisplays()
+        let displays = self.displays
+        let referenceTop = accessibilityReferenceTop
+        var snapshots: [WindowLayoutAssignment] = []
+        for launch in launches {
+            guard let snapshot = await placer.currentWindow(processIdentifier: launch.processIdentifier) else { continue }
+            let display = displays.max { first, second in
+                intersectionArea(snapshot.frame, first.frame, referenceTop: referenceTop)
+                    < intersectionArea(snapshot.frame, second.frame, referenceTop: referenceTop)
+            }
+            guard let display, intersectionArea(snapshot.frame, display.frame, referenceTop: referenceTop) > 0 else { continue }
+            let available = WindowPlacementGeometry.accessibilityFrame(from: display.visibleFrame, referenceTop: referenceTop)
+            let frame = snapshot.frame.intersection(available)
+            guard snapshot.isFullScreen || (frame.width > 0 && frame.height > 0 && !frame.isNull) else { continue }
+            let relativeFrame = snapshot.isFullScreen ? nil : CGRect(
+                x: (frame.minX - available.minX) / available.width,
+                y: (frame.minY - available.minY) / available.height,
+                width: frame.width / available.width,
+                height: frame.height / available.height
+            )
+            snapshots.append(WindowLayoutAssignment(
+                accountID: launch.accountID, displayID: display.id, displayName: display.name,
+                displayPixelWidth: display.pixelWidth, displayPixelHeight: display.pixelHeight,
+                region: snapshot.isFullScreen ? .fullScreen : .wholeScreen, relativeFrame: relativeFrame
+            ))
+        }
+        return snapshots
+    }
+
+    private func intersectionArea(_ window: CGRect, _ display: CGRect, referenceTop: CGFloat) -> CGFloat {
+        let screen = WindowPlacementGeometry.accessibilityFrame(from: display, referenceTop: referenceTop)
+        let overlap = window.intersection(screen)
+        return overlap.isNull ? 0 : overlap.width * overlap.height
+    }
+
     func placeWindows(
         _ launches: [(accountID: UUID, processIdentifier: Int32)],
         with explicitAssignments: [WindowLayoutAssignment]
@@ -993,7 +1111,7 @@ final class WindowLayoutController: ObservableObject {
                 )
             }
             let appKitFrame = WindowPlacementGeometry.frame(in: display.visibleFrame, region: assignment.region)
-            let accessibilityFrame = WindowPlacementGeometry.accessibilityFrame(
+            var accessibilityFrame = WindowPlacementGeometry.accessibilityFrame(
                 from: appKitFrame,
                 referenceTop: accessibilityReferenceTop
             )
@@ -1001,6 +1119,18 @@ final class WindowLayoutController: ObservableObject {
                 from: display.visibleFrame,
                 referenceTop: accessibilityReferenceTop
             )
+            if let frame = assignment.relativeFrame {
+                guard [frame.minX, frame.minY, frame.maxX, frame.maxY].allSatisfy(\.isFinite),
+                      frame.minX >= 0, frame.minY >= 0, frame.maxX <= 1.0001, frame.maxY <= 1.0001,
+                      frame.width > 0, frame.height > 0 else {
+                    return (launch.accountID, launch.processIdentifier, nil, .failed("This saved window position is invalid."))
+                }
+                accessibilityFrame = CGRect(
+                    x: availableFrame.minX + frame.minX * availableFrame.width,
+                    y: availableFrame.minY + frame.minY * availableFrame.height,
+                    width: frame.width * availableFrame.width, height: frame.height * availableFrame.height
+                )
+            }
             return (
                 launch.accountID,
                 launch.processIdentifier,
@@ -1011,7 +1141,8 @@ final class WindowLayoutController: ObservableObject {
                         from: display.frame,
                         referenceTop: accessibilityReferenceTop
                     ),
-                    region: assignment.region
+                    region: assignment.region,
+                    usesCapturedFrame: assignment.relativeFrame != nil
                 ),
                 nil
             )

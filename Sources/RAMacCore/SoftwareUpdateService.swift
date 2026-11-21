@@ -100,6 +100,7 @@ public enum SoftwareUpdateError: LocalizedError, Equatable {
     case keychainMigrationFailed
     case installationNotAllowed
     case installationFailed
+    case restorationFailed(backupURL: URL)
 
     public var errorDescription: String? {
         switch self {
@@ -131,6 +132,8 @@ public enum SoftwareUpdateError: LocalizedError, Equatable {
             return "macOS did not allow this app to update itself. Move it to Applications, make sure you own the file, and try again."
         case .installationFailed:
             return "The update could not replace the current app. The previous version was restored."
+        case .restorationFailed(let backupURL):
+            return "The previous version could not be restored. Check for the backup at \(backupURL.path)."
         }
     }
 }
@@ -807,8 +810,7 @@ public final class SoftwareUpdateInstaller: @unchecked Sendable {
                     backupURL
                 )
             } catch {
-                try? fileManager.removeItem(at: applicationURL)
-                try? fileManager.moveItem(at: backupURL, to: applicationURL)
+                try restorePreviousVersion(from: backupURL, to: applicationURL)
                 if let updateError = error as? SoftwareUpdateError {
                     throw updateError
                 }
@@ -825,11 +827,25 @@ public final class SoftwareUpdateInstaller: @unchecked Sendable {
     }
 
     public func restorePreviousVersion(from backupURL: URL, to applicationURL: URL) throws {
-        guard fileManager.fileExists(atPath: backupURL.path) else { return }
-        if fileManager.fileExists(atPath: applicationURL.path) {
-            try fileManager.removeItem(at: applicationURL)
+        let failure = SoftwareUpdateError.restorationFailed(backupURL: backupURL)
+        guard fileManager.fileExists(atPath: backupURL.path) else { throw failure }
+        let displaced = applicationURL.deletingLastPathComponent().appendingPathComponent(
+            ".RAMac-failed-update-\(UUID().uuidString).app", isDirectory: true
+        )
+        do {
+            if fileManager.fileExists(atPath: applicationURL.path) {
+                try fileManager.moveItem(at: applicationURL, to: displaced)
+            }
+            try fileManager.moveItem(at: backupURL, to: applicationURL)
+        } catch {
+            if fileManager.fileExists(atPath: displaced.path) {
+                try? fileManager.moveItem(at: displaced, to: applicationURL)
+            }
+            throw failure
         }
-        try fileManager.moveItem(at: backupURL, to: applicationURL)
+        if fileManager.fileExists(atPath: displaced.path) {
+            try? fileManager.removeItem(at: displaced)
+        }
     }
 }
 

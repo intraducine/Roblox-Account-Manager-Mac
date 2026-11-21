@@ -22,6 +22,7 @@ public struct WindowLayoutAssignment: Codable, Equatable, Sendable {
     public let displayPixelWidth: Int
     public let displayPixelHeight: Int
     public let region: WindowPlacementRegion
+    public let relativeFrame: CGRect?
 
     public init(
         accountID: UUID,
@@ -29,7 +30,8 @@ public struct WindowLayoutAssignment: Codable, Equatable, Sendable {
         displayName: String,
         displayPixelWidth: Int,
         displayPixelHeight: Int,
-        region: WindowPlacementRegion
+        region: WindowPlacementRegion,
+        relativeFrame: CGRect? = nil
     ) {
         self.accountID = accountID
         self.displayID = displayID
@@ -37,6 +39,18 @@ public struct WindowLayoutAssignment: Codable, Equatable, Sendable {
         self.displayPixelWidth = displayPixelWidth
         self.displayPixelHeight = displayPixelHeight
         self.region = region
+        self.relativeFrame = relativeFrame
+    }
+}
+
+public struct NamedWindowLayout: Codable, Identifiable, Equatable, Sendable {
+    public var id = UUID()
+    public var name: String
+    public var assignments: [WindowLayoutAssignment]
+
+    public init(name: String, assignments: [WindowLayoutAssignment]) {
+        self.name = name
+        self.assignments = assignments
     }
 }
 

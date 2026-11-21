@@ -1,5 +1,7 @@
 # Games and servers
 
+Open **Tools > Game Library** to browse favorites, recent games, and saved private servers. Choose a game or server, select accounts or a group, and select **Launch**.
+
 To choose a game, select **Choose Game**, paste a Roblox game link or enter its Place ID, and select **Find Game**. Select **Choose** on the result. A Place ID is the number in a Roblox game link.
 
 Games appear under **Recent and Favorite Games** after you launch them. Use the star next to a saved game to add or remove it from favorites. You can also search this list by name or Place ID.

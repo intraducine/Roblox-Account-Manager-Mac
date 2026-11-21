@@ -11,6 +11,7 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
     case untrustedRobloxInstallation
     case robloxUpdateRequired
     case robloxUpdateOpened
+    case robloxUpdaterOpenFailed
     case robloxUpdateCheckFailed
     case accountAlreadyRunning
     case officialParallelUnavailable
@@ -35,6 +36,8 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
             return "Update Roblox in Applications before launching managed accounts. Stop all managed Roblox clients. Open /Applications/Roblox.app and let it update. Then quit Roblox and try again."
         case .robloxUpdateOpened:
             return "Roblox was opened to check for updates. Let it finish, quit Roblox, then try again. If Roblox still closes or does not update, start a game from roblox.com to update it. No managed copy was started."
+        case .robloxUpdaterOpenFailed:
+            return "The Roblox installer did not open. Start a game at roblox.com to update Roblox, then try again."
         case .robloxUpdateCheckFailed:
             return "The current Roblox version could not be checked. Check your connection and try again. No managed copy was started."
         case .accountAlreadyRunning:
@@ -50,6 +53,10 @@ public enum RobloxLaunchError: LocalizedError, Equatable {
         case .openFailed:
             return "macOS could not open the isolated Roblox instance."
         }
+    }
+
+    public var blocksLaunchForUpdate: Bool {
+        self == .robloxUpdateRequired || self == .robloxUpdateOpened || self == .robloxUpdaterOpenFailed
     }
 }
 
@@ -224,6 +231,9 @@ public protocol ParallelRobloxLaunching: Sendable {
         settings: RobloxLaunchSettings
     ) async throws -> ParallelRobloxInstance
     func runningAccountIDs(from accountIDs: [UUID]) async -> Set<UUID>
+    func runningProcessIdentifier(accountID: UUID) async -> Int32?
+    func bringToFront(accountID: UUID) async -> Bool
+    func checkRobloxVersion(openUpdater: Bool) async throws
     func stop(accountID: UUID) async -> Bool
     func stop(accountIDs: [UUID]) async -> Set<UUID>
     func removeStaleCopies() async
@@ -231,6 +241,13 @@ public protocol ParallelRobloxLaunching: Sendable {
 }
 
 public extension ParallelRobloxLaunching {
+    func runningProcessIdentifier(accountID: UUID) async -> Int32? { nil }
+    func bringToFront(accountID: UUID) async -> Bool { false }
+
+    func checkRobloxVersion(openUpdater: Bool) async throws {
+        throw RobloxLaunchError.robloxUpdateCheckFailed
+    }
+
     func stop(accountIDs: [UUID]) async -> Set<UUID> {
         await withTaskGroup(of: (UUID, Bool).self) { group in
             for accountID in accountIDs {
@@ -287,7 +304,6 @@ public actor ParallelRobloxLauncher {
 
     private let fileManager: FileManager
     private let instancesRoot: URL
-    private let robloxSettingsDirectory: URL
     private let versionClient: RobloxAPIClient
     private var officialLaunchInProgress = false
     private var officialUpdateOpening = false
@@ -296,14 +312,10 @@ public actor ParallelRobloxLauncher {
     public init(
         fileManager: FileManager = .default,
         instancesRoot: URL? = nil,
-        robloxSettingsDirectory: URL? = nil,
         versionClient: RobloxAPIClient = RobloxAPIClient()
     ) {
         self.fileManager = fileManager
         self.versionClient = versionClient
-        self.robloxSettingsDirectory = robloxSettingsDirectory
-            ?? fileManager.urls(for: .libraryDirectory, in: .userDomainMask).first!
-                .appendingPathComponent("Roblox", isDirectory: true)
         if let instancesRoot {
             self.instancesRoot = instancesRoot
         } else {
@@ -344,7 +356,7 @@ public actor ParallelRobloxLauncher {
         guard fileManager.fileExists(atPath: Self.officialApplicationURL.path) else {
             throw RobloxLaunchError.robloxNotInstalled
         }
-        if await isRunning(accountID: accountID) { throw RobloxLaunchError.accountAlreadyRunning }
+        if isRunning(accountID: accountID) { throw RobloxLaunchError.accountAlreadyRunning }
 
         if mode == .official {
             while officialLaunchInProgress {
@@ -358,10 +370,8 @@ public actor ParallelRobloxLauncher {
 
         // Check before creating a copy or changing settings. An old copy can
         // start its own installer and leave the managed launch path.
-        if mode != .official {
-            try await verifyCurrentOfficialVersion(at: Self.officialApplicationURL) {
-                try await self.openOfficialApplicationForUpdate()
-            }
+        if mode != .official || settings.hasOverrides {
+            try await checkRobloxVersion(openUpdater: true)
         }
         try Task.checkCancellation()
         try ensureManagedRootsAreSafe(for: accountID)
@@ -426,14 +436,42 @@ public actor ParallelRobloxLauncher {
     }
 
     public func runningAccountIDs(from accountIDs: [UUID]) async -> Set<UUID> {
-        var result = Set<UUID>()
-        for accountID in accountIDs {
-            if await isRunning(accountID: accountID) {
-                result.insert(accountID)
-            }
-            _ = await stopManagedHelpers(for: accountID)
+        guard !accountIDs.isEmpty else { return [] }
+        let processes = runningProcessTable()
+        let helperPaths = Set(accountIDs.flatMap { managedHelperExecutablePaths(for: $0) })
+        await stopManagedHelpers(matching: helperPaths, initialProcesses: processes)
+        return Set(accountIDs.filter { isRunning(accountID: $0, processes: processes) })
+    }
+
+    public func bringToFront(accountID: UUID) async -> Bool {
+        guard let processIdentifier = await runningProcessIdentifier(accountID: accountID),
+              let record = validProcessRecord(for: accountID) else { return false }
+        return await MainActor.run {
+            guard let app = NSRunningApplication(processIdentifier: processIdentifier),
+                  app.bundleURL?.standardizedFileURL.path == record.applicationPath else { return false }
+            _ = app.unhide()
+            return app.activate(options: [.activateAllWindows])
         }
-        return result
+    }
+
+    public func runningProcessIdentifier(accountID: UUID) async -> Int32? {
+        guard isRunning(accountID: accountID),
+              let record = validProcessRecord(for: accountID),
+              recordedProcessIsRunning(record) else { return nil }
+        return record.processIdentifier
+    }
+
+    public func checkRobloxVersion(openUpdater: Bool) async throws {
+        guard fileManager.fileExists(atPath: Self.officialApplicationURL.path) else {
+            throw RobloxLaunchError.robloxNotInstalled
+        }
+        let attempt: (@Sendable () async throws -> Void)?
+        if openUpdater {
+            attempt = { try await self.openOfficialApplicationForUpdate() }
+        } else {
+            attempt = nil
+        }
+        try await verifyCurrentOfficialVersion(at: Self.officialApplicationURL, attemptUpdate: attempt)
     }
 
     public func stop(accountID: UUID) async -> Bool {
@@ -450,7 +488,7 @@ public actor ParallelRobloxLauncher {
         var helperPathsByAccount: [UUID: Set<String>] = [:]
 
         for accountID in requested {
-            _ = await isRunning(accountID: accountID)
+            _ = isRunning(accountID: accountID)
             if readProcessRecord(for: accountID)?.applicationPath == officialPath {
                 officialAccountIDs.insert(accountID)
                 continue
@@ -562,25 +600,25 @@ public actor ParallelRobloxLauncher {
         ) else { return }
         for directory in directories {
             guard let accountID = UUID(uuidString: directory.lastPathComponent) else { continue }
-            if !(await isRunning(accountID: accountID)) {
+            if !isRunning(accountID: accountID) {
                 try? fileManager.removeItem(at: processRecordURL(for: accountID))
             }
         }
     }
 
     public func removePreparedCopy(accountID: UUID) async {
-        guard !(await isRunning(accountID: accountID)) else { return }
+        guard !isRunning(accountID: accountID) else { return }
         try? removeOwnedItem(accountRootURL(for: accountID))
     }
 
-    private func isRunning(accountID: UUID) async -> Bool {
+    private func isRunning(accountID: UUID, processes: [Int32: String]? = nil) -> Bool {
         guard let record = validProcessRecord(for: accountID) else { return false }
         if recordedProcessIsRunning(record) { return true }
         if record.applicationPath != Self.officialApplicationURL.standardizedFileURL.path {
             let appURL = URL(fileURLWithPath: record.applicationPath, isDirectory: true)
             let executable = canonicalPath(appURL.appendingPathComponent("Contents/MacOS/RobloxPlayer").path)
             if let hash = try? codeDirectoryHash(at: appURL),
-               let replacement = runningProcessTable().filter({ $0.value == executable })
+               let replacement = (processes ?? runningProcessTable()).filter({ $0.value == executable })
                 .map(\.key).first(where: { liveCodeDirectoryHash(for: $0) == hash.lowercased() }) {
                 try? writeProcessRecord(ParallelProcessRecord(processIdentifier: replacement, applicationPath: record.applicationPath), for: accountID)
                 return true
@@ -888,7 +926,7 @@ public actor ParallelRobloxLauncher {
             for candidate in runningProcessTable() where candidate.value == expectedExecutablePath {
                 _ = kill(candidate.key, SIGTERM)
             }
-            _ = await stopManagedHelpers(for: accountID)
+            await stopManagedHelpers(matching: managedHelperExecutablePaths(for: accountID))
             if let launchError = error as? RobloxLaunchError { throw launchError }
             throw RobloxLaunchError.unmodifiedParallelUnavailable(error.localizedDescription)
         }
@@ -1091,15 +1129,17 @@ public actor ParallelRobloxLauncher {
         return environment
     }
 
-    func prepareLaunchSettings(_ settings: RobloxLaunchSettings, for _: UUID) throws {
+    func prepareLaunchSettings(_ settings: RobloxLaunchSettings, for accountID: UUID) throws {
         guard settings.hasOverrides else { return }
+        let robloxSettingsDirectory = Self.isolatedHomeURL(instancesRoot: instancesRoot, accountID: accountID)
+            .appendingPathComponent("Library/Roblox", isDirectory: true)
         let settingsURL = robloxSettingsDirectory.appendingPathComponent("GlobalBasicSettings_13.xml")
 
         do {
-            try rejectSymbolicLink(at: robloxSettingsDirectory)
+            try rejectSymbolicLinksInManagedPath(through: robloxSettingsDirectory)
             try rejectSymbolicLink(at: settingsURL)
             try fileManager.createDirectory(at: robloxSettingsDirectory, withIntermediateDirectories: true)
-            try rejectSymbolicLink(at: robloxSettingsDirectory)
+            try rejectSymbolicLinksInManagedPath(through: robloxSettingsDirectory)
             let document = if fileManager.fileExists(atPath: settingsURL.path) {
                 try XMLDocument(data: Data(contentsOf: settingsURL), options: .nodePreserveAll)
             } else {
@@ -1355,7 +1395,7 @@ public actor ParallelRobloxLauncher {
                     configuration: configuration
                 ) { application, error in
                     if error != nil || application == nil {
-                        continuation.resume(throwing: RobloxLaunchError.openFailed)
+                        continuation.resume(throwing: RobloxLaunchError.robloxUpdaterOpenFailed)
                     } else {
                         continuation.resume()
                     }
@@ -1401,18 +1441,22 @@ public actor ParallelRobloxLauncher {
         return String(line.dropFirst("CDHash=".count))
     }
 
-    private func stopManagedHelpers(for accountID: UUID) async -> Bool {
-        let helperExecutables = managedHelperExecutablePaths(for: accountID)
+    private func stopManagedHelpers(
+        matching helperExecutables: Set<String>,
+        initialProcesses: [Int32: String]? = nil
+    ) async {
+        var processes = initialProcesses ?? runningProcessTable()
         for attempt in 0..<6 {
-            let matching = runningProcessTable().filter { helperExecutables.contains($0.value) }
-            if matching.isEmpty { return true }
+            let matching = processes.filter { helperExecutables.contains($0.value) }
+            if matching.isEmpty { return }
             let signal = attempt < 3 ? SIGTERM : SIGKILL
-            for processIdentifier in matching.keys {
+            for (processIdentifier, path) in matching where executablePath(for: processIdentifier) == path {
                 _ = kill(processIdentifier, signal)
             }
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            do { try await Task.sleep(for: .milliseconds(250)) }
+            catch { return }
+            processes = runningProcessTable()
         }
-        return runningProcessTable().values.allSatisfy { !helperExecutables.contains($0) }
     }
 
     private func managedHelperExecutablePaths(for accountID: UUID) -> Set<String> {

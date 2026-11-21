@@ -54,18 +54,11 @@ struct DiagnosticsView: View {
         } message: {
             Text("Private server links can grant access. Protect this backup like a password.")
         }
-        .alert(item: $store.notice) { notice in
-            Alert(title: Text(notice.title), message: Text(notice.message), dismissButton: .default(Text("OK")))
-        }
     }
 
     private func runCheck() async {
         isRunning = true
-        let service = DiagnosticService(
-            accountRepository: AccountRepository(),
-            vault: KeychainVault()
-        )
-        report = await service.run()
+        report = await store.runDiagnostics()
         isRunning = false
     }
 

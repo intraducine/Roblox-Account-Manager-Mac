@@ -130,19 +130,25 @@ final class MetadataArchiveTests: XCTestCase {
     func testImportRemapsLaunchSetToTheExistingLocalAccountID() throws {
         let local = ManagedAccount(id: UUID(), userID: 5, username: "local", displayName: "Local")
         let backup = ManagedAccount(id: UUID(), userID: 5, username: "backup", displayName: "Backup")
+        let capturedFrame = CGRect(x: 0.1, y: 0.2, width: 0.5, height: 0.6)
         let importedAssignment = WindowLayoutAssignment(
             accountID: backup.id,
             displayID: "display-1",
             displayName: "Display",
             displayPixelWidth: 2560,
             displayPixelHeight: 1440,
-            region: .left
+            region: .left,
+            relativeFrame: capturedFrame
         )
+        let game = LaunchSetGame(placeID: 2222, name: "Second game")
+        let settings = RobloxLaunchSettings(graphics: .manual, graphicsQuality: 2, overridesVolume: true, volume: 0)
         let set = LaunchSet(
             name: "Team",
             accountIDs: [backup.id],
             placeID: 1818,
-            windowArrangement: .custom([importedAssignment])
+            windowArrangement: .custom([importedAssignment]),
+            accountGames: [backup.id: game],
+            accountSettings: [backup.id: settings]
         )
         let service = MetadataArchiveService()
         let data = try service.exportData(
@@ -161,11 +167,14 @@ final class MetadataArchiveTests: XCTestCase {
         )
 
         XCTAssertEqual(result.launchSets.first?.accountIDs, [local.id])
+        XCTAssertEqual(result.launchSets.first?.accountGames, [local.id: game])
+        XCTAssertEqual(result.launchSets.first?.accountSettings, [local.id: settings])
         guard case .custom(let assignments) = result.launchSets.first?.windowArrangement else {
             return XCTFail("Expected a custom window arrangement")
         }
         XCTAssertEqual(assignments.first?.accountID, local.id)
         XCTAssertEqual(assignments.first?.region, .left)
+        XCTAssertEqual(assignments.first?.relativeFrame, capturedFrame)
     }
 
     func testLaunchSetWithoutWindowPolicyUsesSavedPlacements() throws {

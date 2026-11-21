@@ -305,7 +305,12 @@ final class SoftwareUpdateController: ObservableObject {
             NSApplication.shared.terminate(nil)
         } catch {
             if let backupURL {
-                try? installer.restorePreviousVersion(from: backupURL, to: applicationURL)
+                do {
+                    try installer.restorePreviousVersion(from: backupURL, to: applicationURL)
+                } catch {
+                    state = .failed(error.localizedDescription)
+                    return
+                }
             }
             state = .failed(error.localizedDescription)
         }

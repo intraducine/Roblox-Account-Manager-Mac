@@ -74,7 +74,7 @@ public struct RobloxUserPresence: Decodable, Equatable, Sendable {
     }
 }
 
-public enum RobloxServerSelection: Equatable, Sendable {
+public enum RobloxServerSelection: Hashable, Sendable {
     case automatic
     case publicInstance(jobID: String, playing: Int, maxPlayers: Int)
     case player(username: String, userID: Int64, jobID: String)

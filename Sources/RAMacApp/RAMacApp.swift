@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import RAMacCore
 import SwiftUI
 
@@ -8,26 +9,77 @@ final class ApplicationLifecycleDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+@MainActor
+final class ApplicationNoticePresenter: ObservableObject {
+    private let store: AccountStore
+    private var noticeChanges: AnyCancellable?
+    private var activeWindows: AnyCancellable?
+    private var presenting = false
+
+    init(store: AccountStore) {
+        self.store = store
+        noticeChanges = store.$notice.receive(on: RunLoop.main).sink { [weak self] _ in
+            self?.presentNext()
+        }
+        activeWindows = NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)
+            .receive(on: RunLoop.main).sink { [weak self] _ in self?.presentNext() }
+    }
+
+    func presentNext() {
+        guard !presenting, let notice = store.notice, var window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+        while let sheet = window.attachedSheet { window = sheet }
+        let alert = NSAlert()
+        alert.messageText = notice.title
+        alert.informativeText = notice.message
+        alert.addButton(withTitle: "OK")
+        presenting = true
+        alert.beginSheetModal(for: window) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.store.notice?.id == notice.id { self.store.notice = nil }
+                self.presenting = false
+                self.presentNext()
+            }
+        }
+    }
+}
+
 @main
 struct RAMacApp: App {
     @NSApplicationDelegateAdaptor(ApplicationLifecycleDelegate.self) private var lifecycleDelegate
     @StateObject private var store: AccountStore
     @StateObject private var updater: SoftwareUpdateController
+    @StateObject private var noticePresenter: ApplicationNoticePresenter
 
     init() {
-        NSWindow.allowsAutomaticWindowTabbing = false
-        if AppSmokeTestConfiguration.isEnabled {
-            _store = StateObject(wrappedValue: AccountStore(
-                repository: AccountRepository(dataDirectory: AppSmokeTestConfiguration.dataDirectory)
-            ))
-        } else {
-            _store = StateObject(wrappedValue: AccountStore())
+        #if RAM_KEYCHAIN_FIXTURE
+        if let result = KeychainContinuityFixture.run(CommandLine.arguments) {
+            exit(result)
         }
+        #endif
+        NSWindow.allowsAutomaticWindowTabbing = false
+        let accountStore: AccountStore
+        if AppSmokeTestConfiguration.isEnabled {
+            let directory = AppSmokeTestConfiguration.dataDirectory
+            let storage = AppSmokeTestStorage()
+            accountStore = AccountStore(
+                repository: AccountRepository(dataDirectory: directory),
+                vault: storage,
+                launcher: ParallelRobloxLauncher(
+                    instancesRoot: directory.appendingPathComponent("Instances", isDirectory: true)
+                ),
+                windowLayout: WindowLayoutController(repository: storage)
+            )
+        } else {
+            accountStore = AccountStore()
+        }
+        _store = StateObject(wrappedValue: accountStore)
+        _noticePresenter = StateObject(wrappedValue: ApplicationNoticePresenter(store: accountStore))
         _updater = StateObject(wrappedValue: SoftwareUpdateController())
     }
 
     var body: some Scene {
-        WindowGroup {
+        Window("Accounts", id: "accounts") {
             ContentView(
                 store: store,
                 updater: updater,
@@ -36,6 +88,7 @@ struct RAMacApp: App {
                 .frame(minWidth: 900, minHeight: 600)
                 .background(WindowTabbingDisabler())
                 .dismissTextInputOnOutsideClick()
+                .onAppear { noticePresenter.presentNext() }
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
@@ -61,6 +114,17 @@ struct RAMacApp: App {
                 .dismissTextInputOnOutsideClick()
         }
         .defaultSize(width: 980, height: 680)
+
+        Window("Running Accounts", id: "running-accounts") {
+            RunningAccountsView(store: store)
+        }
+        .defaultSize(width: 590, height: 440)
+
+        Window("Game Library", id: "game-library") {
+            GameLibraryView(store: store)
+                .dismissTextInputOnOutsideClick()
+        }
+        .defaultSize(width: 900, height: 620)
 
         Window("Launch Defaults", id: "window-layout") {
             WindowLayoutView(store: store, controller: store.windowLayout)
@@ -106,17 +170,28 @@ private struct V1ViewCommands: Commands {
                 .keyboardShortcut("n", modifiers: .command)
         }
         CommandMenu("Tools") {
-            Button("Joinable Players") { openWindow(id: "joinable-players") }
-                .keyboardShortcut("f", modifiers: [.command, .shift])
-            Button("Launch Sets") { openWindow(id: "launch-sets") }
-            Button("Launch Defaults") { openWindow(id: "window-layout") }
-                .keyboardShortcut("l", modifiers: [.command, .shift])
-            Button("Send Feedback") { openWindow(id: "feedback") }
-            Button("Diagnostics and Backup") { openWindow(id: "diagnostics") }
+            ToolsMenuItems(usesKeyboardShortcuts: true)
         }
         CommandGroup(after: .appInfo) {
             Button("Check for Updates…") { openWindow(id: "software-update") }
         }
+    }
+}
+
+struct ToolsMenuItems: View {
+    @Environment(\.openWindow) private var openWindow
+    var usesKeyboardShortcuts = false
+
+    var body: some View {
+        Button("Joinable Players") { openWindow(id: "joinable-players") }
+            .keyboardShortcut(usesKeyboardShortcuts ? KeyboardShortcut("f", modifiers: [.command, .shift]) : nil)
+        Button("Launch Sets") { openWindow(id: "launch-sets") }
+        Button("Game Library") { openWindow(id: "game-library") }
+        Button("Running Accounts") { openWindow(id: "running-accounts") }
+        Button("Launch Defaults") { openWindow(id: "window-layout") }
+            .keyboardShortcut(usesKeyboardShortcuts ? KeyboardShortcut("l", modifiers: [.command, .shift]) : nil)
+        Button("Send Feedback") { openWindow(id: "feedback") }
+        Button("Diagnostics and Backup") { openWindow(id: "diagnostics") }
     }
 }
 
